@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Minimal change detection spike: fetch → extract → diff (per resource type) → report."""
+# -*- coding: utf-8 -*-
+"""Minimal change detection spike: fetch -> extract -> diff (per resource type) -> report."""
 
+import argparse
 import hashlib
 import json
+import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urljoin, urlparse
@@ -12,13 +16,47 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
-from state_store import LocalStateStore
+# -----------------------------------------------------------------------------
+# Logging & config
+# -----------------------------------------------------------------------------
 
-TARGETS_FILE = Path(__file__).parent / "targets.json"
-STATE_STORE = LocalStateStore(Path(__file__).parent / "state.json")
+
+def _get_state_backend():
+    """Select backend via STATE_BACKEND=local|dynamodb. Default: local if STATE_TABLE unset, else dynamodb."""
+    backend = os.environ.get("STATE_BACKEND", "").strip().lower()
+    has_table = bool(os.environ.get("STATE_TABLE", "").strip())
+    if backend == "dynamodb" or (has_table and backend != "local"):
+        from storage.state_store_dynamodb import load_target_state, save_target_state
+
+        return ("dynamodb", load_target_state, save_target_state)
+    from storage.state_store_local import load_target_state, save_target_state
+
+    return ("local", load_target_state, save_target_state)
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s: %(message)s",
+)
+log = logging.getLogger(__name__)
+
+DEFAULT_TARGETS_FILE = Path(__file__).parent / "targets.json"
+_STATE_BACKEND_NAME, _load_target_state, _save_target_state = _get_state_backend()
 REPORT_FILE = Path(__file__).parent / "last_report.txt"
 TARGET_URL = "https://example.com"
 USE_PLAYWRIGHT = os.environ.get("USE_PLAYWRIGHT", "1") != "0"  # Set USE_PLAYWRIGHT=0 to use requests only
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
+MAX_RETRIES = _int_env("MAX_RETRIES", 3)
+BACKOFF_SECONDS = _int_env("BACKOFF_SECONDS", 2)
+DELAY_BETWEEN_PAGES = _int_env("DELAY_BETWEEN_PAGES", 1)
 
 # -----------------------------------------------------------------------------
 # Extractors: map name -> callable(soup, base_url, params) -> list[dict]
@@ -149,13 +187,30 @@ def fetch_with_requests(url: str) -> str:
     return r.text
 
 
+def _fetch_with_retry(get_html: Callable[[], str], url: str) -> str:
+    """Retry fetch with exponential backoff."""
+    last_err: Exception | None = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            return get_html()
+        except Exception as e:
+            last_err = e
+            if attempt < MAX_RETRIES - 1:
+                delay = BACKOFF_SECONDS * (2**attempt)
+                log.warning("Fetch failed (attempt %d/%d): %s; retrying in %.1fs", attempt + 1, MAX_RETRIES, e, delay)
+                time.sleep(delay)
+            else:
+                log.error("Fetch failed after %d attempts: %s", MAX_RETRIES, e)
+    raise last_err  # type: ignore[misc]
+
+
 def fetch_page(url: str) -> str:
     if USE_PLAYWRIGHT:
         try:
-            return fetch_with_playwright(url)
+            return _fetch_with_retry(lambda: fetch_with_playwright(url), url)
         except Exception as e:
-            print(f"[Playwright failed: {e}] Falling back to requests...")
-    return fetch_with_requests(url)
+            log.warning("Playwright failed, falling back to requests: %s", e)
+    return _fetch_with_retry(lambda: fetch_with_requests(url), url)
 
 
 def parse_html(html: str) -> tuple[str, BeautifulSoup]:
@@ -174,25 +229,15 @@ def parse_html(html: str) -> tuple[str, BeautifulSoup]:
 # -----------------------------------------------------------------------------
 
 
-def load_targets() -> list[dict] | None:
-    if not TARGETS_FILE.exists():
+def load_targets(targets_file: Path) -> list[dict] | None:
+    path = Path(targets_file)
+    if not path.is_absolute():
+        path = (Path.cwd() / path).resolve()
+    if not path.exists():
         return None
-    with open(TARGETS_FILE, encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
     return data if isinstance(data, list) else data.get("targets", data)
-
-
-def _get_target_state(raw: dict, key: str) -> dict | None:
-    """Extract one target's state from raw store output; migrate old formats."""
-    if "targets" in raw:
-        s = raw["targets"].get(key)
-        return _migrate_state(s)
-    if "page_hash" in raw and key == "default":
-        return {
-            "page_hash": raw["page_hash"],
-            "extracted": {"docs": [{"label": "?", "url": u} for u in raw.get("pdf_links", [])]},
-        }
-    return None
 
 
 def _migrate_state(s: dict | None) -> dict | None:
@@ -200,24 +245,36 @@ def _migrate_state(s: dict | None) -> dict | None:
     if not s:
         return s
     if "pdf_links" in s and "extracted" not in s:
+        s = dict(s)
         s["extracted"] = {"docs": [{"label": u, "url": u} for u in s.get("pdf_links", [])]}
         del s["pdf_links"]
     return s
 
 
-def load_state(key: str) -> dict | None:
-    raw = STATE_STORE.load_state()
-    return _get_target_state(raw, key)
+def load_state(key: str, from_snapshot_dir: Path | None = None) -> dict | None:
+    if from_snapshot_dir:
+        path = from_snapshot_dir / f"{key}.json"
+        if path.exists():
+            with open(path, encoding="utf-8") as f:
+                return _migrate_state(json.load(f))
+        return None
+    return _migrate_state(_load_target_state(key))
 
 
-def save_state(key: str, page_hash: str, extracted: dict[str, list[dict]]) -> None:
-    raw = STATE_STORE.load_state()
-    if "page_hash" in raw and "targets" not in raw:
-        raw = {"targets": {"default": {"page_hash": raw["page_hash"], "extracted": raw.get("extracted", {})}}}
-    if "targets" not in raw:
-        raw["targets"] = {}
-    raw["targets"][key] = {"page_hash": page_hash, "extracted": extracted}
-    STATE_STORE.save_state(raw)
+def save_snapshot(key: str, page_hash: str, extracted: dict[str, list[dict]], snapshot_dir: Path) -> None:
+    """Save normalized content and extracted lists to snapshot file per target."""
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    path = snapshot_dir / f"{key}.json"
+    data = {"page_hash": page_hash, "extracted": extracted}
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    log.info("Snapshot saved to %s", path)
+
+
+def save_state(key: str, page_hash: str, extracted: dict[str, list[dict]], skip: bool = False) -> None:
+    if skip:
+        return
+    _save_target_state(key, {"page_hash": page_hash, "extracted": extracted})
 
 
 # -----------------------------------------------------------------------------
@@ -265,32 +322,43 @@ def _format_item(rtype: str, item: dict) -> str:
 
 
 def render_report(change_events: list[dict]) -> str:
-    """Group by target, then by resource type. Only include targets with changes."""
-    events_with_changes = [e for e in change_events if _has_changes(e["change"])]
-    if not events_with_changes:
-        return "No changes detected.\n"
+    """Group by target, then by resource type. Include targets with changes and errors."""
+    events_with_changes = [e for e in change_events if "error" not in e and _has_changes(e["change"])]
+    events_with_errors = [e for e in change_events if "error" in e]
 
     lines = ["Web Change Report", "=" * 40, ""]
-    for e in events_with_changes:
-        label = e["label"]
-        url = e["url"]
-        ch = e["change"]
-        lines.append(f"## {label}")
-        lines.append(f"URL: {url}")
 
-        if ch["first_run"]:
-            lines.append("  - Initial baseline recorded")
-        else:
-            if ch["page_changed"]:
-                lines.append("  - Page content changed")
-
-            for rtype, diff in sorted(ch.get("by_type", {}).items()):
-                lines.append(f"  [{rtype}]")
-                for x in diff.get("added", []):
-                    lines.append(f"    + {_format_item(rtype, x)}")
-                for x in diff.get("removed", []):
-                    lines.append(f"    - {_format_item(rtype, x)}")
+    for e in events_with_errors:
+        lines.append(f"## ERROR: {e.get('label', 'unknown')}")
+        lines.append(f"URL: {e.get('url', '')}")
+        lines.append(f"  {e['error']}")
         lines.append("")
+
+    if events_with_changes:
+        for e in events_with_changes:
+            label = e["label"]
+            url = e["url"]
+            ch = e["change"]
+            lines.append(f"## {label}")
+            lines.append(f"URL: {url}")
+
+            if ch["first_run"]:
+                lines.append("  - Initial baseline recorded")
+            else:
+                if ch["page_changed"]:
+                    lines.append("  - Page content changed")
+
+                for rtype, diff in sorted(ch.get("by_type", {}).items()):
+                    lines.append(f"  [{rtype}]")
+                    for x in diff.get("added", []):
+                        lines.append(f"    + {_format_item(rtype, x)}")
+                    for x in diff.get("removed", []):
+                        lines.append(f"    - {_format_item(rtype, x)}")
+            lines.append("")
+
+    if not events_with_changes and not events_with_errors:
+        return "No changes detected.\n"
+
     return "\n".join(lines)
 
 
@@ -303,69 +371,160 @@ DEFAULT_EXTRACT = [
 ]
 
 
-def process_target(target_id: str, label: str, url: str, extract_rules: list[dict] | None) -> dict:
+def process_target(
+    target_id: str,
+    label: str,
+    url: str,
+    extract_rules: list[dict] | None,
+    snapshot_dir: Path | None = None,
+    compare_snapshot: bool = False,
+    compare_snapshot_dir: Path | None = None,
+) -> dict:
     """Process one target: fetch, extract, diff, save, print."""
-    print(f"\n--- {label} ---")
-    print(f"Fetching {url}...")
+    log.info("--- %s ---", label)
+    log.info("Fetching %s...", url)
     html = fetch_page(url)
     page_hash, soup = parse_html(html)
 
     rules = extract_rules if extract_rules else DEFAULT_EXTRACT
     extracted = run_extractors(soup, url, rules)
 
-    prev = load_state(target_id)
+    from_snapshot = compare_snapshot_dir if compare_snapshot else None
+    prev = load_state(target_id, from_snapshot_dir=from_snapshot)
     change = compute_change(prev, page_hash, extracted)
 
-    save_state(target_id, page_hash, extracted)
+    save_state(target_id, page_hash, extracted, skip=compare_snapshot)
+    if snapshot_dir:
+        save_snapshot(target_id, page_hash, extracted, snapshot_dir)
 
     # Console output
     if change["first_run"]:
-        print("[FIRST RUN] Recording baseline.")
+        log.info("[FIRST RUN] Recording baseline.")
     elif _has_changes(change):
-        print("[CHANGE DETECTED]")
+        log.info("[CHANGE DETECTED]")
         if change["page_changed"]:
-            print("  Page content changed")
+            log.info("  Page content changed")
         for rtype, diff in change.get("by_type", {}).items():
-            print(f"  [{rtype}]")
+            log.info("  [%s]", rtype)
             for x in diff.get("added", []):
-                print(f"    + {_format_item(rtype, x)}")
+                log.info("    + %s", _format_item(rtype, x))
             for x in diff.get("removed", []):
-                print(f"    - {_format_item(rtype, x)}")
+                log.info("    - %s", _format_item(rtype, x))
     else:
-        print("[NO CHANGE]")
+        log.info("[NO CHANGE]")
 
     for rtype, items in sorted(extracted.items()):
-        print(f"  {rtype}: {len(items)} items")
+        log.info("  %s: %d items", rtype, len(items))
 
     return {"target_id": target_id, "label": label, "url": url, "change": change}
 
 
+def parse_args() -> argparse.Namespace:
+    targets_file_default = os.environ.get("TARGETS_FILE", "").strip() or str(DEFAULT_TARGETS_FILE)
+    target_ids_default = os.environ.get("TARGET_IDS", "").strip()
+
+    p = argparse.ArgumentParser(description="Web change detection: fetch → extract → diff → report")
+    p.add_argument(
+        "--targets-file",
+        type=Path,
+        default=targets_file_default,
+        metavar="PATH",
+        help="Path to targets JSON (default: targets.json or TARGETS_FILE env)",
+    )
+    p.add_argument(
+        "--target-ids",
+        type=str,
+        default=target_ids_default,
+        metavar="ID1,ID2,...",
+        help="Comma-separated target IDs to process (default: all; or TARGET_IDS env)",
+    )
+    p.add_argument(
+        "--snapshot-dir",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="Save normalized content and extracted lists to DIR/<target_id>.json per target",
+    )
+    p.add_argument(
+        "--compare-snapshot",
+        action="store_true",
+        help="Compare current scrape against snapshot files instead of prior state (use with --snapshot-dir)",
+    )
+    return p.parse_args()
+
+
 def main() -> None:
-    targets = load_targets()
+    from datetime import datetime, timezone
+
+    args = parse_args()
+    run_timestamp = int(datetime.now(timezone.utc).timestamp())
+    targets = load_targets(args.targets_file)
+
+    # Filter by target_ids if provided
+    target_ids_filter: set[str] | None = None
+    if args.target_ids:
+        target_ids_filter = {s.strip() for s in args.target_ids.split(",") if s.strip()}
+
+    if targets and target_ids_filter is not None:
+        targets = [t for t in targets if t.get("id", t.get("url", "unknown")) in target_ids_filter]
+        if not targets:
+            log.warning("No targets match --target-ids %s", args.target_ids)
+            return
+
     change_events: list[dict] = []
 
-    if targets:
-        for t in targets:
+    # For --compare-snapshot: load from snapshot_dir or default snapshots/
+    compare_snapshot_dir = args.snapshot_dir if args.snapshot_dir else (Path("snapshots") if args.compare_snapshot else None)
+
+    def process_one(target_id: str, label: str, url: str, extract_rules: list[dict] | None) -> dict:
+        try:
+            return process_target(
+                target_id,
+                label,
+                url,
+                extract_rules,
+                snapshot_dir=args.snapshot_dir,
+                compare_snapshot=args.compare_snapshot,
+                compare_snapshot_dir=compare_snapshot_dir,
+            )
+        except Exception as e:
+            log.error("Target %s failed: %s", label, e, exc_info=False)
+            return {"target_id": target_id, "label": label, "url": url, "error": str(e)}
+
+    if targets is not None and targets:
+        for i, t in enumerate(targets):
+            if i > 0 and DELAY_BETWEEN_PAGES > 0:
+                time.sleep(DELAY_BETWEEN_PAGES)
             target_id = t.get("id", t.get("url", "unknown"))
             label = t.get("label", target_id)
             url = t.get("url")
             extract_rules = t.get("extract")
             if url:
-                change_events.append(process_target(target_id, label, url, extract_rules))
+                change_events.append(process_one(target_id, label, url, extract_rules))
             else:
-                print(f"\n--- {label} --- Skipping: no URL")
+                log.warning("--- %s --- Skipping: no URL", label)
     else:
-        change_events.append(process_target("default", "default", TARGET_URL, None))
+        change_events.append(process_one("default", "default", TARGET_URL, None))
 
     report = render_report(change_events)
-    print("\n" + report)
+    log.info("\n%s", report)
     REPORT_FILE.write_text(report, encoding="utf-8")
-    print(f"Report written to {REPORT_FILE}")
+    log.info("Report written to %s", REPORT_FILE)
 
-    has_changes = any(_has_changes(e["change"]) for e in change_events)
+    has_changes = any(
+        _has_changes(e["change"]) for e in change_events if "error" not in e
+    ) or any("error" in e for e in change_events)
     if has_changes:
         from emailer import send_report
+
         send_report(report, has_changes)
+
+    if os.environ.get("CHANGELOG_BUCKET", "").strip():
+        from storage.changelog_s3 import append_change_events as s3_append
+
+        uri = s3_append(run_timestamp, change_events)
+        if uri:
+            log.info("Change events appended to %s", uri)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,15 @@
+services:
+  web-change-tracker:
+    build: .
+    container_name: web-change-tracker
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - USE_PLAYWRIGHT=1
+      - TZ=UTC
+    volumes:
+      # Mount project dir: targets.json, state.json, last_report.txt
+      - .:/app
+    working_dir: /app
+    command: ["python", "spike.py"]

@@ -1,0 +1,25 @@
+# Copy to terraform.tfvars and fill in values
+
+# Required: networking
+vpc_id             = "vpc-xxxxxxxxx"
+private_subnet_ids = ["subnet-aaaaaaa", "subnet-bbbbbbb"]
+
+# Optional: use existing security group (must allow outbound HTTPS)
+# security_group_ids = ["sg-xxxxxxxxx"]
+
+# Optional: use existing DynamoDB table and S3 bucket instead of creating
+# create_dynamodb_table    = false
+# existing_state_table_name = "my-state-table"
+# create_changelog_bucket   = false
+# existing_changelog_bucket_name = "my-changelog-bucket"
+
+# Email (set enable_ses = true and fill in)
+# enable_ses  = true
+# from_email  = "verified@example.com"
+# to_emails   = "recipient@example.com"
+
+# Override defaults
+# schedule_expression = "rate(6 hours)"
+# task_cpu            = 512
+# task_memory_mb      = 1024
+# aws_region          = "us-east-1"

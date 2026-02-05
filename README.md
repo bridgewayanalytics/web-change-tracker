@@ -64,7 +64,7 @@ The system takes a configured list of target URLs, fetches each page (including 
 | **Scraper** | Fetches pages via Playwright (JS-rendered) or requests + BeautifulSoup (simple pages) |
 | **Normalizer** | Extracts signals (meetings, docs, text) using pluggable extractors |
 | **Diff Engine** | Computes fingerprints (SHA256), compares to stored state, detects changes |
-| **Persist State** | `state_store.py` abstraction: `LocalStateStore` (state.json) for local runs; `S3StateStore` stub for AWS; DynamoDB/S3 in production |
+| **Persist State** | `storage/` module: local (`state.json`) for dev; DynamoDB for production. Select via `STATE_BACKEND=local|dynamodb`. |
 | **Notifier** | SES sends email summary of changes |
 
 ### AWS Resources
@@ -169,9 +169,16 @@ Reports group by target, then by resource type. Output is written to `last_repor
 ```
 web-change-tracker/
 ├── spike.py              # Main change-detection pipeline (fetch → extract → diff → report)
-├── state_store.py        # Storage abstraction: LocalStateStore (state.json), S3StateStore (stub)
+├── storage/
+│   ├── state_store_dynamodb.py  # DynamoDB per-target state (load_target_state, save_target_state)
+│   ├── state_store_local.py     # Local state.json (dev)
+│   └── changelog_s3.py          # S3 append-only changelog (append_change_events)
+├── state_store.py        # Legacy StateStore (LocalStateStore, S3StateStore stub)
 ├── emailer.py            # Optional SES email when changes detected (SEND_EMAIL, DRY_RUN)
 ├── targets.json          # Target config with extract rules
+├── Dockerfile            # Playwright Python base, app deps, CMD python spike.py
+├── docker-compose.yml    # Local runs with env-file support
+├── .env.example          # Env template (targets, state, email)
 ├── Makefile              # Local and CI commands (make run, make ci)
 ├── scripts/
 │   ├── run-local.sh      # Run locally (creates venv if needed)
@@ -180,8 +187,9 @@ web-change-tracker/
 ├── requirements.txt
 ├── state.json            # Local state (gitignored)
 ├── last_report.txt       # Latest report output (gitignored)
+├── snapshots/            # Test mode: saved snapshots per target (gitignored)
 ├── docs/                 # Design docs, ADRs (future)
-├── infra/                # IaC (Terraform or CDK) (future)
+├── infra/                # Terraform: ECS Fargate, EventBridge, DynamoDB, S3, IAM
 └── tests/                # Unit / integration tests (future)
 ```
 
@@ -193,9 +201,9 @@ End-to-end testing depends on real site changes, so we rely on layered testing:
 
 | Strategy | Description |
 |----------|-------------|
+| **Snapshot test mode** | `--snapshot-dir` saves content per target; `--compare-snapshot` compares against snapshots. Edit snapshot files to simulate changes without waiting for site updates. Works with `USE_PLAYWRIGHT=0` (requests fallback). |
 | **Unit tests** | Deterministic tests using saved HTML fixtures; mock DynamoDB/S3 |
 | **Integration tests** | Against static snapshots; fixtures in `tests/fixtures/` |
-| **Simulation mode** | Swap live fetcher for fixture loader to simulate "before/after" without hitting live sites |
 | **Manual test plan** | Documented steps: deploy to dev, add test target, trigger run, verify email and state |
 
 ---
@@ -241,6 +249,25 @@ make install-playwright   # optional; falls back to requests if unavailable
 make run                  # run the pipeline
 ```
 
+**Docker (Playwright included):**
+
+```bash
+# Build and run with docker-compose (env from .env)
+cp .env.example .env      # optional; edit as needed
+docker compose up --build
+
+# Or run once with docker
+docker build -t web-change-tracker .
+docker run --rm -v $(pwd):/app -e USE_PLAYWRIGHT=1 web-change-tracker
+```
+
+Required env vars for Docker (see `.env.example`):
+- **Targets:** `TARGETS_FILE` (default `targets.json`); `TARGET_IDS` (comma-separated) to restrict to a subset.
+- **State backend:** `STATE_BACKEND=local` (default) for `state.json`; `STATE_BACKEND=dynamodb` + `STATE_TABLE` for production.
+- **Changelog:** `CHANGELOG_BUCKET`, `CHANGELOG_PREFIX` (default `changelog/`) to append events to S3.
+- **Email:** `SEND_EMAIL`, `FROM_EMAIL`, `TO_EMAILS`, `SES_REGION`; `DRY_RUN=true` to test without sending.
+- **AWS:** `AWS_REGION`, credentials when using DynamoDB/S3/SES.
+
 Or use the script:
 
 ```bash
@@ -255,13 +282,50 @@ make ci                   # install, lint, run
 ./scripts/run-ci.sh
 ```
 
+**Test mode (validate change detection without waiting for site updates):**
+
+```bash
+# 1. Save snapshots (normalized content + extracted lists per target)
+python spike.py --snapshot-dir snapshots/
+
+# 2. Simulate change: edit snapshots/<target_id>.json (e.g. remove a doc URL)
+# 3. Compare current scrape against snapshot (no state.json updated; snapshots not overwritten)
+python spike.py --compare-snapshot
+
+# Or with explicit dir: --snapshot-dir snapshots/ --compare-snapshot
+# Works with requests fallback (no Playwright needed):
+USE_PLAYWRIGHT=0 python spike.py --snapshot-dir snapshots/
+USE_PLAYWRIGHT=0 python spike.py --compare-snapshot
+```
+
 - Edit `targets.json` to add or modify targets and extract rules.
-- State is persisted in `state.json` (LocalStateStore).
+
+**Target selection:**
+
+```bash
+# Full run (all targets from targets.json)
+python spike.py
+
+# Custom targets file
+python spike.py --targets-file config/my-targets.json
+
+# Subset run (only specified target IDs)
+python spike.py --target-ids life_rbc_wg,naic_events_example
+
+# Via env vars
+TARGETS_FILE=config/targets.json TARGET_IDS=life_rbc_wg python spike.py
+```
+
+- State is persisted per target_id (state.json or DynamoDB); subset runs only read/write state for processed targets.
 - Report output is in `last_report.txt`.
 
-**Optional email (SES):** Set `SEND_EMAIL=true`, `FROM_EMAIL`, `TO_EMAILS` (comma-separated), `SES_REGION`. Email is sent only when changes are detected. Set `DRY_RUN=true` to print the email without sending.
+**Production hardening env vars:** `MAX_RETRIES` (default 3), `BACKOFF_SECONDS` (default 2), `DELAY_BETWEEN_PAGES` (default 1). Failures on one target don’t stop the run; errors are collected and included in the final report.
 
-- See `ARCHITECTURE.md` for AWS deployment (EventBridge → Lambda or ECS Fargate).
+**Production storage:** Set `STATE_BACKEND=dynamodb`, `STATE_TABLE`, `CHANGELOG_BUCKET`, `CHANGELOG_PREFIX` (default `changelog/`), and `AWS_REGION`. Run flow: load each target's state from DynamoDB → scrape → diff → save state to DynamoDB → append change events to S3. See `ARCHITECTURE.md` for schema and IAM policies.
+
+**Optional email (SES):** Set `SEND_EMAIL=true`, `FROM_EMAIL`, `TO_EMAILS` (comma-separated), `SES_REGION`. Email is sent only when changes or errors are detected. Set `DRY_RUN=true` to print the email without sending.
+
+- See `ARCHITECTURE.md` for AWS deployment. Use `infra/` Terraform for a scheduled ECS Fargate MVP.
 
 ---
 
