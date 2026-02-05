@@ -59,6 +59,73 @@ BACKOFF_SECONDS = _int_env("BACKOFF_SECONDS", 2)
 DELAY_BETWEEN_PAGES = _int_env("DELAY_BETWEEN_PAGES", 1)
 
 # -----------------------------------------------------------------------------
+# URL filtering: global denylist + per-extractor allow/deny
+# -----------------------------------------------------------------------------
+
+# Domains to always exclude (common utilities, social, etc.)
+GLOBAL_DENY_DOMAINS = [
+    "translate.google.com",
+    "www.google.com",
+    "google.com",
+    "facebook.com",
+    "twitter.com",
+    "x.com",
+    "linkedin.com",
+    "youtube.com",
+    "instagram.com",
+    "accounts.google.com",
+    "login.microsoftonline.com",
+    "bit.ly",
+    "tinyurl.com",
+]
+
+# Path substrings that exclude a URL (e.g. /translate, /share)
+GLOBAL_DENY_PATH_PATTERNS = ["/translate?", "/intl/", "/share?", "javascript:", "mailto:"]
+
+
+def _domain_matches(netloc: str, domain: str) -> bool:
+    """True if netloc equals domain or is a subdomain of it."""
+    domain = domain.lower().strip().lstrip(".")
+    netloc = netloc.lower()
+    return netloc == domain or netloc.endswith("." + domain)
+
+
+def _url_passes_filter(full_url: str, params: dict) -> bool:
+    """
+    Apply global denylist and optional params.allow_domains / params.deny_domains.
+    Returns True if URL should be kept.
+    """
+    parsed = urlparse(full_url)
+    scheme = (parsed.scheme or "").lower()
+    netloc = (parsed.netloc or "").lower()
+    path = parsed.path or ""
+
+    if scheme not in ("http", "https"):
+        return False
+
+    url_lower = full_url.lower()
+    for pat in GLOBAL_DENY_PATH_PATTERNS:
+        if pat in url_lower:
+            return False
+
+    for d in GLOBAL_DENY_DOMAINS:
+        if _domain_matches(netloc, d):
+            return False
+
+    deny = params.get("deny_domains") or []
+    for d in deny:
+        if _domain_matches(netloc, d):
+            return False
+
+    allow = params.get("allow_domains")
+    if allow:
+        if not any(_domain_matches(netloc, a) for a in allow):
+            return False
+
+    return True
+
+
+# -----------------------------------------------------------------------------
 # Extractors: map name -> callable(soup, base_url, params) -> list[dict]
 # Each extractor returns a list of dicts with stable keys for diffing (url for links, triple for events).
 # -----------------------------------------------------------------------------
@@ -73,7 +140,7 @@ def _link_collector_v1(soup: BeautifulSoup, base_url: str, params: dict) -> list
         full_url = urljoin(base_url, href)
         parsed = urlparse(full_url)
         path = parsed.path.lower()
-        if any(path.endswith(ext) for ext in extensions):
+        if any(path.endswith(ext) for ext in extensions) and _url_passes_filter(full_url, params):
             label = (a.get_text(strip=True) or path.split("/")[-1] or full_url)[:80]
             results.append({"label": label, "url": full_url})
     return results
@@ -93,7 +160,7 @@ def _keyword_links_v1(soup: BeautifulSoup, base_url: str, params: dict) -> list[
         text_lower = text.lower()
         if any(kw in text_lower for kw in keywords):
             full_url = urljoin(base_url, a["href"])
-            if full_url not in seen:
+            if full_url not in seen and _url_passes_filter(full_url, params):
                 seen.add(full_url)
                 results.append({"label": text[:80], "url": full_url})
     return results
@@ -104,9 +171,11 @@ def _naic_events_v1(soup: BeautifulSoup, base_url: str, params: dict) -> list[di
     # Placeholder: links with nearby date-like text. Real NAIC pages would use specific selectors.
     results: list[dict] = []
     for a in soup.find_all("a", href=True):
+        full_url = urljoin(base_url, a["href"])
+        if not _url_passes_filter(full_url, params):
+            continue
         parent = a.parent
         text = (parent.get_text(separator=" ", strip=True) if parent else a.get_text(strip=True))[:200]
-        full_url = urljoin(base_url, a["href"])
         title = a.get_text(strip=True) or full_url.split("/")[-1] or full_url
         # Look for date-like pattern in surrounding text
         dt_match = re.search(r"\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}|\d{4}[/\-]\d{1,2}[/\-]\d{1,2}", text)
@@ -379,6 +448,7 @@ def process_target(
     snapshot_dir: Path | None = None,
     compare_snapshot: bool = False,
     compare_snapshot_dir: Path | None = None,
+    dump_extracted: bool = False,
 ) -> dict:
     """Process one target: fetch, extract, diff, save, print."""
     log.info("--- %s ---", label)
@@ -388,6 +458,18 @@ def process_target(
 
     rules = extract_rules if extract_rules else DEFAULT_EXTRACT
     extracted = run_extractors(soup, url, rules)
+
+    if dump_extracted:
+        from datetime import datetime, timezone
+
+        ts = int(datetime.now(timezone.utc).timestamp())
+        out = json.dumps(extracted, indent=2)
+        print(out)
+        debug_dir = Path("debug")
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        debug_path = debug_dir / f"{target_id}-{ts}.json"
+        debug_path.write_text(out, encoding="utf-8")
+        log.info("Extracted JSON saved to %s", debug_path)
 
     from_snapshot = compare_snapshot_dir if compare_snapshot else None
     prev = load_state(target_id, from_snapshot_dir=from_snapshot)
@@ -450,6 +532,18 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Compare current scrape against snapshot files instead of prior state (use with --snapshot-dir)",
     )
+    p.add_argument(
+        "--target-id",
+        type=str,
+        default=None,
+        metavar="ID",
+        help="Run only one target (overrides --target-ids)",
+    )
+    p.add_argument(
+        "--dump-extracted",
+        action="store_true",
+        help="Print extracted resource JSON (docs/event_links/events) to stdout and save to debug/<id>-<timestamp>.json",
+    )
     return p.parse_args()
 
 
@@ -460,15 +554,17 @@ def main() -> None:
     run_timestamp = int(datetime.now(timezone.utc).timestamp())
     targets = load_targets(args.targets_file)
 
-    # Filter by target_ids if provided
+    # Filter by target_id (single) or target_ids if provided
     target_ids_filter: set[str] | None = None
-    if args.target_ids:
+    if args.target_id:
+        target_ids_filter = {args.target_id.strip()}
+    elif args.target_ids:
         target_ids_filter = {s.strip() for s in args.target_ids.split(",") if s.strip()}
 
     if targets and target_ids_filter is not None:
         targets = [t for t in targets if t.get("id", t.get("url", "unknown")) in target_ids_filter]
         if not targets:
-            log.warning("No targets match --target-ids %s", args.target_ids)
+            log.warning("No targets match --target-id/--target-ids %s", args.target_id or args.target_ids)
             return
 
     change_events: list[dict] = []
@@ -486,6 +582,7 @@ def main() -> None:
                 snapshot_dir=args.snapshot_dir,
                 compare_snapshot=args.compare_snapshot,
                 compare_snapshot_dir=compare_snapshot_dir,
+                dump_extracted=args.dump_extracted,
             )
         except Exception as e:
             log.error("Target %s failed: %s", label, e, exc_info=False)

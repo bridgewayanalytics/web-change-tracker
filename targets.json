@@ -8,13 +8,13 @@
       {
         "type": "docs",
         "extractor": "link_collector_v1",
-        "params": { "extensions": [".pdf"] },
+        "params": { "extensions": [".pdf"], "allow_domains": ["content.naic.org"] },
         "_purpose": "Track newly posted call materials and PDFs."
       },
       {
         "type": "event_links",
         "extractor": "keyword_links_v1",
-        "params": { "keywords": ["meeting", "agenda", "materials", "call"] },
+        "params": { "keywords": ["meeting", "agenda", "materials", "call"], "allow_domains": ["content.naic.org"] },
         "_purpose": "Track links related to meetings and agendas."
       }
     ]
@@ -28,7 +28,7 @@
       {
         "type": "events",
         "extractor": "naic_events_v1",
-        "params": {},
+        "params": { "allow_domains": ["content.naic.org"] },
         "_purpose": "Track newly listed NAIC events and changes to scheduled events."
       }
     ]
