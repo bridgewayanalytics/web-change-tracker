@@ -64,7 +64,7 @@ The system takes a configured list of target URLs, fetches each page (including 
 | **Scraper** | Fetches pages via Playwright (JS-rendered) or requests + BeautifulSoup (simple pages) |
 | **Normalizer** | Extracts signals (meetings, docs, text) using pluggable extractors |
 | **Diff Engine** | Computes fingerprints (SHA256), compares to stored state, detects changes |
-| **Persist State** | DynamoDB stores last-seen fingerprints and metadata; S3 stores downloaded PDFs |
+| **Persist State** | `state_store.py` abstraction: `LocalStateStore` (state.json) for local runs; `S3StateStore` stub for AWS; DynamoDB/S3 in production |
 | **Notifier** | SES sends email summary of changes |
 
 ### AWS Resources
@@ -92,48 +92,58 @@ The system takes a configured list of target URLs, fetches each page (including 
 
 ## Target Configuration
 
-Targets are defined in YAML or JSON. Example:
+Targets are defined in `targets.json` with a resource-type driven `extract` array:
 
-```yaml
-targets:
-  - name: "Example Commission Meetings"
-    url: "https://example.gov/meetings"
-    type: "generic"           # or "naic-like" for specialized extractors
-    enabled: true
-    schedule: "0 */6 * * *"   # every 6 hours (cron)
-    selectors:
-      meeting_list: ".meeting-list li"
-      main_content: "#main-content"
-    asset_link_patterns:
-      - ".*\\.pdf$"
-      - ".*/documents/.*"
+```json
+[
+  {
+    "id": "life_rbc_wg",
+    "label": "Life RBC Working Group",
+    "url": "https://example.com",
+    "extract": [
+      {
+        "type": "docs",
+        "extractor": "link_collector_v1",
+        "params": { "extensions": [".pdf"] },
+        "_purpose": "Collect PDF documents linked from the page."
+      },
+      {
+        "type": "event_links",
+        "extractor": "keyword_links_v1",
+        "params": { "keywords": ["meeting", "agenda"] },
+        "_purpose": "Links whose visible text mentions meetings or agendas."
+      }
+    ]
+  }
+]
 ```
 
 | Field | Description |
 |-------|-------------|
-| `name` | Human-readable label for reports |
+| `id` | Unique identifier for state persistence |
+| `label` | Human-readable label for reports |
 | `url` | Page URL to monitor |
-| `type` | `generic` or domain-specific (e.g. `naic-like`) for extractor selection |
-| `selectors` | Optional CSS/XPath for targeted extraction |
-| `asset_link_patterns` | Regex patterns for downloadable links (PDFs, etc.) |
-| `schedule` | Cron expression; overrides default if set |
-| `enabled` | Toggle target on/off |
+| `extract` | Array of rules: `{ type, extractor, params }` |
+
+**Extractors:**
+- `link_collector_v1` — collects links matching `params.extensions` (e.g. `[".pdf"]`); returns `{label, url}`
+- `keyword_links_v1` — collects links whose text contains any `params.keywords`; returns `{label, url}`
+- `naic_events_v1` — NAIC-specific event extraction; returns `{title, datetime_text, url}`
 
 ---
 
 ## Change Event Model
 
-When a change is detected, a **change event** is recorded:
+When a change is detected, a **change event** is computed per target and resource type:
 
 | Field | Description |
 |-------|-------------|
-| `timestamp` | When the change was detected (ISO 8601) |
-| `target_name` | From target config `name` |
-| `change_type` | `new_meeting` \| `new_pdf` \| `page_text_change` \| `asset_updated` |
-| `before_hash` | Previous fingerprint (SHA256) |
-| `after_hash` | Current fingerprint |
-| `extracted_links` | URLs of new/changed assets |
-| `notes` | Optional human-readable description |
+| `first_run` | No previous state; baseline recorded |
+| `page_changed` | Page text hash (SHA256) changed |
+| `by_type` | Per resource type: `{added: [...], removed: [...]}` — stable keys (URL for links, triple for events) |
+| `before_hash` / `after_hash` | Previous and current page fingerprints |
+
+Reports group by target, then by resource type. Output is written to `last_report.txt`.
 
 ---
 
@@ -154,25 +164,25 @@ When a change is detected, a **change event** is recorded:
 
 ---
 
-## Repository Structure (Proposed)
+## Repository Structure
 
 ```
 web-change-tracker/
-├── docs/                 # Design docs, ADRs
-├── src/                  # Python source
-│   ├── scrapers/
-│   ├── normalizers/
-│   ├── diff_engine/
-│   ├── persist/
-│   └── notifiers/
-├── infra/                # IaC (Terraform or CDK)
-├── examples/             # Sample configs
-│   └── targets.example.yaml
-├── tests/
-│   ├── unit/
-│   └── integration/
-├── config.yaml           # Default config
-└── README.md
+├── spike.py              # Main change-detection pipeline (fetch → extract → diff → report)
+├── state_store.py        # Storage abstraction: LocalStateStore (state.json), S3StateStore (stub)
+├── emailer.py            # Optional SES email when changes detected (SEND_EMAIL, DRY_RUN)
+├── targets.json          # Target config with extract rules
+├── Makefile              # Local and CI commands (make run, make ci)
+├── scripts/
+│   ├── run-local.sh      # Run locally (creates venv if needed)
+│   └── run-ci.sh         # CI: install, lint, run
+├── ARCHITECTURE.md       # AWS deployment: EventBridge → Lambda or ECS Fargate
+├── requirements.txt
+├── state.json            # Local state (gitignored)
+├── last_report.txt       # Latest report output (gitignored)
+├── docs/                 # Design docs, ADRs (future)
+├── infra/                # IaC (Terraform or CDK) (future)
+└── tests/                # Unit / integration tests (future)
 ```
 
 ---
@@ -204,26 +214,54 @@ End-to-end testing depends on real site changes, so we rely on layered testing:
 
 **Goal:** Change detection + email summary only. No external integrations (e.g., Bubble) yet.
 
-**Done means:**
+**Done (local spike):**
 
-- [ ] Target config loaded from YAML/JSON
-- [ ] Scraper fetches configured URLs (Playwright + requests fallback)
-- [ ] Normalizer extracts text and asset links; computes page + asset fingerprints
-- [ ] Diff engine compares to DynamoDB; records change events on delta
-- [ ] Email summary sent via SES with change list (target, change type, links)
-- [ ] EventBridge triggers runs on schedule (e.g., every 6 hours)
-- [ ] Basic CloudWatch logs and a “run succeeded/failed” metric
+- [x] Target config loaded from `targets.json` (extract array, resource-type driven)
+- [x] Scraper fetches URLs (Playwright + requests fallback)
+- [x] Extractors: link_collector_v1, keyword_links_v1, naic_events_v1
+- [x] Diff engine compares to stored state; detects changes per resource type
+- [x] Report written to last_report.txt (grouped by target, then resource type)
+- [x] State store abstraction (LocalStateStore, S3StateStore stub)
+
+**Remaining (AWS):**
+
+- [ ] Email summary via SES
+- [ ] EventBridge triggers runs on schedule
+- [ ] CloudWatch logs and metrics
 
 ---
 
-## Getting Started (Future)
+## Getting Started
 
-Once implemented:
+**Local run:**
 
-1. Copy `examples/targets.example.yaml` to `config/targets.yaml`
-2. Configure AWS credentials and deploy infra (`infra/`)
-3. Run locally with `make run` or deploy to Lambda/ECS
-4. Verify first run in CloudWatch; check email for change summary
+```bash
+make install              # create venv, install deps
+make install-playwright   # optional; falls back to requests if unavailable
+make run                  # run the pipeline
+```
+
+Or use the script:
+
+```bash
+./scripts/run-local.sh
+```
+
+**CI (e.g. GitHub Actions):**
+
+```bash
+make ci                   # install, lint, run
+# or
+./scripts/run-ci.sh
+```
+
+- Edit `targets.json` to add or modify targets and extract rules.
+- State is persisted in `state.json` (LocalStateStore).
+- Report output is in `last_report.txt`.
+
+**Optional email (SES):** Set `SEND_EMAIL=true`, `FROM_EMAIL`, `TO_EMAILS` (comma-separated), `SES_REGION`. Email is sent only when changes are detected. Set `DRY_RUN=true` to print the email without sending.
+
+- See `ARCHITECTURE.md` for AWS deployment (EventBridge → Lambda or ECS Fargate).
 
 ---
 

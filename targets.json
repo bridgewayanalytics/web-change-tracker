@@ -3,6 +3,34 @@
     "id": "life_rbc_wg",
     "label": "Life RBC Working Group",
     "type": "series",
-    "url": "https://example.com"
+    "url": "https://example.com",
+    "extract": [
+      {
+        "type": "docs",
+        "extractor": "link_collector_v1",
+        "params": { "extensions": [".pdf"] },
+        "_purpose": "Collect PDF documents linked from the page."
+      },
+      {
+        "type": "event_links",
+        "extractor": "keyword_links_v1",
+        "params": { "keywords": ["meeting", "agenda", "event"] },
+        "_purpose": "Links whose visible text mentions meetings, agendas, or events."
+      }
+    ]
+  },
+  {
+    "id": "naic_events_example",
+    "label": "NAIC Events",
+    "type": "series",
+    "url": "https://example.com",
+    "extract": [
+      {
+        "type": "events",
+        "extractor": "naic_events_v1",
+        "params": {},
+        "_purpose": "NAIC-specific event/meeting extraction (title, datetime, url)."
+      }
+    ]
   }
 ]
