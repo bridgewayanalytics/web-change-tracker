@@ -1,36 +1,157 @@
 [
   {
-    "id": "life_rbc_wg",
-    "label": "Life RBC Working Group",
-    "type": "series",
-    "url": "https://content.naic.org/committees/e/life-risk-based-capital-wg",
+    "id": "naic.e.index",
+    "label": "E Committee Index",
+    "org_id": "naic",
+    "org_path": ["NAIC", "E"],
+    "group": "committee_index",
+    "tags": ["committee:E", "index"],
+    "url": "https://content.naic.org/cmte_e.htm",
     "extract": [
-      {
-        "type": "docs",
-        "extractor": "link_collector_v1",
-        "params": { "extensions": [".pdf"], "allow_domains": ["content.naic.org"] },
-        "_purpose": "Track newly posted call materials and PDFs."
-      },
-      {
-        "type": "event_links",
-        "extractor": "keyword_links_v1",
-        "params": { "keywords": ["meeting", "agenda", "materials", "call"], "allow_domains": ["content.naic.org"] },
-        "_purpose": "Track links related to meetings and agendas."
-      }
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting","agenda","materials","call"] } }
     ]
   },
+
   {
-    "id": "naic_events",
-    "label": "NAIC Public Events",
-    "type": "events",
-    "url": "https://content.naic.org/events",
+    "id": "naic.e.statutory_accounting_principles_wg",
+    "label": "Statutory Accounting Principles Working Group",
+    "org_id": "naic",
+    "org_path": ["NAIC", "E", "Working Groups"],
+    "group": "working_group",
+    "tags": ["committee:E", "wg"],
+    "url": "https://content.naic.org/committees/e/statutory-accounting-principles-wg",
     "extract": [
-      {
-        "type": "events",
-        "extractor": "naic_events_v1",
-        "params": { "allow_domains": ["content.naic.org"] },
-        "_purpose": "Track newly listed NAIC events and changes to scheduled events."
-      }
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting","agenda","materials","call"] } }
+    ]
+  },
+
+  {
+    "id": "naic.e.blanks_wg",
+    "label": "Blanks Working Group",
+    "org_id": "naic",
+    "org_path": ["NAIC", "E", "Working Groups"],
+    "group": "working_group",
+    "tags": ["committee:E", "wg"],
+    "url": "https://content.naic.org/committees/e/blanks-wg",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting","agenda","materials","call"] } }
+    ]
+  },
+
+  {
+    "id": "naic.e.capital_adequacy_tf",
+    "label": "Capital Adequacy Task Force",
+    "org_id": "naic",
+    "org_path": ["NAIC", "E", "Task Forces"],
+    "group": "task_force",
+    "tags": ["committee:E", "tf"],
+    "url": "https://content.naic.org/committees/e/capital-adequacy-tf",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting","agenda","materials","call"] } },
+      { "type": "meetings", "extractor": "naic_meetings_v1", "params": {} }
+    ]
+  },
+
+  {
+    "id": "naic.e.health_rbc_wg",
+    "label": "Health Risk-Based Capital Working Group",
+    "org_id": "naic",
+    "org_path": ["NAIC", "E", "Working Groups"],
+    "group": "working_group",
+    "tags": ["committee:E", "wg", "rbc"],
+    "url": "https://content.naic.org/committees/e/health-risk-based-capital-wg",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting","agenda","materials","call"] } },
+      { "type": "meetings", "extractor": "naic_meetings_v1", "params": {} }
+    ]
+  },
+
+  {
+    "id": "naic.e.life_rbc_wg",
+    "label": "Life Risk-Based Capital Working Group",
+    "org_id": "naic",
+    "org_path": ["NAIC", "E", "Working Groups"],
+    "group": "working_group",
+    "tags": ["committee:E", "wg", "rbc"],
+    "url": "https://content.naic.org/committees/e/life-risk-based-capital-wg",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting","agenda","materials","call"] } },
+      { "type": "meetings", "extractor": "naic_meetings_v1", "params": {} }
+    ]
+  },
+
+  {
+    "id": "naic.ae.generator_economic_scenarios_sg",
+    "label": "Generator Economic Scenarios Subgroup",
+    "org_id": "naic",
+    "org_path": ["NAIC", "A/E", "Subgroups"],
+    "group": "subgroup",
+    "tags": ["subgroup"],
+    "url": "https://content.naic.org/committees/a-e/generator-economic-scenarios-sg",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting","agenda","materials","call"] } }
+    ]
+  },
+
+  {
+    "id": "naic.e.property_casualty_rbc_wg",
+    "label": "Property & Casualty Risk-Based Capital Working Group",
+    "org_id": "naic",
+    "org_path": ["NAIC", "E", "Working Groups"],
+    "group": "working_group",
+    "tags": ["committee:E", "wg", "rbc"],
+    "url": "https://content.naic.org/committees/e/property-casualty-risk-based-capital-wg",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting","agenda","materials","call"] } }
+    ]
+  },
+
+  {
+    "id": "naic.e.financial_stability_tf",
+    "label": "Financial Stability Task Force",
+    "org_id": "naic",
+    "org_path": ["NAIC", "E", "Task Forces"],
+    "group": "task_force",
+    "tags": ["committee:E", "tf"],
+    "url": "https://content.naic.org/committees/e/financial-stability-tf",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting","agenda","materials","call"] } }
+    ]
+  },
+
+  {
+    "id": "naic.newsroom",
+    "label": "NAIC Newsroom",
+    "org_id": "naic",
+    "org_path": ["NAIC", "Newsroom"],
+    "group": "news",
+    "tags": ["news"],
+    "url": "https://content.naic.org/newsroom",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["announcement","release","notice"] } }
+    ]
+  },
+
+  {
+    "id": "naic.capital_markets_bureau",
+    "label": "Capital Markets Bureau",
+    "org_id": "naic",
+    "org_path": ["NAIC", "Bureaus", "Capital Markets"],
+    "group": "bureau",
+    "tags": ["bureau"],
+    "url": "https://content.naic.org/capital-markets-bureau",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } }
     ]
   }
 ]

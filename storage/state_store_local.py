@@ -29,12 +29,12 @@ def _save_full(data: dict[str, Any]) -> None:
 
 
 def _migrate_state(s: dict | None) -> dict | None:
-    """Migrate old extracted format to new extracted[resource_type]."""
+    """Migrate old extracted format to new extracted[resource_type] with {title, url} items."""
     if not s:
         return s
     if "pdf_links" in s and "extracted" not in s:
         s = dict(s)
-        s["extracted"] = {"docs": [{"label": u, "url": u} for u in s.get("pdf_links", [])]}
+        s["extracted"] = {"docs": [{"title": u.split("/")[-1] or u[:60], "url": u} for u in s.get("pdf_links", [])]}
         del s["pdf_links"]
     return s
 

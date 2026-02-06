@@ -124,10 +124,23 @@ Targets are defined in `targets.json` with a resource-type driven `extract` arra
 | `label` | Human-readable label for reports |
 | `url` | Page URL to monitor |
 | `extract` | Array of rules: `{ type, extractor, params }` |
+| `org_id` | Optional. Organization ID for report grouping (e.g. `"naic"`) |
+| `org_path` | Optional. Array of path segments for sub-grouping (e.g. `["committees","e"]`) |
+| `group` | Optional. Group label (e.g. `"working-groups"`) |
+| `tags` | Optional. Array of tags for filtering or categorization |
+
+**URL filtering (all link-based extractors):**
+- `allow_domains` — optional list; if set, only URLs from these domains are kept
+- `deny_domains` — optional list; URLs from these domains are excluded
+- Default deny list includes `translate.google.com`, `add-to-calendar-pro.com`, and common social domains
+
+**keyword_links_v1** additionally supports:
+- `deny_url_patterns` — regex list for path/URL; default excludes social and nav paths (`/facebook`, `/twitter`, `/linkedin`, `/connect`, etc.). Pass `[]` to disable.
 
 **Extractors:**
-- `link_collector_v1` — collects links matching `params.extensions` (e.g. `[".pdf"]`); returns `{label, url}`
-- `keyword_links_v1` — collects links whose text contains any `params.keywords`; returns `{label, url}`
+- `link_collector_v1` — collects links matching `params.extensions` (e.g. `[".pdf"]`); returns `{title, url}` (title: anchor text, else filename, else host/path)
+- `keyword_links_v1` — collects links whose text contains any `params.keywords`; returns `{title, url}`
+- `naic_meetings_v1` — NAIC meeting blocks (Public Webex Meeting); returns `{title, date_text, time_text, expected_duration, webex_url, agenda_url, materials_url, notes}`
 - `naic_events_v1` — NAIC-specific event extraction; returns `{title, datetime_text, url}`
 
 ---
