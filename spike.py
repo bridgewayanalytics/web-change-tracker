@@ -3,6 +3,7 @@
 """Minimal change detection spike: fetch -> extract -> diff (per resource type) -> report."""
 
 import argparse
+import copy
 import hashlib
 import json
 import logging
@@ -1276,6 +1277,8 @@ def process_target(
     dump_extracted: bool = False,
     dump_html_snapshot: bool = False,
     debug_extract: bool = False,
+    skip_persist: bool = False,
+    inject_fakes: bool = False,
 ) -> dict:
     """Process one target: fetch, extract, diff, save, print."""
     log.info("--- %s ---", label)
@@ -1309,9 +1312,26 @@ def process_target(
 
     from_snapshot = compare_snapshot_dir if compare_snapshot else None
     prev = load_state(target_id, from_snapshot_dir=from_snapshot)
-    change = compute_change(prev, page_hash, extracted)
 
-    save_state(target_id, page_hash, extracted, skip=compare_snapshot)
+    curr_for_diff = extracted
+    if inject_fakes:
+        curr_for_diff = copy.deepcopy(extracted)
+        curr_for_diff.setdefault("docs", []).append({"title": "[SIMULATED] Test Document", "url": "https://example.com/simulated-doc.pdf"})
+        curr_for_diff.setdefault("event_links", []).append({"title": "[SIMULATED] Test Event", "url": "https://example.com/simulated-event"})
+        if any((r or {}).get("type") == "meetings" for r in (extract_rules or [])):
+            curr_for_diff.setdefault("meetings", []).append({
+                "title": "[SIMULATED] Test Meeting",
+                "date_text": "Tuesday, January 15, 2025",
+                "time_text": "1:00 PM ET",
+                "expected_duration": "1 hr",
+                "webex_url": "https://example.com/simulated-webex",
+                "agenda_url": "https://example.com/simulated-agenda.pdf",
+                "materials_url": "https://example.com/simulated-materials.pdf",
+                "notes": None,
+            })
+    change = compute_change(prev, page_hash, curr_for_diff)
+
+    save_state(target_id, page_hash, extracted, skip=compare_snapshot or skip_persist)
     if snapshot_dir:
         save_snapshot(target_id, page_hash, extracted, snapshot_dir)
 
@@ -1400,6 +1420,18 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Test-only: simulate diffs from stored state and render report without persisting (requires --target-id)",
     )
+    p.add_argument(
+        "--simulate-change-all",
+        action="store_true",
+        help="Test-only: run extraction on all targets, inject fake changes into first N, produce combined report (no persist)",
+    )
+    p.add_argument(
+        "--simulate-change-n",
+        type=int,
+        default=5,
+        metavar="N",
+        help="Number of targets to inject fake changes when using --simulate-change-all (default: 5)",
+    )
     args = p.parse_args()
     if args.dump_html_snapshot and not args.target_id:
         p.error("--dump-html-snapshot requires --target-id")
@@ -1410,10 +1442,50 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def _run_simulate_change_all(targets: list[dict], n: int, verbose: bool) -> None:
+    """Test-only: run extraction on all targets, inject fake changes into first N, produce combined report. No persist."""
+    change_events: list[dict] = []
+    for i, t in enumerate(targets or []):
+        url = t.get("url")
+        if not url:
+            log.warning("--- %s --- Skipping: no URL", t.get("label", "unknown"))
+            continue
+        if i > 0 and DELAY_BETWEEN_PAGES > 0:
+            time.sleep(DELAY_BETWEEN_PAGES)
+        target_id = t.get("id", t.get("url", "unknown"))
+        label = t.get("label", target_id)
+        extract_rules = t.get("extract")
+        inject_fakes = i < n
+        try:
+            ev = process_target(
+                target_id,
+                label,
+                url,
+                extract_rules,
+                skip_persist=True,
+                inject_fakes=inject_fakes,
+            )
+            for k in ("org_id", "org_path", "group", "tags", "include_hash_changes"):
+                if k in t:
+                    ev[k] = t[k]
+            change_events.append(ev)
+        except Exception as e:
+            log.error("Target %s failed: %s", label, e, exc_info=False)
+            change_events.append({
+                "target_id": target_id,
+                "label": label,
+                "url": url,
+                "error": str(e),
+                **{k: t[k] for k in ("org_id", "org_path", "group", "tags", "include_hash_changes") if k in t},
+            })
+    report = render_report(change_events, verbose=verbose)
+    log.info("\n[SIMULATE-CHANGE-ALL - not persisted]\n%s", report)
+    REPORT_FILE.write_text(report, encoding="utf-8")
+    log.info("Report written to %s", REPORT_FILE)
+
+
 def _run_simulate_change(target_id: str, targets: list[dict], verbose: bool) -> None:
     """Test-only: simulate diffs from stored state, render report, do NOT persist."""
-    import copy
-
     target = next((t for t in targets if t.get("id", t.get("url", "unknown")) == target_id), None)
     if not target:
         log.error("Target %s not found in targets file", target_id)
@@ -1502,9 +1574,14 @@ def main() -> None:
             log.warning("No targets match --target-id/--target-ids %s", args.target_id or args.target_ids)
             return
 
-    # Simulate-change mode: no fetch, no persist
+    # Simulate-change mode: no fetch, no persist (single target)
     if args.simulate_change:
         _run_simulate_change(args.target_id.strip(), targets or [], args.verbose)
+        return
+
+    # Simulate-change-all: fetch + extract on all targets, inject fakes into first N, no persist
+    if args.simulate_change_all:
+        _run_simulate_change_all(targets or [], args.simulate_change_n, args.verbose)
         return
 
     change_events: list[dict] = []
