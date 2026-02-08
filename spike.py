@@ -1637,13 +1637,15 @@ def main() -> None:
     REPORT_FILE.write_text(report, encoding="utf-8")
     log.info("Report written to %s", REPORT_FILE)
 
-    has_changes = any(
-        _has_changes(e["change"]) for e in change_events if "error" not in e
-    ) or any("error" in e for e in change_events)
-    if has_changes:
+    # Only send email when EMAIL_ENABLED=true and there are meaningful changes (targets_changed > 0)
+    events_with_meaningful_changes = [
+        e for e in change_events if "error" not in e and _has_displayable_changes(e)
+    ]
+    targets_changed = len(events_with_meaningful_changes)
+    if targets_changed > 0:
         from emailer import send_report
 
-        send_report(report, has_changes)
+        send_report(report, targets_changed)
 
     if os.environ.get("CHANGELOG_BUCKET", "").strip():
         from storage.changelog_s3 import append_change_events as s3_append

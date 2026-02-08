@@ -1,0 +1,19 @@
+# Copy to terraform.tfvars and fill in values
+
+project_name = "web-change-tracker"
+region       = "us-east-1"
+environment  = "prod"
+
+# Required: SES verified sender and recipients
+email_from = "notifications@yourdomain.com"
+email_to   = "alerts@yourdomain.com"
+
+# Optional overrides
+# schedule_expression = "rate(6 hours)"
+# enable_scheduler    = true
+# cpu                 = 512
+# memory              = 1024
+
+# Override default VPC/subnets (leave null to use default)
+# vpc_id     = null
+# subnet_ids = null
