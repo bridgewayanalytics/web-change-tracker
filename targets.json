@@ -9,7 +9,7 @@
     "url": "https://content.naic.org/cmte_e.htm",
     "extract": [
       { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
-      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting","agenda","materials","call"] } }
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } }
     ]
   },
 
@@ -23,7 +23,7 @@
     "url": "https://content.naic.org/committees/e/statutory-accounting-principles-wg",
     "extract": [
       { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
-      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting","agenda","materials","call"] } }
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } }
     ]
   },
 
@@ -37,7 +37,7 @@
     "url": "https://content.naic.org/committees/e/blanks-wg",
     "extract": [
       { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
-      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting","agenda","materials","call"] } }
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } }
     ]
   },
 
@@ -51,7 +51,7 @@
     "url": "https://content.naic.org/committees/e/capital-adequacy-tf",
     "extract": [
       { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
-      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting","agenda","materials","call"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } },
       { "type": "meetings", "extractor": "naic_meetings_v1", "params": {} }
     ]
   },
@@ -66,7 +66,7 @@
     "url": "https://content.naic.org/committees/e/health-risk-based-capital-wg",
     "extract": [
       { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
-      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting","agenda","materials","call"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } },
       { "type": "meetings", "extractor": "naic_meetings_v1", "params": {} }
     ]
   },
@@ -81,7 +81,7 @@
     "url": "https://content.naic.org/committees/e/life-risk-based-capital-wg",
     "extract": [
       { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
-      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting","agenda","materials","call"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } },
       { "type": "meetings", "extractor": "naic_meetings_v1", "params": {} }
     ]
   },
@@ -96,7 +96,7 @@
     "url": "https://content.naic.org/committees/a-e/generator-economic-scenarios-sg",
     "extract": [
       { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
-      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting","agenda","materials","call"] } }
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } }
     ]
   },
 
@@ -110,7 +110,21 @@
     "url": "https://content.naic.org/committees/e/property-casualty-risk-based-capital-wg",
     "extract": [
       { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
-      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting","agenda","materials","call"] } }
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } }
+    ]
+  },
+
+  {
+    "id": "naic.e.rbc_investment_risk_evaluation_wg",
+    "label": "Risk-Based Capital Investment Risk Evaluation Working Group",
+    "org_id": "naic",
+    "org_path": ["NAIC", "E", "Working Groups"],
+    "group": "working_group",
+    "tags": ["committee:E", "wg", "rbc"],
+    "url": "https://content.naic.org/committees/e/risk-based-capital-investment-risk-evaluation-wg",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } }
     ]
   },
 
@@ -124,7 +138,217 @@
     "url": "https://content.naic.org/committees/e/financial-stability-tf",
     "extract": [
       { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
-      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting","agenda","materials","call"] } }
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } }
+    ]
+  },
+
+  {
+    "id": "naic.e.macroprudential_wg",
+    "label": "Macroprudential Working Group",
+    "org_id": "naic",
+    "org_path": ["NAIC", "E", "Working Groups"],
+    "group": "working_group",
+    "tags": ["committee:E", "wg"],
+    "url": "https://content.naic.org/committees/e/macroprudential-wg",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } }
+    ]
+  },
+
+  {
+    "id": "naic.e.group_capital_calculation_wg",
+    "label": "Group Capital Calculation Working Group",
+    "org_id": "naic",
+    "org_path": ["NAIC", "E", "Working Groups"],
+    "group": "working_group",
+    "tags": ["committee:E", "wg"],
+    "url": "https://content.naic.org/committees/e/group-capital-calculation-wg",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } }
+    ]
+  },
+
+  {
+    "id": "naic.e.invested_assets_tf",
+    "label": "Invested Assets Task Force",
+    "org_id": "naic",
+    "org_path": ["NAIC", "E", "Task Forces"],
+    "group": "task_force",
+    "tags": ["committee:E", "tf"],
+    "url": "https://content.naic.org/committees/e/invested-assets-tf",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } }
+    ]
+  },
+
+  {
+    "id": "naic.e.credit_rating_provider_wg",
+    "label": "Credit Rating Provider Working Group",
+    "org_id": "naic",
+    "org_path": ["NAIC", "E", "Working Groups"],
+    "group": "working_group",
+    "tags": ["committee:E", "wg"],
+    "url": "https://content.naic.org/committees/e/credit-rating-provider-wg",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } }
+    ]
+  },
+
+  {
+    "id": "naic.e.investment_analysis_wg",
+    "label": "Investment Analysis Working Group",
+    "org_id": "naic",
+    "org_path": ["NAIC", "E", "Working Groups"],
+    "group": "working_group",
+    "tags": ["committee:E", "wg", "investment"],
+    "url": "https://content.naic.org/committees/e/investment-analysis-wg",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } }
+    ]
+  },
+
+  {
+    "id": "naic.e.investment_designation_analysis_wg",
+    "label": "Investment Designation Analysis Working Group",
+    "org_id": "naic",
+    "org_path": ["NAIC", "E", "Working Groups"],
+    "group": "working_group",
+    "tags": ["committee:E", "wg", "investment"],
+    "url": "https://content.naic.org/committees/e/investment-designation-analysis-wg",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } }
+    ]
+  },
+
+  {
+    "id": "naic.e.reinsurance.index",
+    "label": "Reinsurance (E) Index",
+    "org_id": "naic",
+    "org_path": ["NAIC", "E", "Reinsurance"],
+    "group": "committee_index",
+    "tags": ["committee:E", "reinsurance", "index"],
+    "url": "https://content.naic.org/cmte_e_reinsurance.htm",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call", "conference"] } }
+    ]
+  },
+
+  {
+    "id": "naic.e.reinsurance_financial_analysis_wg",
+    "label": "Reinsurance Financial Analysis Working Group",
+    "org_id": "naic",
+    "org_path": ["NAIC", "E", "Reinsurance", "Working Groups"],
+    "group": "working_group",
+    "tags": ["committee:E", "wg", "reinsurance"],
+    "url": "https://content.naic.org/cmte_e_reinsurance_financial_analysis_wg.htm",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call", "conference"] } }
+    ]
+  },
+
+  {
+    "id": "naic.e.valuation_analysis_wg",
+    "label": "Valuation Analysis Working Group",
+    "org_id": "naic",
+    "org_path": ["NAIC", "E", "Valuation", "Working Groups"],
+    "group": "working_group",
+    "tags": ["committee:E", "wg", "valuation"],
+    "url": "https://content.naic.org/cmte_e_valuation_analysis_wg.htm",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call", "conference"] } }
+    ]
+  },
+
+  {
+    "id": "naic.ex.index",
+    "label": "EX Committee Index",
+    "org_id": "naic",
+    "org_path": ["NAIC", "EX"],
+    "group": "committee_index",
+    "tags": ["committee:EX", "index"],
+    "url": "https://content.naic.org/cmte_ex.htm",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } }
+    ]
+  },
+
+  {
+    "id": "naic.ex.climate_resiliency_tf",
+    "label": "Climate Resiliency Task Force",
+    "org_id": "naic",
+    "org_path": ["NAIC", "EX", "Task Forces"],
+    "group": "task_force",
+    "tags": ["committee:EX", "tf", "climate"],
+    "url": "https://content.naic.org/cmte_ex_climate_resiliency_tf.htm",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } }
+    ]
+  },
+
+  {
+    "id": "naic.ex.rbc_model_governance_tf",
+    "label": "RBC Model Governance Task Force",
+    "org_id": "naic",
+    "org_path": ["NAIC", "EX", "Task Forces"],
+    "group": "task_force",
+    "tags": ["committee:EX", "tf", "rbc"],
+    "url": "https://content.naic.org/committees/ex/rbc-model-governance-tf",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } }
+    ]
+  },
+
+  {
+    "id": "naic.a.index",
+    "label": "A Committee Index",
+    "org_id": "naic",
+    "org_path": ["NAIC", "A"],
+    "group": "committee_index",
+    "tags": ["committee:A", "index"],
+    "url": "https://content.naic.org/cmte_a.htm",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } }
+    ]
+  },
+
+  {
+    "id": "naic.a.latf",
+    "label": "Life Actuarial Task Force",
+    "org_id": "naic",
+    "org_path": ["NAIC", "A", "Task Forces"],
+    "group": "task_force",
+    "tags": ["committee:A", "tf", "actuarial"],
+    "url": "https://content.naic.org/cmte_a_latf.htm",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } }
+    ]
+  },
+
+  {
+    "id": "naic.a.latf.vm22sg",
+    "label": "VM-22 Subgroup (LATF)",
+    "org_id": "naic",
+    "org_path": ["NAIC", "A", "Task Forces", "LATF", "Subgroups"],
+    "group": "subgroup",
+    "tags": ["committee:A", "subgroup", "vm-22"],
+    "url": "https://content.naic.org/cmte_a_latf_vm22sg.htm",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } }
     ]
   },
 
@@ -138,7 +362,7 @@
     "url": "https://content.naic.org/newsroom",
     "extract": [
       { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
-      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["announcement","release","notice"] } }
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["announcement", "release", "notice", "news"] } }
     ]
   },
 
