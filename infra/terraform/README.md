@@ -59,7 +59,48 @@ terraform plan
 terraform apply
 ```
 
-### 4. Build and Push Docker Image
+(Vars are in `terraform.tfvars`; copy from `terraform.tfvars.example` and fill in `email_from`/`email_to` if needed.)
+
+### 4. Verify Schedule
+
+**AWS Console:** EventBridge → Schedulers → Schedules → `{project_name}-{environment}-schedule` (e.g. `web-change-tracker-prod-schedule`)
+
+**CLI:**
+```bash
+aws scheduler get-schedule \
+  --name $(terraform -chdir=infra/terraform output -raw scheduler_name) \
+  --group-name default \
+  --region $(terraform -chdir=infra/terraform output -raw region)
+```
+
+### 5. Run Task Manually (Run Now)
+
+**AWS Console:** EventBridge → Schedulers → Schedules → select schedule → **Invoke** (or ECS → Clusters → `web-change-tracker-prod` → Run task)
+
+**CLI:**
+```bash
+REGION=$(terraform -chdir=infra/terraform output -raw region)
+CLUSTER=$(terraform -chdir=infra/terraform output -raw ecs_cluster_name)
+TASK_DEF=$(terraform -chdir=infra/terraform output -raw task_definition_arn)
+SUBNETS=$(terraform -chdir=infra/terraform output -json subnet_ids | jq -r 'join(",")')
+SG=$(terraform -chdir=infra/terraform output -raw security_group_id)
+
+aws ecs run-task --region $REGION --cluster $CLUSTER --task-definition $TASK_DEF \
+  --launch-type FARGATE \
+  --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=ENABLED}"
+```
+
+### 6. Logs
+
+CloudWatch log group: `/ecs/{project_name}-{environment}` (e.g. `/ecs/web-change-tracker-prod`)
+
+```bash
+terraform -chdir=infra/terraform output -raw cloudwatch_log_group
+```
+
+**AWS Console:** CloudWatch → Log groups → `/ecs/web-change-tracker-prod`
+
+### 7. Build and Push Docker Image
 
 After `terraform apply`, push the app image to ECR. Use the same tag you deploy with (default: `latest`):
 
@@ -81,17 +122,6 @@ To deploy a specific image tag:
 terraform apply -var="image_tag=v1.2.3"
 ```
 
-### 5. Run the Task Manually (Optional)
-
-```bash
-aws ecs run-task \
-  --cluster $(terraform -chdir=infra/terraform output -raw ecs_cluster_name) \
-  --task-definition $(terraform -chdir=infra/terraform output -raw task_definition_arn) \
-  --launch-type FARGATE \
-  --network-configuration "awsvpcConfiguration={subnets=[...],securityGroups=[...],assignPublicIp=ENABLED}"
-```
-(Use AWS Console ECS → Clusters → Run Task for easier manual runs.)
-
 ## Outputs
 
 | Output | Description |
@@ -100,9 +130,13 @@ aws ecs run-task \
 | `ecs_cluster_name` | ECS cluster name |
 | `task_definition_arn` | Task definition ARN |
 | `scheduler_name` | EventBridge Scheduler name |
+| `scheduler_arn` | EventBridge Scheduler ARN |
+| `cloudwatch_log_group` | Log group for task output |
 | `s3_bucket_name` | S3 artifacts bucket |
 | `dynamodb_table_name` | DynamoDB state table |
 | `targets_s3_uri` | S3 URI for targets.json |
+| `subnet_ids` | Subnets for manual run-task |
+| `security_group_id` | Security group for ECS task |
 
 ## Updating targets.json
 

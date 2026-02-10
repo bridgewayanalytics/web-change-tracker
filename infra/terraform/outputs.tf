@@ -3,6 +3,11 @@ output "region" {
   value       = var.region
 }
 
+output "cloudwatch_log_group" {
+  description = "CloudWatch log group for ECS task logs"
+  value       = aws_cloudwatch_log_group.app.name
+}
+
 output "ecr_repository_url" {
   description = "ECR repository URL for pushing the Docker image"
   value       = aws_ecr_repository.app.repository_url
@@ -23,6 +28,11 @@ output "scheduler_name" {
   value       = var.enable_scheduler ? aws_scheduler_schedule.ecs[0].name : null
 }
 
+output "scheduler_arn" {
+  description = "EventBridge Scheduler schedule ARN"
+  value       = var.enable_scheduler ? aws_scheduler_schedule.ecs[0].arn : null
+}
+
 output "s3_bucket_name" {
   description = "S3 bucket for artifacts (targets, changelog, reports)"
   value       = aws_s3_bucket.artifacts.id
@@ -36,4 +46,14 @@ output "dynamodb_table_name" {
 output "targets_s3_uri" {
   description = "S3 URI for targets.json (used by TARGETS_SOURCE)"
   value       = local.targets_s3_uri
+}
+
+output "subnet_ids" {
+  description = "Subnet IDs used by ECS task (for manual run-task)"
+  value       = local.subnets
+}
+
+output "security_group_id" {
+  description = "Security group ID for ECS task"
+  value       = aws_security_group.task.id
 }

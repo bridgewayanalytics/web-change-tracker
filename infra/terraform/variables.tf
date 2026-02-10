@@ -41,6 +41,12 @@ variable "schedule_expression" {
   default     = "rate(6 hours)"
 }
 
+variable "schedule_expression_timezone" {
+  description = "Timezone for the schedule expression (e.g. America/New_York)"
+  type        = string
+  default     = "America/New_York"
+}
+
 variable "enable_scheduler" {
   description = "Enable EventBridge Scheduler to run the ECS task on schedule"
   type        = bool
