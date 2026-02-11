@@ -988,9 +988,22 @@ def _context_redundant_with_title(context: str, title: str) -> bool:
     return False
 
 
+def _is_meeting_materials(item: dict) -> bool:
+    """True if URL contains /call_materials/ or label includes Agenda, Materials, or Additional Materials."""
+    url = item.get("url", "") or ""
+    if "/call_materials/" in url:
+        return True
+    label = (item.get("title") or item.get("label", "")).strip().lower()
+    for kw in ("agenda", "materials", "additional materials"):
+        if kw in label:
+            return True
+    return False
+
+
 def _short_title(rtype: str, item: dict) -> str:
     """Short title for report: [context] title when context present and not redundant, else title/label, filename, or hostname/path."""
     url = item.get("url", "")
+    suffix = " (meeting materials)" if _is_meeting_materials(item) else ""
     if rtype in ("docs", "event_links"):
         label = (item.get("title") or item.get("label", "")).strip()
         if label:
@@ -998,24 +1011,24 @@ def _short_title(rtype: str, item: dict) -> str:
             ctx = (item.get("context") or "").strip()
             if ctx and not _context_redundant_with_title(ctx, label):
                 ctx_trunc = (ctx[:60] + "…") if len(ctx) > 60 else ctx
-                return f"[{ctx_trunc}] {base}"
-            return base
+                return f"[{ctx_trunc}] {base}{suffix}"
+            return f"{base}{suffix}"
         if url:
             parsed = urlparse(url)
             path = (parsed.path or "").strip("/")
             filename = path.split("/")[-1] if path else ""
             if filename:
-                return filename
-            return f"{parsed.netloc or ''}/{path[:40]}"
+                return f"{filename}{suffix}"
+            return f"{parsed.netloc or ''}/{path[:40]}{suffix}"
     if rtype == "events":
         title = item.get("title", "").strip()
         if title:
-            return (title[:60] + "…") if len(title) > 60 else title
+            return (title[:60] + "…" if len(title) > 60 else title) + suffix
         if url:
-            return urlparse(url).path.split("/")[-1] or url[:50]
+            return (urlparse(url).path.split("/")[-1] or url[:50]) + suffix
     if rtype == "meetings":
         return _format_meeting_compact(item)
-    return url[:60] if url else ""
+    return (url[:60] if url else "") + suffix
 
 
 def _org_group_key(e: dict) -> tuple[str, tuple[str, ...]]:
@@ -1026,7 +1039,80 @@ def _org_group_key(e: dict) -> tuple[str, tuple[str, ...]]:
     return (org_id, path_tuple)
 
 
-_RTYPE_LABELS = {"docs": "Docs", "event_links": "Event Links", "events": "Meetings", "meetings": "Meetings"}
+_RTYPE_LABELS = {"docs": "Docs", "event_links": "Meeting Links", "events": "Meeting Links", "meetings": "Meetings"}
+
+_MEETING_LINK_DISTINCT_KEYWORDS = ("agenda", "materials", "minutes", "call")
+
+
+def _meeting_link_has_distinct_metadata(item: dict) -> bool:
+    """True if meeting_link title/label contains Agenda, Materials, Minutes, Call (implies distinct from generic doc)."""
+    label = (item.get("title") or item.get("label", "")).strip().lower()
+    return any(kw in label for kw in _MEETING_LINK_DISTINCT_KEYWORDS)
+
+
+def _dedupe_cross_section(by_type: dict) -> dict:
+    """
+    Cross-section dedupe: URLs in both docs and meeting_links.
+    If meeting_link has distinct metadata (Agenda/Materials/etc), keep in Meeting Links, remove from Docs.
+    Otherwise keep in Docs, remove from Meeting Links.
+    Returns new by_type with filtered lists (does not mutate input).
+    """
+    result = {}
+    for k, v in by_type.items():
+        result[k] = {"added": list(v.get("added", [])), "removed": list(v.get("removed", []))}
+
+    docs_added = result.get("docs", {}).get("added", [])
+    docs_removed = result.get("docs", {}).get("removed", [])
+    el_added = result.get("event_links", {}).get("added", [])
+    el_removed = result.get("event_links", {}).get("removed", [])
+    ev_added = result.get("events", {}).get("added", [])
+    ev_removed = result.get("events", {}).get("removed", [])
+
+    # Build canonical URL -> meeting_link item (prefer one with distinct metadata)
+    def _ml_items():
+        for item in el_added + el_removed + ev_added + ev_removed:
+            u = item.get("url", "")
+            if u:
+                yield _canonical_url(u), item
+
+    meeting_links_by_url: dict[str, dict] = dict(_ml_items())
+
+    docs_urls = {
+        _canonical_url(x.get("url", ""))
+        for x in docs_added + docs_removed
+        if x.get("url")
+    }
+    ml_urls = set(meeting_links_by_url.keys())
+    overlap = docs_urls & ml_urls
+
+    urls_keep_in_ml = set()
+    urls_keep_in_docs = set()
+    for url in overlap:
+        ml_item = meeting_links_by_url.get(url)
+        if ml_item and _meeting_link_has_distinct_metadata(ml_item):
+            urls_keep_in_ml.add(url)
+        else:
+            urls_keep_in_docs.add(url)
+
+    def _filter_docs(items: list[dict], exclude_urls: set[str]) -> list[dict]:
+        return [x for x in items if _canonical_url(x.get("url", "")) not in exclude_urls]
+
+    def _filter_ml(items: list[dict], exclude_urls: set[str]) -> list[dict]:
+        return [x for x in items if _canonical_url(x.get("url", "")) not in exclude_urls]
+
+    result["docs"] = {
+        "added": _filter_docs(docs_added, urls_keep_in_ml),
+        "removed": _filter_docs(docs_removed, urls_keep_in_ml),
+    }
+    result["event_links"] = {
+        "added": _filter_ml(el_added, urls_keep_in_docs),
+        "removed": _filter_ml(el_removed, urls_keep_in_docs),
+    }
+    result["events"] = {
+        "added": _filter_ml(ev_added, urls_keep_in_docs),
+        "removed": _filter_ml(ev_removed, urls_keep_in_docs),
+    }
+    return result
 
 
 def _doc_is_high_priority(item: dict) -> bool:
@@ -1081,6 +1167,22 @@ def _has_displayable_changes(e: dict) -> bool:
     return False
 
 
+def _event_with_deduped_by_type(e: dict) -> dict:
+    """Return event with change.by_type replaced by cross-section deduped version."""
+    if "error" in e or "change" not in e:
+        return e
+    ch = e["change"]
+    by_type = ch.get("by_type", {})
+    if not by_type:
+        return e
+    deduped = _dedupe_cross_section(by_type)
+    ch_copy = dict(ch)
+    ch_copy["by_type"] = deduped
+    out = dict(e)
+    out["change"] = ch_copy
+    return out
+
+
 def render_report(change_events: list[dict], verbose: bool = False) -> str:
     """Compact report: summary at top, per-target sections, diff counts + samples."""
     events_with_changes = [e for e in change_events if "error" not in e and _has_changes(e["change"])]
@@ -1091,7 +1193,11 @@ def render_report(change_events: list[dict], verbose: bool = False) -> str:
     if not displayable and not events_with_errors:
         return "No changes detected.\n"
 
-    # Summary totals (exclude denied items)
+    # Apply cross-section dedupe (docs vs meeting_links) before counts and formatting
+    displayable = [_event_with_deduped_by_type(e) for e in displayable]
+    all_relevant = [_event_with_deduped_by_type(e) if "error" not in e else e for e in all_relevant]
+
+    # Summary totals (exclude denied items) — use deduped sets
     def _count_non_denied(changes: list[dict], rtype: str) -> int:
         return sum(1 for x in changes if not _item_should_hide_from_report(x, rtype))
 
@@ -1134,27 +1240,24 @@ def render_report(change_events: list[dict], verbose: bool = False) -> str:
         parts: list[str] = []
         d = by_type.get("docs", {})
         da, dr = _count_non_denied(d.get("added", []), "docs"), _count_non_denied(d.get("removed", []), "docs")
-        if da or dr:
-            s = f"{da} doc{'s' if da != 1 else ''} added"
-            if dr:
-                s += f", {dr} doc{'s' if dr != 1 else ''} removed"
-            parts.append(s)
+        if da:
+            parts.append(f"{da} new document{'s' if da != 1 else ''}")
+        if dr:
+            parts.append(f"{dr} removed document{'s' if dr != 1 else ''}")
         el = by_type.get("event_links", {})
         ev = by_type.get("events", {})
         ea = _count_non_denied(el.get("added", []), "event_links") + _count_non_denied(ev.get("added", []), "events")
         er = _count_non_denied(el.get("removed", []), "event_links") + _count_non_denied(ev.get("removed", []), "events")
-        if ea or er:
-            s = f"{ea} event{'s' if ea != 1 else ''} added"
-            if er:
-                s += f", {er} removed"
-            parts.append(s)
+        if ea:
+            parts.append(f"{ea} new meeting link{'s' if ea != 1 else ''}")
+        if er:
+            parts.append(f"{er} removed meeting link{'s' if er != 1 else ''}")
         m = by_type.get("meetings", {})
         ma, mr = _count_non_denied(m.get("added", []), "meetings"), _count_non_denied(m.get("removed", []), "meetings")
-        if ma or mr:
-            s = f"{ma} meeting{'s' if ma != 1 else ''} added"
-            if mr:
-                s += f", {mr} removed"
-            parts.append(s)
+        if ma:
+            parts.append(f"{ma} new meeting{'s' if ma != 1 else ''}")
+        if mr:
+            parts.append(f"{mr} removed meeting{'s' if mr != 1 else ''}")
         if parts:
             highlights.append(f"{label}: {'; '.join(parts)}")
     highlights = highlights[:3]
@@ -1162,10 +1265,19 @@ def render_report(change_events: list[dict], verbose: bool = False) -> str:
     lines = ["Web Change Report", "=" * 40, ""]
     lines.append("Summary")
     lines.append("-" * 20)
-    lines.append(f"Targets changed: {len(displayable)}{' (+errors)' if events_with_errors else ''}")
-    lines.append(f"Docs: +{total_docs_added} / -{total_docs_removed}")
-    lines.append(f"Events: +{total_events_added} / -{total_events_removed}")
-    lines.append(f"Meetings: +{total_meetings_added} / -{total_meetings_removed}")
+    lines.append(f"Identified website updates: {len(displayable)}{' (+errors)' if events_with_errors else ''}")
+    if total_docs_added:
+        lines.append(f"New documents: {total_docs_added}")
+    if total_docs_removed:
+        lines.append(f"Removed documents: {total_docs_removed}")
+    if total_events_added:
+        lines.append(f"New/updated meeting links: {total_events_added}")
+    if total_events_removed:
+        lines.append(f"Removed meeting links: {total_events_removed}")
+    if total_meetings_added:
+        lines.append(f"New meetings: {total_meetings_added}")
+    if total_meetings_removed:
+        lines.append(f"Removed meetings: {total_meetings_removed}")
     if highlights:
         lines.append("")
         lines.append("Highlights")
@@ -1190,11 +1302,12 @@ def render_report(change_events: list[dict], verbose: bool = False) -> str:
             label = e.get("label", "unknown")
             url = e.get("url", "")
             org_path = e.get("org_path")
-            path_str = " › ".join(org_path) if isinstance(org_path, list) and org_path else ""
-            header = f"{path_str} › {label}" if path_str else label
+            path_segments = list(org_path) if isinstance(org_path, list) and org_path else []
+            hierarchy_parts = path_segments + [label]
+            hierarchy_str = " › ".join(hierarchy_parts) if hierarchy_parts else label
 
             if "error" in e:
-                lines.append(header)
+                lines.append(f"Hierarchy: {hierarchy_str}")
                 lines.append(url)
                 lines.append(f"  Error: {e['error']}")
                 continue
@@ -1205,7 +1318,7 @@ def render_report(change_events: list[dict], verbose: bool = False) -> str:
             # Build compact diffs per type
             by_type = ch.get("by_type", {})
             if ch["first_run"]:
-                lines.append(header)
+                lines.append(f"Hierarchy: {hierarchy_str}")
                 lines.append(url)
                 lines.append("  Initial baseline recorded")
                 continue
@@ -1214,7 +1327,7 @@ def render_report(change_events: list[dict], verbose: bool = False) -> str:
             if not has_any_diff:
                 continue
 
-            lines.append(header)
+            lines.append(f"Hierarchy: {hierarchy_str}")
             lines.append(url)
 
             if include_hash and ch["page_changed"]:
