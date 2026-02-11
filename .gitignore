@@ -1,0 +1,8 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+state.json
+last_report.txt
+snapshots/
+debug/

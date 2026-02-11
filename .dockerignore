@@ -1,0 +1,44 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Dev and local state
+.env
+.env.*
+!.env.example
+state.json
+last_report.txt
+snapshots/
+debug/
+
+# IDE and tooling
+.idea/
+.vscode/
+*.swp
+*.swo
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Git
+.git/
+.gitignore
+
+# Docs and infra (optional: remove if needed in image)
+# ARCHITECTURE.md
+# README.md
+# infra/
+
+# Misc
+*.log
+.DS_Store

@@ -1041,6 +1041,13 @@ def _org_group_key(e: dict) -> tuple[str, tuple[str, ...]]:
 
 _RTYPE_LABELS = {"docs": "Docs", "event_links": "Meeting Links", "events": "Meeting Links", "meetings": "Meetings"}
 
+_SECTION_LABELS = {
+    "docs": ("New documents", "Removed documents"),
+    "event_links": ("New/updated meeting links", "Removed meeting links"),
+    "events": ("New/updated meeting links", "Removed meeting links"),
+    "meetings": ("New meetings", "Removed meetings"),
+}
+
 _MEETING_LINK_DISTINCT_KEYWORDS = ("agenda", "materials", "minutes", "call")
 
 
@@ -1339,33 +1346,36 @@ def render_report(change_events: list[dict], verbose: bool = False) -> str:
                 removed = [x for x in diff.get("removed", []) if not _item_should_hide_from_report(x, rtype)]
                 if not added and not removed:
                     continue
-                label_r = _RTYPE_LABELS.get(rtype, rtype)
+                new_label, rem_label = _SECTION_LABELS[rtype]
                 n_add, n_rem = len(added), len(removed)
-                lines.append(f"  {label_r}: +{n_add} / -{n_rem}")
-                for x in added[:limit]:
-                    if rtype == "meetings":
-                        report_lines = _format_meeting_report_lines(x, verbose)
-                        lines.append(f"    + {report_lines[0]}")
-                        for extra in report_lines[1:]:
-                            lines.append(extra)
-                    else:
-                        title = _short_title(rtype, x)
-                        url = x.get("url") or ""
-                        lines.append(f"    + {title} — {url}" if url else f"    + {title}")
-                if len(added) > limit:
-                    lines.append(f"    (+{len(added) - limit} more)")
-                for x in removed[:limit]:
-                    if rtype == "meetings":
-                        report_lines = _format_meeting_report_lines(x, verbose)
-                        lines.append(f"    - {report_lines[0]}")
-                        for extra in report_lines[1:]:
-                            lines.append(extra)
-                    else:
-                        title = _short_title(rtype, x)
-                        url = x.get("url") or ""
-                        lines.append(f"    - {title} — {url}" if url else f"    - {title}")
-                if len(removed) > limit:
-                    lines.append(f"    (-{len(removed) - limit} more)")
+                if n_add:
+                    lines.append(f"  {new_label}: {n_add}")
+                    for x in added[:limit]:
+                        if rtype == "meetings":
+                            report_lines = _format_meeting_report_lines(x, verbose)
+                            lines.append(f"    + {report_lines[0]}")
+                            for extra in report_lines[1:]:
+                                lines.append(extra)
+                        else:
+                            title = _short_title(rtype, x)
+                            url = x.get("url") or ""
+                            lines.append(f"    + {title} — {url}" if url else f"    + {title}")
+                    if len(added) > limit:
+                        lines.append(f"    (+{len(added) - limit} more)")
+                if n_rem:
+                    lines.append(f"  {rem_label}: {n_rem}")
+                    for x in removed[:limit]:
+                        if rtype == "meetings":
+                            report_lines = _format_meeting_report_lines(x, verbose)
+                            lines.append(f"    - {report_lines[0]}")
+                            for extra in report_lines[1:]:
+                                lines.append(extra)
+                        else:
+                            title = _short_title(rtype, x)
+                            url = x.get("url") or ""
+                            lines.append(f"    - {title} — {url}" if url else f"    - {title}")
+                    if len(removed) > limit:
+                        lines.append(f"    (-{len(removed) - limit} more)")
 
     return "\n".join(lines)
 

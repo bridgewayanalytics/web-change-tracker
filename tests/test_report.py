@@ -67,15 +67,19 @@ def _extract_urls_by_section(report: str) -> tuple[set[str], set[str]]:
     docs_urls: set[str] = set()
     meeting_links_urls: set[str] = set()
     current_section: str | None = None
-    # Match "  Docs: +n / -n" or "  Meeting Links: +n / -n"
-    section_re = re.compile(r"^\s{2}(Docs|Meeting Links):\s+\+\d+")
+    def _section_from_line(line: str) -> str | None:
+        if re.match(r"^\s{2}(?:New documents|Removed documents):", line):
+            return "Docs"
+        if re.match(r"^\s{2}(?:New/updated meeting links|Removed meeting links):", line):
+            return "Meeting Links"
+        return None
     # Match item line "    + Title — https://..." or "    - Title — https://..."
     url_re = re.compile(r"\s{4}[+-]\s+.+?\s+—\s+(https?://\S+)")
 
     for line in report.splitlines():
-        m = section_re.match(line)
-        if m:
-            current_section = m.group(1)
+        sec = _section_from_line(line)
+        if sec:
+            current_section = sec
             continue
         u = url_re.search(line)
         if u and current_section:
@@ -96,13 +100,22 @@ def test_report_content_and_dedup() -> None:
     _run_assertions_and_save_report()
 
 
-def test_no_docs_plus_style_malformed() -> None:
-    """Ensure report does not contain malformed 'Docs: +' without a number."""
+# Forbidden patterns: old "Section: +X / -Y" style formatting (regression guards)
+_FORBIDDEN_PATTERNS = [
+    re.compile(r"Docs:\s*\+"),
+    re.compile(r"Meeting Links:\s*\+"),
+    re.compile(r"Events:\s*\+"),
+    re.compile(r":\s*\+[^/]*/\s*-"),  # ": +" followed by "/ -"
+]
+
+
+def test_no_colon_plus_formatting() -> None:
+    """Ensure report contains no old ': +' style formatting (Docs/Meeting Links/Events or ': +' / -)."""
     events = _mock_change_events()
     report = render_report(events, verbose=True)
-    # "Docs: +" followed by non-digit would be malformed; our format is "Docs: +1 / -0"
-    assert "Docs: +\n" not in report
-    assert re.search(r"Docs:\s+\+\s*[^\d\s/]", report) is None, "Malformed 'Docs: +' style line found"
+    for pat in _FORBIDDEN_PATTERNS:
+        m = pat.search(report)
+        assert m is None, f"Report must not match {pat.pattern!r}; found: {m.group()!r}"
 
 
 def _run_assertions_and_save_report() -> str:
@@ -119,6 +132,9 @@ def _run_assertions_and_save_report() -> str:
     docs_urls, meeting_links_urls = _extract_urls_by_section(report)
     overlap = docs_urls & meeting_links_urls
     assert not overlap, f"URLs appear in both Docs and Meeting Links: {overlap}"
+    for pat in _FORBIDDEN_PATTERNS:
+        m = pat.search(report)
+        assert m is None, f"Report must not match {pat.pattern!r}; found: {m.group()!r}"
 
     return report
 
