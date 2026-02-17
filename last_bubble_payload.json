@@ -1,0 +1,44 @@
+[
+  {
+    "archive": false,
+    "Available To Vector Store": true,
+    "Chunk Overlap": 200,
+    "Chunk Size": 1000,
+    "date": null,
+    "Date display": null,
+    "Name": "FAKE TEST DOC",
+    "notes": "New document in Life Risk-Based Capital Working Group (Docs)",
+    "Organization": "NAIC",
+    "parent": "NAIC › E › Working Groups › Life Risk-Based Capital Working Group",
+    "Related calendar items": [],
+    "URL": "https://example.com/fake.pdf"
+  },
+  {
+    "archive": false,
+    "Available To Vector Store": true,
+    "Chunk Overlap": 200,
+    "Chunk Size": 1000,
+    "date": null,
+    "Date display": null,
+    "Name": "FAKE TEST EVENT",
+    "notes": "New meeting link in Life Risk-Based Capital Working Group (Meeting Links)",
+    "Organization": "NAIC",
+    "parent": "NAIC › E › Working Groups › Life Risk-Based Capital Working Group",
+    "Related calendar items": [],
+    "URL": "https://example.com/fake-event"
+  },
+  {
+    "archive": false,
+    "Available To Vector Store": true,
+    "Chunk Overlap": 200,
+    "Chunk Size": 1000,
+    "date": "Tuesday, January 15, 2025 1:00 PM ET",
+    "Date display": "Tuesday, January 15, 2025",
+    "Name": "FAKE TEST MEETING",
+    "notes": "New meeting in Life Risk-Based Capital Working Group (Meetings)",
+    "Organization": "NAIC",
+    "parent": "NAIC › E › Working Groups › Life Risk-Based Capital Working Group",
+    "Related calendar items": [],
+    "URL": "https://example.com/fake-materials.pdf"
+  }
+]

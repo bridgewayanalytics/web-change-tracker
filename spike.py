@@ -44,6 +44,7 @@ log = logging.getLogger(__name__)
 DEFAULT_TARGETS_FILE = Path(__file__).parent / "targets.json"
 _STATE_BACKEND_NAME, _load_target_state, _save_target_state = _get_state_backend()
 REPORT_FILE = Path(__file__).parent / "last_report.txt"
+BUBBLE_PAYLOAD_FILE = Path(__file__).parent / "last_bubble_payload.json"
 TARGET_URL = "https://example.com"
 USE_PLAYWRIGHT = os.environ.get("USE_PLAYWRIGHT", "1") != "0"  # Set USE_PLAYWRIGHT=0 to use requests only
 
@@ -1555,6 +1556,16 @@ def parse_args() -> argparse.Namespace:
         metavar="N",
         help="Number of targets to inject fake changes when using --simulate-change-all (default: 5)",
     )
+    p.add_argument(
+        "--print-bubble-schema",
+        action="store_true",
+        help="Print Bubble Resources field list and exit",
+    )
+    p.add_argument(
+        "--emit-bubble-json",
+        action="store_true",
+        help="Write Bubble Resource create preview payload to last_bubble_payload.json",
+    )
     args = p.parse_args()
     if args.dump_html_snapshot and not args.target_id:
         p.error("--dump-html-snapshot requires --target-id")
@@ -1565,7 +1576,16 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def _run_simulate_change_all(targets: list[dict], n: int, verbose: bool) -> None:
+def _write_bubble_payload(change_events: list[dict]) -> None:
+    """Build and write Bubble Resource payload to last_bubble_payload.json."""
+    from bubble_payload import build_bubble_payload
+    import json
+    payload = build_bubble_payload(change_events)
+    BUBBLE_PAYLOAD_FILE.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    log.info("Wrote Bubble payload to %s (%d items)", BUBBLE_PAYLOAD_FILE, len(payload))
+
+
+def _run_simulate_change_all(targets: list[dict], n: int, verbose: bool, emit_bubble_json: bool = False) -> None:
     """Test-only: run extraction on all targets, inject fake changes into first N, produce combined report. No persist."""
     change_events: list[dict] = []
     for i, t in enumerate(targets or []):
@@ -1605,9 +1625,11 @@ def _run_simulate_change_all(targets: list[dict], n: int, verbose: bool) -> None
     log.info("\n[SIMULATE-CHANGE-ALL - not persisted]\n%s", report)
     REPORT_FILE.write_text(report, encoding="utf-8")
     log.info("Report written to %s", REPORT_FILE)
+    if emit_bubble_json:
+        _write_bubble_payload(change_events)
 
 
-def _run_simulate_change(target_id: str, targets: list[dict], verbose: bool) -> None:
+def _run_simulate_change(target_id: str, targets: list[dict], verbose: bool, emit_bubble_json: bool = False) -> None:
     """Test-only: simulate diffs from stored state, render report, do NOT persist."""
     target = next((t for t in targets if t.get("id", t.get("url", "unknown")) == target_id), None)
     if not target:
@@ -1675,12 +1697,20 @@ def _run_simulate_change(target_id: str, targets: list[dict], verbose: bool) -> 
     log.info("\n[SIMULATED CHANGE - not persisted]\n%s", report)
     REPORT_FILE.write_text(report, encoding="utf-8")
     log.info("Report written to %s", REPORT_FILE)
+    if emit_bubble_json:
+        _write_bubble_payload([change_event])
 
 
 def main() -> None:
-    from datetime import datetime, timezone
-
     args = parse_args()
+
+    if args.print_bubble_schema:
+        from bubble_resources import BUBBLE_RESOURCE_FIELDS
+        for f in BUBBLE_RESOURCE_FIELDS:
+            print(f)
+        raise SystemExit(0)
+
+    from datetime import datetime, timezone
     run_timestamp = int(datetime.now(timezone.utc).timestamp())
     targets = load_targets(args.targets_file)
 
@@ -1699,12 +1729,12 @@ def main() -> None:
 
     # Simulate-change mode: no fetch, no persist (single target)
     if args.simulate_change:
-        _run_simulate_change(args.target_id.strip(), targets or [], args.verbose)
+        _run_simulate_change(args.target_id.strip(), targets or [], args.verbose, args.emit_bubble_json)
         return
 
     # Simulate-change-all: fetch + extract on all targets, inject fakes into first N, no persist
     if args.simulate_change_all:
-        _run_simulate_change_all(targets or [], args.simulate_change_n, args.verbose)
+        _run_simulate_change_all(targets or [], args.simulate_change_n, args.verbose, args.emit_bubble_json)
         return
 
     change_events: list[dict] = []
@@ -1759,6 +1789,8 @@ def main() -> None:
     log.info("\n%s", report)
     REPORT_FILE.write_text(report, encoding="utf-8")
     log.info("Report written to %s", REPORT_FILE)
+    if args.emit_bubble_json:
+        _write_bubble_payload(change_events)
 
     # Only send email when EMAIL_ENABLED=true and there are meaningful changes (targets_changed > 0)
     events_with_meaningful_changes = [

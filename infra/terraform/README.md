@@ -55,6 +55,15 @@ terraform plan
 
 ### 3. Apply
 
+Deploy with the current git commit as the image tag (recommended):
+
+```bash
+export TF_VAR_image_tag=$(git rev-parse --short HEAD)
+terraform apply
+```
+
+Or use default `latest`:
+
 ```bash
 terraform apply
 ```
@@ -102,21 +111,22 @@ terraform -chdir=infra/terraform output -raw cloudwatch_log_group
 
 ### 7. Build and Push Docker Image
 
-After `terraform apply`, push the app image to ECR. Use the same tag you deploy with (default: `latest`):
+After `terraform apply`, push the app image to ECR. Use the same tag you deploy with:
 
 ```bash
 # From project root
+export TF_VAR_image_tag=$(git rev-parse --short HEAD)
 AWS_REGION=$(terraform -chdir=infra/terraform output -raw region 2>/dev/null || echo "us-east-1")
 ECR_URL=$(terraform -chdir=infra/terraform output -raw ecr_repository_url)
 
 aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_URL"
 docker build -t web-change-tracker .
-IMAGE_TAG="${IMAGE_TAG:-latest}"
-docker tag web-change-tracker:latest "$ECR_URL:$IMAGE_TAG"
-docker push "$ECR_URL:$IMAGE_TAG"
+docker tag web-change-tracker:latest "$ECR_URL:$TF_VAR_image_tag"
+docker push "$ECR_URL:$TF_VAR_image_tag"
+terraform -chdir=infra/terraform apply -auto-approve
 ```
 
-To deploy a specific image tag:
+To deploy a specific image tag (e.g. `v1.2.3`):
 
 ```bash
 terraform apply -var="image_tag=v1.2.3"
@@ -127,6 +137,7 @@ terraform apply -var="image_tag=v1.2.3"
 | Output | Description |
 |--------|-------------|
 | `ecr_repository_url` | ECR repo URL for Docker push |
+| `deployed_image` | Full container image string deployed to ECS |
 | `ecs_cluster_name` | ECS cluster name |
 | `task_definition_arn` | Task definition ARN |
 | `scheduler_name` | EventBridge Scheduler name |

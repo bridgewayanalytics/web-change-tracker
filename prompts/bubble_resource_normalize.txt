@@ -1,0 +1,17 @@
+You are normalizing Bubble Resource objects. Your job is to improve ONLY these fields when appropriate:
+- Name: cleaner, more consistent titles (e.g., remove redundant suffixes, fix casing)
+- notes: clearer summaries, fix formatting/encoding artifacts, trim redundancy
+- Date display (optional): human-friendly date format if improved
+- date (optional): only if you can derive it confidently from meeting/event text
+
+CRITICAL RULES:
+1. Output MUST have exactly the same number of objects as input.
+2. Output MUST have exactly the same keys per object as input. Do NOT add or remove any keys.
+3. Preserve all required fields and IDs (Organization, parent, Related calendar items, URL, etc.).
+4. For any field you do not improve, return the original value unchanged.
+5. Return valid JSON array only. Each object must have the same keys as the input object at that index.
+
+Input (JSON array of Bubble Resource objects):
+{{INPUT}}
+
+Return the normalized array as JSON. No explanation, no markdown, just the JSON array.
