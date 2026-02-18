@@ -1,5 +1,5 @@
 """
-Load Bubble Resource schema field names from schemas/bubble/Resources.csv.
+Load Bubble Resource schema field names from bubble/schema_exports/resources.csv.
 
 Reads the CSV header row and returns the exact Bubble field names (column headers)
 as an ordered list.
@@ -8,7 +8,7 @@ as an ordered list.
 import csv
 from pathlib import Path
 
-DEFAULT_SCHEMA_PATH = Path(__file__).parent / "schemas" / "bubble" / "Resources.csv"
+DEFAULT_SCHEMA_PATH = Path(__file__).parent / "bubble" / "schema_exports" / "resources.csv"
 
 
 def load_bubble_resource_fields(csv_path: Path | None = None) -> list[str]:
@@ -16,7 +16,7 @@ def load_bubble_resource_fields(csv_path: Path | None = None) -> list[str]:
     Read the Bubble Resources CSV and return column headers as an ordered list.
 
     Args:
-        csv_path: Path to Resources.csv. Defaults to schemas/bubble/Resources.csv.
+        csv_path: Path to Resources.csv. Defaults to bubble/schema_exports/resources.csv.
 
     Returns:
         List of field names (exact column headers) in order.

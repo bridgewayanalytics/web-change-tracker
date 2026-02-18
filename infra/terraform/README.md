@@ -45,6 +45,19 @@ email_to   = "alerts@yourdomain.com"
 
 **Email:** Ensure `email_from` is verified in SES (sandbox or production). Recipients must be verified in SES sandbox.
 
+**OpenAI (optional):** For AI enrichment, create SSM parameters before or after apply. No secrets are stored in Terraform.
+
+```bash
+aws ssm put-parameter --name "/web-change-tracker/prod/openai_api_key" \
+  --value "sk-proj-..." --type "SecureString" --region us-east-1
+aws ssm put-parameter --name "/web-change-tracker/prod/openai_model" \
+  --value "gpt-5" --type "String" --region us-east-1
+aws ssm put-parameter --name "/web-change-tracker/prod/openai_reasoning_effort" \
+  --value "medium" --type "String" --region us-east-1
+```
+
+The ECS task role has `ssm:GetParameter` and `kms:Decrypt` (for `alias/aws/ssm`) scoped to these parameters.
+
 ### 2. Initialize and Plan
 
 ```bash

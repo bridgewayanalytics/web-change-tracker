@@ -20,6 +20,18 @@ locals {
   name    = "${var.project_name}-${var.environment}"
   vpc_id  = var.vpc_id != null ? var.vpc_id : data.aws_vpc.default[0].id
   subnets = coalesce(var.subnet_ids, data.aws_subnets.default.ids)
+
+  # SSM parameter names for OpenAI (used for IAM and env)
+  openai_api_key_param = "/web-change-tracker/prod/openai_api_key"
+  openai_model_param   = "/web-change-tracker/prod/openai_model"
+  openai_effort_param  = "/web-change-tracker/prod/openai_reasoning_effort"
+
+  # SSM parameter ARNs for IAM (trim leading slash for ARN path)
+  openai_ssm_param_arns = [
+    "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.openai_api_key_param}",
+    "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.openai_model_param}",
+    "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.openai_effort_param}",
+  ]
 }
 
 # -----------------------------------------------------------------------------
@@ -200,6 +212,18 @@ resource "aws_iam_role_policy" "task" {
         Effect   = "Allow"
         Action   = ["ses:SendEmail", "ses:SendRawEmail"]
         Resource = "*"
+      },
+      {
+        Sid      = "SSMGetOpenAIParams"
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter"]
+        Resource = local.openai_ssm_param_arns
+      },
+      {
+        Sid      = "KMSDecryptOpenAI"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = "arn:aws:kms:${var.region}:${data.aws_caller_identity.current.account_id}:alias/aws/ssm"
       }
     ]
   })
@@ -248,9 +272,16 @@ resource "aws_ecs_task_definition" "app" {
       { name = "FROM_EMAIL", value = var.email_from },
       { name = "TO_EMAILS", value = var.email_to },
       { name = "EMAIL_SUBJECT_PREFIX", value = var.email_subject_prefix },
-      { name = "ENVIRONMENT", value = var.environment },
+      { name = "ENVIRONMENT", value = "prod" },
       { name = "SES_REGION", value = var.region },
-      { name = "AWS_REGION", value = var.region }
+      { name = "AWS_REGION", value = var.region },
+      { name = "OPENAI_ENABLED", value = "true" },
+      { name = "OPENAI_API_KEY_SSM_PARAM", value = local.openai_api_key_param },
+      { name = "OPENAI_MODEL_SSM_PARAM", value = local.openai_model_param },
+      { name = "OPENAI_REASONING_EFFORT_SSM_PARAM", value = local.openai_effort_param },
+      { name = "OPENAI_ENRICH_ONLY_IF_CHANGED", value = "true" },
+      { name = "OPENAI_ENRICH_MAX_RESOURCES", value = "25" },
+      { name = "OPENAI_ENRICH_MAX_EVENTS", value = "10" }
     ]
 
     essential = true

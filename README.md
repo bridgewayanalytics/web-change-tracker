@@ -160,6 +160,59 @@ Reports group by target, then by resource type. Output is written to `last_repor
 
 ---
 
+## Bubble Integration
+
+Change events can be mapped to **Bubble** Resource and Calendar Item payloads for import into a Bubble.io app.
+
+### Mapping Rules
+
+| Change Type | Bubble Output |
+|-------------|---------------|
+| **docs added** | Resource objects (Name, URL, parent, Organization, etc.) |
+| **event_links / meeting links** | Resource objects; if link suggests agenda/materials/webex/call, also attached to Calendar Item Agenda |
+| **meetings added** | Calendar Item objects (title, date, Agenda from associated links) |
+
+Meeting links (agenda, materials, webex, call) are associated with meetings by date match when possible; otherwise the first upcoming meeting. Schema fields are defined in `bubble/schemas.py`; full Resource and Calendar Item schemas are supported.
+
+### CLI Flags
+
+| Flag | Description |
+|------|-------------|
+| `--emit-bubble-json` | Write Bubble payloads to `last_bubble_resources.json` and `last_bubble_calendar_items.json` |
+| `--bubble-report` | Use Bubble JSON format for report and email (summary + Calendar Items + Resources sections) |
+| `--ai-enrich` | Force OpenAI enrichment (bypass auto conditions; requires `OPENAI_API_KEY`) |
+| `--print-bubble-schema` | Print Bubble Resource field list and exit |
+
+### AI Enrichment
+
+Optional OpenAI enrichment fills NAIC categorization fields (Type, topic suggestion, NAIC Group, subtopic, etc.). In production, runs automatically when conditions are met; use `--ai-enrich` to force. Uses the Responses API with `gpt-5` and reasoning effort `medium` by default. On API failure or invalid output, enrichment is skipped and original payloads are used.
+
+**SSM Parameter Store:** When `STATE_BACKEND=aws|dynamodb` or `ENVIRONMENT=prod`, OpenAI settings are loaded from SSM if not set in env. Locally, set `OPENAI_FETCH_FROM_SSM=true` to fetch. On SSM failure, logs a warning and continues without AI. Never logs the API key.
+
+| Var | Default | Description |
+|-----|---------|-------------|
+| `OPENAI_API_KEY_SSM_PARAM` | `/web-change-tracker/prod/openai_api_key` | SSM param for API key (SecureString) |
+| `OPENAI_MODEL_SSM_PARAM` | `/web-change-tracker/prod/openai_model` | SSM param for model |
+| `OPENAI_REASONING_EFFORT_SSM_PARAM` | `/web-change-tracker/prod/openai_reasoning_effort` | SSM param for effort |
+| `OPENAI_FETCH_FROM_SSM` | `false` local | If true, fetch from SSM even when not prod |
+| `OPENAI_ENABLED` | `true` in prod, `false` local | Enable when `ENVIRONMENT=production` |
+| `OPENAI_ENRICH_ONLY_IF_CHANGED` | `true` | Skip when no changes detected |
+| `OPENAI_ENRICH_MIN_ITEMS` | `1` | Min resources+events to run |
+| `OPENAI_ENRICH_MAX_RESOURCES` | `25` | Max resources to enrich (first N) |
+| `OPENAI_ENRICH_MAX_EVENTS` | `10` | Max calendar items to enrich (first N) |
+| `OPENAI_MODEL` | `gpt-5` | Model name |
+| `OPENAI_REASONING_EFFORT` | `medium` | Reasoning effort for gpt-5/o-series |
+
+```bash
+# Force enrichment:
+OPENAI_API_KEY=sk-... python spike.py --emit-bubble-json --ai-enrich
+
+# Prod: auto-runs when ENVIRONMENT=production
+ENVIRONMENT=production OPENAI_API_KEY=sk-... python spike.py --emit-bubble-json
+```
+
+---
+
 ## Recommended Libraries & Tools
 
 | Purpose | Tool |
@@ -181,29 +234,35 @@ Reports group by target, then by resource type. Output is written to `last_repor
 
 ```
 web-change-tracker/
-├── spike.py              # Main change-detection pipeline (fetch → extract → diff → report)
+├── spike.py                 # Main change-detection pipeline (fetch → extract → diff → report)
 ├── storage/
-│   ├── state_store_dynamodb.py  # DynamoDB per-target state (load_target_state, save_target_state)
+│   ├── state_store_dynamodb.py  # DynamoDB per-target state
 │   ├── state_store_local.py     # Local state.json (dev)
-│   └── changelog_s3.py          # S3 append-only changelog (append_change_events)
-├── state_store.py        # Legacy StateStore (LocalStateStore, S3StateStore stub)
-├── emailer.py            # Optional SES email when changes detected (SEND_EMAIL, DRY_RUN)
-├── targets.json          # Target config with extract rules
-├── Dockerfile            # Playwright Python base, app deps, CMD python spike.py
-├── docker-compose.yml    # Local runs with env-file support
-├── .env.example          # Env template (targets, state, email)
-├── Makefile              # Local and CI commands (make run, make ci)
-├── scripts/
-│   ├── run-local.sh      # Run locally (creates venv if needed)
-│   └── run-ci.sh         # CI: install, lint, run
-├── ARCHITECTURE.md       # AWS deployment: EventBridge → Lambda or ECS Fargate
+│   └── changelog_s3.py          # S3 append-only changelog
+├── bubble/
+│   ├── payload.py           # Bubble payload building, link association, context helpers
+│   ├── schemas.py           # Resource & Calendar Item schema field definitions
+│   ├── ai_enrichment.py     # OpenAI enrichment for Bubble payloads
+│   ├── openai_client.py     # OpenAI Responses API client
+│   ├── ssm_loader.py        # Load OpenAI settings from SSM in prod
+│   └── schema_exports/      # CSV exports for validation & examples
+├── schema_loader.py         # Bubble schema loading from CSV exports
+├── emailer.py               # Optional SES email when changes detected
+├── targets.json             # Target config with extract rules
+├── Dockerfile
 ├── requirements.txt
-├── state.json            # Local state (gitignored)
-├── last_report.txt       # Latest report output (gitignored)
-├── snapshots/            # Test mode: saved snapshots per target (gitignored)
-├── docs/                 # Design docs, ADRs (future)
-├── infra/                # Terraform: ECS Fargate, EventBridge, DynamoDB, S3, IAM
-└── tests/                # Unit / integration tests (future)
+├── state.json               # Local state (gitignored)
+├── last_report.txt          # Latest report output (gitignored)
+├── last_bubble_resources.json
+├── last_bubble_calendar_items.json
+├── snapshots/               # Test mode: saved snapshots per target (gitignored)
+├── infra/terraform/         # Terraform: ECS Fargate, EventBridge, DynamoDB, S3, IAM
+├── prompts/                 # Prompt templates for AI enrichment
+└── tests/
+    ├── test_bubble_payload.py
+    ├── test_ai_enrichment_contract.py
+    ├── test_report.py
+    └── test_ai_review.py
 ```
 
 ---
@@ -215,9 +274,9 @@ End-to-end testing depends on real site changes, so we rely on layered testing:
 | Strategy | Description |
 |----------|-------------|
 | **Snapshot test mode** | `--snapshot-dir` saves content per target; `--compare-snapshot` compares against snapshots. Edit snapshot files to simulate changes without waiting for site updates. Works with `USE_PLAYWRIGHT=0` (requests fallback). |
-| **Unit tests** | Deterministic tests using saved HTML fixtures; mock DynamoDB/S3 |
+| **Unit tests** | `test_bubble_payload.py` (payload building, link association), `test_ai_enrichment_contract.py` (schema/output checks, mocked), `test_report.py`, `test_ai_review.py` |
 | **Integration tests** | Against static snapshots; fixtures in `tests/fixtures/` |
-| **Manual test plan** | Documented steps: deploy to dev, add test target, trigger run, verify email and state |
+| **Manual test plan** | Deploy to dev, add test target, trigger run, verify email and state |
 
 ---
 
@@ -233,20 +292,23 @@ End-to-end testing depends on real site changes, so we rely on layered testing:
 
 ## Phase 1 Scope (MVP)
 
-**Goal:** Change detection + email summary only. No external integrations (e.g., Bubble) yet.
+**Goal:** Change detection, email summary, and Bubble integration for import into Bubble.io.
 
 **Done (local spike):**
 
 - [x] Target config loaded from `targets.json` (extract array, resource-type driven)
 - [x] Scraper fetches URLs (Playwright + requests fallback)
-- [x] Extractors: link_collector_v1, keyword_links_v1, naic_events_v1
+- [x] Extractors: link_collector_v1, keyword_links_v1, naic_meetings_v1, naic_events_v1
 - [x] Diff engine compares to stored state; detects changes per resource type
 - [x] Report written to last_report.txt (grouped by target, then resource type)
-- [x] State store abstraction (LocalStateStore, S3StateStore stub)
+- [x] State store abstraction (LocalStateStore, DynamoDB)
+- [x] Email summary via SES (SEND_EMAIL, DRY_RUN)
+- [x] Bubble payload generation: Resources, Calendar Items, meeting-link association
+- [x] `--emit-bubble-json`, `--bubble-report`, `--ai-enrich`, `--print-bubble-schema` CLI flags
+- [x] Optional OpenAI enrichment for Bubble payloads (Type, NAIC Group, topic, etc.)
 
 **Remaining (AWS):**
 
-- [ ] Email summary via SES
 - [ ] EventBridge triggers runs on schedule
 - [ ] CloudWatch logs and metrics
 
@@ -279,6 +341,7 @@ Required env vars for Docker (see `.env.example`):
 - **State backend:** `STATE_BACKEND=local` (default) for `state.json`; `STATE_BACKEND=dynamodb` + `STATE_TABLE` for production.
 - **Changelog:** `CHANGELOG_BUCKET`, `CHANGELOG_PREFIX` (default `changelog/`) to append events to S3.
 - **Email:** `SEND_EMAIL`, `FROM_EMAIL`, `TO_EMAILS`, `SES_REGION`; `DRY_RUN=true` to test without sending.
+- **Bubble / AI enrichment:** `OPENAI_API_KEY` (required when enrichment runs); `OPENAI_MODEL`, `OPENAI_REASONING_EFFORT` (see AI Enrichment section).
 - **AWS:** `AWS_REGION`, credentials when using DynamoDB/S3/SES.
 
 Or use the script:
@@ -293,6 +356,19 @@ Or use the script:
 make ci                   # install, lint, run
 # or
 ./scripts/run-ci.sh
+```
+
+**Bubble output:**
+
+```bash
+# Write Bubble JSON payloads
+python spike.py --emit-bubble-json
+
+# Report and email in Bubble format
+python spike.py --bubble-report
+
+# With AI enrichment (requires OPENAI_API_KEY)
+python spike.py --emit-bubble-json --ai-enrich
 ```
 
 **Test mode (validate change detection without waiting for site updates):**

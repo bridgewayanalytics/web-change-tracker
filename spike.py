@@ -44,7 +44,9 @@ log = logging.getLogger(__name__)
 DEFAULT_TARGETS_FILE = Path(__file__).parent / "targets.json"
 _STATE_BACKEND_NAME, _load_target_state, _save_target_state = _get_state_backend()
 REPORT_FILE = Path(__file__).parent / "last_report.txt"
-BUBBLE_PAYLOAD_FILE = Path(__file__).parent / "last_bubble_payload.json"
+LAST_EMAIL_REPORT_FILE = Path(__file__).parent / "last_email_report.txt"
+BUBBLE_RESOURCES_FILE = Path(__file__).parent / "last_bubble_resources.json"
+BUBBLE_CALENDAR_ITEMS_FILE = Path(__file__).parent / "last_bubble_calendar_items.json"
 TARGET_URL = "https://example.com"
 USE_PLAYWRIGHT = os.environ.get("USE_PLAYWRIGHT", "1") != "0"  # Set USE_PLAYWRIGHT=0 to use requests only
 
@@ -1564,7 +1566,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--emit-bubble-json",
         action="store_true",
-        help="Write Bubble Resource create preview payload to last_bubble_payload.json",
+        help="Write Bubble Resource and Calendar Item payloads to last_bubble_resources.json and last_bubble_calendar_items.json",
+    )
+    p.add_argument(
+        "--ai-enrich",
+        action="store_true",
+        default=False,
+        help="Run AI enrichment on Bubble payloads (requires OPENAI_API_KEY) before writing JSON",
+    )
+    p.add_argument(
+        "--bubble-report",
+        action="store_true",
+        default=False,
+        help="Use Bubble JSON format for report and email (summary + Calendar Items + Resources)",
     )
     args = p.parse_args()
     if args.dump_html_snapshot and not args.target_id:
@@ -1576,16 +1590,200 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def _write_bubble_payload(change_events: list[dict]) -> None:
-    """Build and write Bubble Resource payload to last_bubble_payload.json."""
-    from bubble_payload import build_bubble_payload
+def _build_bubble_payloads(
+    change_events: list[dict],
+    *,
+    ai_enrich: bool = False,
+) -> tuple[list[dict], list[dict]]:
+    """Build Bubble Resource and Calendar Item payloads. Apply AI enrichment when conditions met."""
+    from bubble.payload import (
+        build_calendar_item_context,
+        build_calendar_item_payload,
+        build_resource_context,
+        build_resource_payload,
+    )
+    from bubble.ai_enrichment import enrich_payloads
+
+    resources = build_resource_payload(change_events)
+    calendar_items = build_calendar_item_payload(change_events)
+
+    has_changes = any(
+        _has_displayable_changes(e) for e in change_events if "error" not in e
+    )
+    resource_ctx = build_resource_context(change_events)
+    calendar_ctx = build_calendar_item_context(change_events)
+
+    resources, calendar_items = enrich_payloads(
+        resources,
+        calendar_items,
+        resource_ctx,
+        calendar_ctx,
+        has_changes=has_changes,
+        force=ai_enrich,
+    )
+
+    return (resources, calendar_items)
+
+
+def _render_bubble_report(resources: list[dict], calendar_items: list[dict]) -> str:
+    """Bubble-style report: 2-3 line summary + pretty-printed JSON sections."""
     import json
-    payload = build_bubble_payload(change_events)
-    BUBBLE_PAYLOAD_FILE.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    log.info("Wrote Bubble payload to %s (%d items)", BUBBLE_PAYLOAD_FILE, len(payload))
+
+    nc, nr = len(calendar_items), len(resources)
+    summary_lines = [
+        "Web change tracker: Bubble payload report.",
+        f"Calendar Items: {nc} | Resources: {nr}",
+        "Payloads below are ready for Bubble import.",
+    ]
+    summary = "\n".join(summary_lines)
+
+    cal_json = json.dumps(calendar_items, indent=2, ensure_ascii=False)
+    res_json = json.dumps(resources, indent=2, ensure_ascii=False)
+
+    return f"""{summary}
+
+Bubble: Calendar Items ({nc})
+{cal_json}
+
+Bubble: Resources ({nr})
+{res_json}
+"""
 
 
-def _run_simulate_change_all(targets: list[dict], n: int, verbose: bool, emit_bubble_json: bool = False) -> None:
+def _build_email_report_links(change_events: list[dict]) -> tuple[list[dict], list[dict]]:
+    """
+    Build links metadata for email report. Returns (resource_links, calendar_item_links).
+    Each link: {source_page_url, source_page_title, detected_url}.
+    Order matches build_resource_payload and build_calendar_item_payload.
+    """
+    from bubble.payload import _event_with_deduped_by_type, _item_should_hide
+
+    resource_links: list[dict] = []
+    calendar_item_links: list[dict] = []
+
+    for e in change_events:
+        if "error" in e:
+            continue
+        label = e.get("label", "unknown")
+        org_path = list(e.get("org_path") or [])
+        source_url = (e.get("url") or "").strip()
+        source_title = " › ".join(org_path + [label]) if org_path else label
+
+        deduped = _event_with_deduped_by_type(e)
+        by_type = deduped.get("change", {}).get("by_type", {})
+
+        for rtype in ("docs", "event_links", "events"):
+            for item in by_type.get(rtype, {}).get("added", []):
+                if _item_should_hide(item, rtype):
+                    continue
+                detected_url = (item.get("url") or "").strip()
+                resource_links.append({
+                    "source_page_url": source_url,
+                    "source_page_title": source_title,
+                    "detected_url": detected_url,
+                })
+
+        visible_meetings = [
+            m for m in by_type.get("meetings", {}).get("added", [])
+            if not _item_should_hide(m, "meetings")
+        ]
+        for m in visible_meetings:
+            detected_url = (
+                (m.get("webex_url") or "").strip()
+                or (m.get("agenda_url") or "").strip()
+                or (m.get("materials_url") or "").strip()
+            )
+            calendar_item_links.append({
+                "source_page_url": source_url,
+                "source_page_title": source_title,
+                "detected_url": detected_url,
+            })
+
+    return (resource_links, calendar_item_links)
+
+
+def render_email_report(
+    change_events: list[dict],
+    resources: list[dict],
+    calendar_items: list[dict],
+) -> str:
+    """
+    Email report format: summary, Links section (source + detected URLs), then full JSON blocks.
+    Plain text URLs only. source_page_url/source_page_title appear only in human-readable Links section.
+    Always produced (0 counts and empty arrays when no changes).
+    """
+    events_with_changes = [
+        e for e in change_events
+        if "error" not in e and _has_displayable_changes(e)
+    ]
+    targets_changed = len(events_with_changes)
+
+    nr, ne = len(resources), len(calendar_items)
+
+    lines: list[str] = []
+    lines.append("Summary")
+    lines.append("-" * 40)
+    lines.append(f"New resources: {nr}")
+    lines.append(f"New events: {ne}")
+    lines.append(f"Targets changed: {targets_changed}")
+    lines.append("")
+
+    resource_links, calendar_item_links = _build_email_report_links(change_events)
+
+    lines.append("Links")
+    lines.append("-" * 40)
+    for i, link in enumerate(resource_links):
+        lines.append(f"Resource {i + 1}:")
+        lines.append(f"  source_page_url: {link['source_page_url']}")
+        lines.append(f"  source_page_title: {link['source_page_title']}")
+        lines.append(f"  detected_url: {link['detected_url']}")
+        lines.append("")
+    for i, link in enumerate(calendar_item_links):
+        lines.append(f"Event {i + 1}:")
+        lines.append(f"  source_page_url: {link['source_page_url']}")
+        lines.append(f"  source_page_title: {link['source_page_title']}")
+        lines.append(f"  detected_url: {link['detected_url']}")
+        lines.append("")
+
+    lines.append("Resources (Bubble payload)")
+    lines.append("-" * 40)
+    lines.append(json.dumps(resources, indent=2, ensure_ascii=False))
+    lines.append("")
+    lines.append("Calendar Items (Bubble payload)")
+    lines.append("-" * 40)
+    lines.append(json.dumps(calendar_items, indent=2, ensure_ascii=False))
+
+    return "\n".join(lines)
+
+
+def _write_bubble_payload(
+    change_events: list[dict],
+    *,
+    ai_enrich: bool = False,
+    resources: list[dict] | None = None,
+    calendar_items: list[dict] | None = None,
+) -> None:
+    """Build and write Bubble Resource and Calendar Item payloads."""
+    import json
+
+    if resources is None or calendar_items is None:
+        resources, calendar_items = _build_bubble_payloads(change_events, ai_enrich=ai_enrich)
+
+    BUBBLE_RESOURCES_FILE.write_text(json.dumps(resources, indent=2, ensure_ascii=False), encoding="utf-8")
+    log.info("Wrote Bubble Resource payload to %s (%d items)", BUBBLE_RESOURCES_FILE, len(resources))
+
+    BUBBLE_CALENDAR_ITEMS_FILE.write_text(json.dumps(calendar_items, indent=2, ensure_ascii=False), encoding="utf-8")
+    log.info("Wrote Bubble Calendar Item payload to %s (%d items)", BUBBLE_CALENDAR_ITEMS_FILE, len(calendar_items))
+
+
+def _run_simulate_change_all(
+    targets: list[dict],
+    n: int,
+    verbose: bool,
+    emit_bubble_json: bool = False,
+    ai_enrich: bool = False,
+    bubble_report: bool = False,
+) -> None:
     """Test-only: run extraction on all targets, inject fake changes into first N, produce combined report. No persist."""
     change_events: list[dict] = []
     for i, t in enumerate(targets or []):
@@ -1621,15 +1819,35 @@ def _run_simulate_change_all(targets: list[dict], n: int, verbose: bool, emit_bu
                 "error": str(e),
                 **{k: t[k] for k in ("org_id", "org_path", "group", "tags", "include_hash_changes") if k in t},
             })
-    report = render_report(change_events, verbose=verbose)
-    log.info("\n[SIMULATE-CHANGE-ALL - not persisted]\n%s", report)
+    resources, calendar_items = _build_bubble_payloads(change_events, ai_enrich=ai_enrich)
+    email_report = render_email_report(change_events, resources, calendar_items)
+    LAST_EMAIL_REPORT_FILE.write_text(email_report, encoding="utf-8")
+    log.info("Email report written to %s", LAST_EMAIL_REPORT_FILE)
+
+    if bubble_report or emit_bubble_json:
+        if bubble_report:
+            report = _render_bubble_report(resources, calendar_items)
+            log.info("\n[SIMULATE-CHANGE-ALL - Bubble report]\n%s", report[:500] + ("..." if len(report) > 500 else ""))
+        else:
+            report = render_report(change_events, verbose=verbose)
+            log.info("\n[SIMULATE-CHANGE-ALL - not persisted]\n%s", report)
+        if emit_bubble_json:
+            _write_bubble_payload(change_events, ai_enrich=ai_enrich, resources=resources, calendar_items=calendar_items)
+    else:
+        report = render_report(change_events, verbose=verbose)
+        log.info("\n[SIMULATE-CHANGE-ALL - not persisted]\n%s", report)
     REPORT_FILE.write_text(report, encoding="utf-8")
     log.info("Report written to %s", REPORT_FILE)
-    if emit_bubble_json:
-        _write_bubble_payload(change_events)
 
 
-def _run_simulate_change(target_id: str, targets: list[dict], verbose: bool, emit_bubble_json: bool = False) -> None:
+def _run_simulate_change(
+    target_id: str,
+    targets: list[dict],
+    verbose: bool,
+    emit_bubble_json: bool = False,
+    ai_enrich: bool = False,
+    bubble_report: bool = False,
+) -> None:
     """Test-only: simulate diffs from stored state, render report, do NOT persist."""
     target = next((t for t in targets if t.get("id", t.get("url", "unknown")) == target_id), None)
     if not target:
@@ -1693,16 +1911,38 @@ def _run_simulate_change(target_id: str, targets: list[dict], verbose: bool, emi
         "include_hash_changes": target.get("include_hash_changes", False),
         "change": change,
     }
-    report = render_report([change_event], verbose=verbose)
-    log.info("\n[SIMULATED CHANGE - not persisted]\n%s", report)
+    resources, calendar_items = _build_bubble_payloads([change_event], ai_enrich=ai_enrich)
+    email_report = render_email_report([change_event], resources, calendar_items)
+    LAST_EMAIL_REPORT_FILE.write_text(email_report, encoding="utf-8")
+    log.info("Email report written to %s", LAST_EMAIL_REPORT_FILE)
+
+    if bubble_report or emit_bubble_json:
+        if bubble_report:
+            report = _render_bubble_report(resources, calendar_items)
+            log.info("\n[SIMULATED CHANGE - Bubble report]\n%s", report[:500] + ("..." if len(report) > 500 else ""))
+        else:
+            report = render_report([change_event], verbose=verbose)
+            log.info("\n[SIMULATED CHANGE - not persisted]\n%s", report)
+        if emit_bubble_json:
+            _write_bubble_payload(
+                [change_event], ai_enrich=ai_enrich, resources=resources, calendar_items=calendar_items
+            )
+    else:
+        report = render_report([change_event], verbose=verbose)
+        log.info("\n[SIMULATED CHANGE - not persisted]\n%s", report)
     REPORT_FILE.write_text(report, encoding="utf-8")
     log.info("Report written to %s", REPORT_FILE)
-    if emit_bubble_json:
-        _write_bubble_payload([change_event])
 
 
 def main() -> None:
     args = parse_args()
+
+    # Load OpenAI settings from SSM in AWS/prod mode (before any bubble/ai code)
+    try:
+        from bubble.ssm_loader import load_openai_env_from_ssm
+        load_openai_env_from_ssm()
+    except Exception as e:
+        log.debug("SSM loader skipped or failed: %s", e)
 
     if args.print_bubble_schema:
         from bubble_resources import BUBBLE_RESOURCE_FIELDS
@@ -1729,12 +1969,26 @@ def main() -> None:
 
     # Simulate-change mode: no fetch, no persist (single target)
     if args.simulate_change:
-        _run_simulate_change(args.target_id.strip(), targets or [], args.verbose, args.emit_bubble_json)
+        _run_simulate_change(
+            args.target_id.strip(),
+            targets or [],
+            args.verbose,
+            args.emit_bubble_json,
+            args.ai_enrich,
+            args.bubble_report,
+        )
         return
 
     # Simulate-change-all: fetch + extract on all targets, inject fakes into first N, no persist
     if args.simulate_change_all:
-        _run_simulate_change_all(targets or [], args.simulate_change_n, args.verbose, args.emit_bubble_json)
+        _run_simulate_change_all(
+            targets or [],
+            args.simulate_change_n,
+            args.verbose,
+            args.emit_bubble_json,
+            args.ai_enrich,
+            args.bubble_report,
+        )
         return
 
     change_events: list[dict] = []
@@ -1785,12 +2039,34 @@ def main() -> None:
     else:
         change_events.append(process_one({"id": "default", "label": "default", "url": TARGET_URL}))
 
-    report = render_report(change_events, verbose=args.verbose)
-    log.info("\n%s", report)
+    # Always build bubble payloads for the email report (and optional bubble output)
+    resources, calendar_items = _build_bubble_payloads(change_events, ai_enrich=args.ai_enrich)
+
+    # Build and write the email report (summary + links + JSON blocks)
+    email_report = render_email_report(change_events, resources, calendar_items)
+    LAST_EMAIL_REPORT_FILE.write_text(email_report, encoding="utf-8")
+    log.info("Email report written to %s", LAST_EMAIL_REPORT_FILE)
+
+    if args.bubble_report or args.emit_bubble_json:
+        if args.bubble_report:
+            report = _render_bubble_report(resources, calendar_items)
+            log.info("Bubble report: %d Calendar Items, %d Resources", len(calendar_items), len(resources))
+        else:
+            report = render_report(change_events, verbose=args.verbose)
+            log.info("\n%s", report)
+        if args.emit_bubble_json:
+            _write_bubble_payload(
+                change_events,
+                ai_enrich=args.ai_enrich,
+                resources=resources,
+                calendar_items=calendar_items,
+            )
+    else:
+        report = render_report(change_events, verbose=args.verbose)
+        log.info("\n%s", report)
+
     REPORT_FILE.write_text(report, encoding="utf-8")
     log.info("Report written to %s", REPORT_FILE)
-    if args.emit_bubble_json:
-        _write_bubble_payload(change_events)
 
     # Only send email when EMAIL_ENABLED=true and there are meaningful changes (targets_changed > 0)
     events_with_meaningful_changes = [
@@ -1800,7 +2076,13 @@ def main() -> None:
     if targets_changed > 0:
         from emailer import send_report
 
-        send_report(report, targets_changed)
+        if LAST_EMAIL_REPORT_FILE.exists():
+            email_body = LAST_EMAIL_REPORT_FILE.read_text(encoding="utf-8")
+            log.info("Email body source: last_email_report.txt")
+        else:
+            email_body = REPORT_FILE.read_text(encoding="utf-8")
+            log.info("Email body source: last_report.txt")
+        send_report(email_body, targets_changed)
 
     if os.environ.get("CHANGELOG_BUCKET", "").strip():
         from storage.changelog_s3 import append_change_events as s3_append
