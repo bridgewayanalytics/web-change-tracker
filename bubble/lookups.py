@@ -53,6 +53,24 @@ def _tree_node_parent(node: dict) -> str | None:
     return None
 
 
+def get_all_trees() -> list[dict]:
+    """
+    Return all Tree things (no constraints). Use for listing available trees.
+
+    Example:
+        for tree in get_all_trees():
+            print(tree.get("Name"), tree.get("_id"))
+    """
+    try:
+        client = _client()
+        return list(client.list_all(TYPE_TREE, page_size=100))
+    except BubbleAPIError:
+        raise
+    except Exception as e:
+        log.warning("get_all_trees() failed: %s", e)
+        return []
+
+
 def get_tree_by_name(name: str) -> dict | None:
     """
     Return the Tree thing whose name matches (exact), or None if not found.
