@@ -14,6 +14,13 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
+# Load .env from cwd if present (dev-only; not required)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 import requests
 from bs4 import BeautifulSoup
 
