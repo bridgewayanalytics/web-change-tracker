@@ -54,6 +54,7 @@ REPORT_FILE = Path(__file__).parent / "last_report.txt"
 LAST_EMAIL_REPORT_FILE = Path(__file__).parent / "last_email_report.txt"
 BUBBLE_RESOURCES_FILE = Path(__file__).parent / "last_bubble_resources.json"
 BUBBLE_CALENDAR_ITEMS_FILE = Path(__file__).parent / "last_bubble_calendar_items.json"
+BUBBLE_REPORT_FILE = Path(__file__).parent / "last_bubble_report.json"
 TARGET_URL = "https://example.com"
 USE_PLAYWRIGHT = os.environ.get("USE_PLAYWRIGHT", "1") != "0"  # Set USE_PLAYWRIGHT=0 to use requests only
 
@@ -1573,7 +1574,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--emit-bubble-json",
         action="store_true",
-        help="Write Bubble Resource and Calendar Item payloads to last_bubble_resources.json and last_bubble_calendar_items.json",
+        help="Write Bubble Resource and Calendar Item payloads to last_bubble_resources.json, last_bubble_calendar_items.json, and last_bubble_report.json",
+    )
+    p.add_argument(
+        "--bubble-enrich",
+        action="store_true",
+        default=False,
+        help="Run Bubble reference enrichment (trees, nodes, deterministic + optional AI). Default on if AI_ENRICHMENT_ENABLED=true.",
+    )
+    p.add_argument(
+        "--no-ai",
+        action="store_true",
+        default=False,
+        help="Disable AI enrichment (refs) even when AI_ENRICHMENT_ENABLED is set",
     )
     p.add_argument(
         "--ai-enrich",
@@ -1587,7 +1600,36 @@ def parse_args() -> argparse.Namespace:
         default=False,
         help="Use Bubble JSON format for report and email (summary + Calendar Items + Resources)",
     )
+    p.add_argument(
+        "--e2e-bubble",
+        action="store_true",
+        default=False,
+        help="E2E Bubble: build snapshot, pass into payload mapping/enrichment; debug artifacts under debug/; no write endpoints.",
+    )
+    p.add_argument(
+        "--bubble-snapshot-limit",
+        type=int,
+        default=200,
+        metavar="N",
+        help="Max items per type when building Bubble snapshot (default: 200)",
+    )
+    p.add_argument(
+        "--dry-run-bubble",
+        action="store_true",
+        default=True,
+        dest="dry_run_bubble",
+        help="Do not call Bubble write endpoints (default: True)",
+    )
+    p.add_argument(
+        "--no-dry-run-bubble",
+        action="store_false",
+        dest="dry_run_bubble",
+        help="Allow Bubble write endpoints (still none implemented in this app)",
+    )
     args = p.parse_args()
+    # Default bubble_enrich on when AI_ENRICHMENT_ENABLED is set
+    if os.environ.get("AI_ENRICHMENT_ENABLED", "").strip().lower() in ("1", "true", "yes"):
+        args.bubble_enrich = True
     if args.dump_html_snapshot and not args.target_id:
         p.error("--dump-html-snapshot requires --target-id")
     if args.debug_extract and not args.target_id:
@@ -1601,8 +1643,11 @@ def _build_bubble_payloads(
     change_events: list[dict],
     *,
     ai_enrich: bool = False,
+    bubble_enrich: bool = False,
+    no_ai: bool = False,
+    bubble_snapshot: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
-    """Build Bubble Resource and Calendar Item payloads. Apply AI enrichment when conditions met."""
+    """Build Bubble Resource and Calendar Item payloads. Optionally run AI enrichment and reference enrichment."""
     from bubble.payload import (
         build_calendar_item_context,
         build_calendar_item_payload,
@@ -1627,7 +1672,27 @@ def _build_bubble_payloads(
         calendar_ctx,
         has_changes=has_changes,
         force=ai_enrich,
+        bubble_snapshot=bubble_snapshot,
     )
+
+    if bubble_enrich:
+        from bubble.enrich_refs import enrich_refs
+        use_ai = (
+            not no_ai
+            and os.environ.get("AI_ENRICHMENT_ENABLED", "").strip().lower() in ("1", "true", "yes")
+            and bool(os.environ.get("OPENAI_API_KEY", "").strip())
+        )
+        try:
+            resources, calendar_items = enrich_refs(
+                resources,
+                calendar_items,
+                resource_ctx,
+                calendar_ctx,
+                use_ai=use_ai,
+                bubble_snapshot=bubble_snapshot,
+            )
+        except Exception as e:
+            log.warning("Bubble reference enrichment failed, using payloads as-is: %s", e)
 
     return (resources, calendar_items)
 
@@ -1715,48 +1780,36 @@ def render_email_report(
     calendar_items: list[dict],
 ) -> str:
     """
-    Email report format: summary, Links section (source + detected URLs), then full JSON blocks.
-    Plain text URLs only. source_page_url/source_page_title appear only in human-readable Links section.
+    Email report format: counts, unique source links, then Bubble payload JSON blocks.
+    Only new items (resources/calendar_items are already new-only). Source URLs deduped.
     Always produced (0 counts and empty arrays when no changes).
     """
     events_with_changes = [
         e for e in change_events
         if "error" not in e and _has_displayable_changes(e)
     ]
-    targets_changed = len(events_with_changes)
-
     nr, ne = len(resources), len(calendar_items)
 
     lines: list[str] = []
-    lines.append("Summary")
-    lines.append("-" * 40)
-    lines.append(f"New resources: {nr}")
-    lines.append(f"New events: {ne}")
-    lines.append(f"Targets changed: {targets_changed}")
+    lines.append("New Library Items (Resources): %d" % nr)
+    lines.append("New Calendar Items (Events): %d" % ne)
     lines.append("")
 
-    resource_links, calendar_item_links = _build_email_report_links(change_events)
+    source_urls = sorted({
+        (e.get("url") or "").strip()
+        for e in events_with_changes
+        if (e.get("url") or "").strip()
+    })
+    lines.append("Source links:")
+    for u in source_urls:
+        lines.append(u)
+    lines.append("")
 
-    lines.append("Links")
-    lines.append("-" * 40)
-    for i, link in enumerate(resource_links):
-        lines.append(f"Resource {i + 1}:")
-        lines.append(f"  source_page_url: {link['source_page_url']}")
-        lines.append(f"  source_page_title: {link['source_page_title']}")
-        lines.append(f"  detected_url: {link['detected_url']}")
-        lines.append("")
-    for i, link in enumerate(calendar_item_links):
-        lines.append(f"Event {i + 1}:")
-        lines.append(f"  source_page_url: {link['source_page_url']}")
-        lines.append(f"  source_page_title: {link['source_page_title']}")
-        lines.append(f"  detected_url: {link['detected_url']}")
-        lines.append("")
-
-    lines.append("Resources (Bubble payload)")
+    lines.append("Bubble Resource payload:")
     lines.append("-" * 40)
     lines.append(json.dumps(resources, indent=2, ensure_ascii=False))
     lines.append("")
-    lines.append("Calendar Items (Bubble payload)")
+    lines.append("Bubble Calendar Item payload:")
     lines.append("-" * 40)
     lines.append(json.dumps(calendar_items, indent=2, ensure_ascii=False))
 
@@ -1767,20 +1820,41 @@ def _write_bubble_payload(
     change_events: list[dict],
     *,
     ai_enrich: bool = False,
+    bubble_enrich: bool = False,
+    no_ai: bool = False,
     resources: list[dict] | None = None,
     calendar_items: list[dict] | None = None,
 ) -> None:
-    """Build and write Bubble Resource and Calendar Item payloads."""
+    """Build and write Bubble Resource and Calendar Item payloads, plus last_bubble_report.json."""
     import json
 
     if resources is None or calendar_items is None:
-        resources, calendar_items = _build_bubble_payloads(change_events, ai_enrich=ai_enrich)
+        resources, calendar_items = _build_bubble_payloads(
+            change_events,
+            ai_enrich=ai_enrich,
+            bubble_enrich=bubble_enrich,
+            no_ai=no_ai,
+        )
 
     BUBBLE_RESOURCES_FILE.write_text(json.dumps(resources, indent=2, ensure_ascii=False), encoding="utf-8")
     log.info("Wrote Bubble Resource payload to %s (%d items)", BUBBLE_RESOURCES_FILE, len(resources))
 
     BUBBLE_CALENDAR_ITEMS_FILE.write_text(json.dumps(calendar_items, indent=2, ensure_ascii=False), encoding="utf-8")
     log.info("Wrote Bubble Calendar Item payload to %s (%d items)", BUBBLE_CALENDAR_ITEMS_FILE, len(calendar_items))
+
+    web_urls = list({(e.get("url") or "").strip() for e in change_events if (e.get("url") or "").strip()})
+    for r in resources:
+        u = (r.get("URL") or "").strip()
+        if u and u not in web_urls:
+            web_urls.append(u)
+    report = {
+        "counts": {"resources": len(resources), "calendar_items": len(calendar_items)},
+        "web_urls": web_urls,
+        "resources": resources,
+        "calendar_items": calendar_items,
+    }
+    BUBBLE_REPORT_FILE.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    log.info("Wrote Bubble report to %s", BUBBLE_REPORT_FILE)
 
 
 def _run_simulate_change_all(
@@ -1789,6 +1863,10 @@ def _run_simulate_change_all(
     verbose: bool,
     emit_bubble_json: bool = False,
     ai_enrich: bool = False,
+    bubble_enrich: bool = False,
+    no_ai: bool = False,
+    e2e_bubble: bool = False,
+    bubble_snapshot_limit: int = 200,
     bubble_report: bool = False,
 ) -> None:
     """Test-only: run extraction on all targets, inject fake changes into first N, produce combined report. No persist."""
@@ -1826,7 +1904,23 @@ def _run_simulate_change_all(
                 "error": str(e),
                 **{k: t[k] for k in ("org_id", "org_path", "group", "tags", "include_hash_changes") if k in t},
             })
-    resources, calendar_items = _build_bubble_payloads(change_events, ai_enrich=ai_enrich)
+    bubble_snapshot = None
+    if e2e_bubble:
+        try:
+            from bubble.client import get_client
+            from bubble.snapshot import build_bubble_snapshot
+            client = get_client(use_cache=True)
+            bubble_snapshot = build_bubble_snapshot(client, limit=bubble_snapshot_limit)
+        except Exception as e:
+            log.warning("E2E Bubble snapshot build failed, continuing without snapshot: %s", e)
+
+    resources, calendar_items = _build_bubble_payloads(
+        change_events,
+        ai_enrich=ai_enrich,
+        bubble_enrich=bubble_enrich,
+        no_ai=no_ai,
+        bubble_snapshot=bubble_snapshot,
+    )
     email_report = render_email_report(change_events, resources, calendar_items)
     LAST_EMAIL_REPORT_FILE.write_text(email_report, encoding="utf-8")
     log.info("Email report written to %s", LAST_EMAIL_REPORT_FILE)
@@ -1839,7 +1933,14 @@ def _run_simulate_change_all(
             report = render_report(change_events, verbose=verbose)
             log.info("\n[SIMULATE-CHANGE-ALL - not persisted]\n%s", report)
         if emit_bubble_json:
-            _write_bubble_payload(change_events, ai_enrich=ai_enrich, resources=resources, calendar_items=calendar_items)
+            _write_bubble_payload(
+                change_events,
+                ai_enrich=ai_enrich,
+                bubble_enrich=bubble_enrich,
+                no_ai=no_ai,
+                resources=resources,
+                calendar_items=calendar_items,
+            )
     else:
         report = render_report(change_events, verbose=verbose)
         log.info("\n[SIMULATE-CHANGE-ALL - not persisted]\n%s", report)
@@ -1853,6 +1954,10 @@ def _run_simulate_change(
     verbose: bool,
     emit_bubble_json: bool = False,
     ai_enrich: bool = False,
+    bubble_enrich: bool = False,
+    no_ai: bool = False,
+    e2e_bubble: bool = False,
+    bubble_snapshot_limit: int = 200,
     bubble_report: bool = False,
 ) -> None:
     """Test-only: simulate diffs from stored state, render report, do NOT persist."""
@@ -1918,7 +2023,23 @@ def _run_simulate_change(
         "include_hash_changes": target.get("include_hash_changes", False),
         "change": change,
     }
-    resources, calendar_items = _build_bubble_payloads([change_event], ai_enrich=ai_enrich)
+    bubble_snapshot = None
+    if e2e_bubble:
+        try:
+            from bubble.client import get_client
+            from bubble.snapshot import build_bubble_snapshot
+            client = get_client(use_cache=True)
+            bubble_snapshot = build_bubble_snapshot(client, limit=bubble_snapshot_limit)
+        except Exception as e:
+            log.warning("E2E Bubble snapshot build failed, continuing without snapshot: %s", e)
+
+    resources, calendar_items = _build_bubble_payloads(
+        [change_event],
+        ai_enrich=ai_enrich,
+        bubble_enrich=bubble_enrich,
+        no_ai=no_ai,
+        bubble_snapshot=bubble_snapshot,
+    )
     email_report = render_email_report([change_event], resources, calendar_items)
     LAST_EMAIL_REPORT_FILE.write_text(email_report, encoding="utf-8")
     log.info("Email report written to %s", LAST_EMAIL_REPORT_FILE)
@@ -1932,7 +2053,12 @@ def _run_simulate_change(
             log.info("\n[SIMULATED CHANGE - not persisted]\n%s", report)
         if emit_bubble_json:
             _write_bubble_payload(
-                [change_event], ai_enrich=ai_enrich, resources=resources, calendar_items=calendar_items
+                [change_event],
+                ai_enrich=ai_enrich,
+                bubble_enrich=bubble_enrich,
+                no_ai=no_ai,
+                resources=resources,
+                calendar_items=calendar_items,
             )
     else:
         report = render_report([change_event], verbose=verbose)
@@ -1982,6 +2108,10 @@ def main() -> None:
             args.verbose,
             args.emit_bubble_json,
             args.ai_enrich,
+            args.bubble_enrich,
+            args.no_ai,
+            getattr(args, "e2e_bubble", False),
+            getattr(args, "bubble_snapshot_limit", 200),
             args.bubble_report,
         )
         return
@@ -1994,6 +2124,10 @@ def main() -> None:
             args.verbose,
             args.emit_bubble_json,
             args.ai_enrich,
+            args.bubble_enrich,
+            args.no_ai,
+            getattr(args, "e2e_bubble", False),
+            getattr(args, "bubble_snapshot_limit", 200),
             args.bubble_report,
         )
         return
@@ -2046,8 +2180,25 @@ def main() -> None:
     else:
         change_events.append(process_one({"id": "default", "label": "default", "url": TARGET_URL}))
 
+    # Build Bubble snapshot when E2E so mapping/enrichment can use real Bubble objects (read-only; no writes)
+    bubble_snapshot = None
+    if getattr(args, "e2e_bubble", False):
+        try:
+            from bubble.client import get_client
+            from bubble.snapshot import build_bubble_snapshot
+            client = get_client(use_cache=True)
+            bubble_snapshot = build_bubble_snapshot(client, limit=getattr(args, "bubble_snapshot_limit", 200))
+        except Exception as e:
+            log.warning("E2E Bubble snapshot build failed, continuing without snapshot: %s", e)
+
     # Always build bubble payloads for the email report (and optional bubble output)
-    resources, calendar_items = _build_bubble_payloads(change_events, ai_enrich=args.ai_enrich)
+    resources, calendar_items = _build_bubble_payloads(
+        change_events,
+        ai_enrich=args.ai_enrich,
+        bubble_enrich=args.bubble_enrich,
+        no_ai=args.no_ai,
+        bubble_snapshot=bubble_snapshot,
+    )
 
     # Build and write the email report (summary + links + JSON blocks)
     email_report = render_email_report(change_events, resources, calendar_items)
@@ -2065,6 +2216,8 @@ def main() -> None:
             _write_bubble_payload(
                 change_events,
                 ai_enrich=args.ai_enrich,
+                bubble_enrich=args.bubble_enrich,
+                no_ai=args.no_ai,
                 resources=resources,
                 calendar_items=calendar_items,
             )

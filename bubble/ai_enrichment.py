@@ -1,11 +1,12 @@
 """
 AI enrichment for Bubble payloads using OpenAI.
 Enriches Resources and Calendar Items with NAIC categorization, subtopic, etc.
- Safe: on OpenAI failure or invalid output, returns input unchanged and logs warning.
-Runs automatically in production when OPENAI_ENABLED and conditions are met.
+When Bubble snapshot is available, provides compact candidate tree nodes and calendar items so the model outputs valid Bubble IDs.
+Safe: on OpenAI failure or invalid output, returns input unchanged and logs warning.
 """
 
 import csv
+import json
 import logging
 import os
 from pathlib import Path
@@ -17,6 +18,12 @@ from bubble.schemas import (
 )
 
 log = logging.getLogger(__name__)
+
+DEBUG_AI_DIR = Path("debug")
+DEBUG_AI_INPUTS_RESOURCES = DEBUG_AI_DIR / "ai_inputs_resources.jsonl"
+DEBUG_AI_OUTPUTS_RESOURCES = DEBUG_AI_DIR / "ai_outputs_resources.jsonl"
+DEBUG_AI_INPUTS_CALENDAR = DEBUG_AI_DIR / "ai_inputs_calendar_items.jsonl"
+DEBUG_AI_OUTPUTS_CALENDAR = DEBUG_AI_DIR / "ai_outputs_calendar_items.jsonl"
 
 _SCHEMA_EXPORTS = Path(__file__).resolve().parent / "schema_exports"
 _EXAMPLE_ROWS = 3  # 2-3 example objects per type
@@ -111,6 +118,16 @@ def _get_calendar_item_examples() -> list[dict]:
     return _load_csv_samples(_SCHEMA_EXPORTS / "calendar_items.csv", max_rows=_EXAMPLE_ROWS)
 
 
+def _write_debug_jsonl(path: Path, record: dict) -> None:
+    """Append one JSON object as a single line to a JSONL file."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as e:
+        log.debug("Failed to write debug JSONL %s: %s", path, e)
+
+
 def _call_openai_for_resources(resources: list[dict], context: dict) -> list[dict]:
     """Call OpenAI to enrich resources. Returns enriched list or raises."""
     from bubble.openai_client import chat_json
@@ -121,11 +138,27 @@ def _call_openai_for_resources(resources: list[dict], context: dict) -> list[dic
     if len(items_ctx) != len(resources):
         items_ctx = [{"org_id": None, "org_path": [], "label": "unknown", "url": ""}] * len(resources)
 
+    mapping = context.get("mapping_context") or {}
+    org_nodes = mapping.get("organization_tree_nodes") or []
+    naic_nodes = mapping.get("naic_group_tree_nodes") or []
+    type_nodes = mapping.get("resource_type_tree_nodes") or []
+
     system = f"""You enrich Bubble Resource objects. Return a JSON object with key "resources" containing an array of objects.
 Each output object MUST have only these allowed keys: {schema_fields}
 Only populate fields you can confidently infer. Leave others null or empty.
-MVP fields to fill when applicable: parent (tree path), Organization (Tree Node), Type, Type1, topic suggestion (Tree Node), and any categorization from the CSV examples.
-Preserve existing non-null values unless refining. Legacy/unknown fields stay null."""
+MVP fields to fill when applicable: parent (tree path), Organization (list of Tree Node IDs), Type, Type1 (list of Tree Node IDs), topic suggestion (Tree Node ID), and any categorization from the CSV examples.
+Preserve existing non-null values unless refining. Legacy/unknown fields stay null.
+For reference fields (Organization, Type1, topic suggestion): use only the Bubble object "id" values from the candidate lists below. Output IDs as strings or list of strings; no extra keys."""
+
+    if org_nodes or naic_nodes or type_nodes:
+        system += """
+
+Candidate tree nodes (use only these ids):
+- Organization (Organization/Publisher): """ + json.dumps(org_nodes[:80], ensure_ascii=False)
+        if naic_nodes:
+            system += "\n- NAIC Group (path under NAIC): " + json.dumps(naic_nodes[:80], ensure_ascii=False)
+        if type_nodes:
+            system += "\n- Resource Types (News, Agenda & Materials, etc.): " + json.dumps(type_nodes[:50], ensure_ascii=False)
 
     payload_text = []
     for i, (r, ctx) in enumerate(zip(resources, items_ctx)):
@@ -139,12 +172,16 @@ Example populated rows from production (non-empty fields only):
 Resources to enrich (same order, return one object per item):
 {chr(10).join(payload_text)}
 
-Return JSON: {{"resources": [ ... ]}} with exactly {len(resources)} objects."""
+Return JSON: {{"resources": [ ... ]}} with exactly {len(resources)} objects. All keys from schema must be present in each object; use null for unknown. Reference fields must be Bubble IDs from the candidate lists."""
+
+    _write_debug_jsonl(DEBUG_AI_INPUTS_RESOURCES, {"system": system[:2000], "user": user[:4000], "resources_count": len(resources), "mapping_keys": list(mapping.keys())})
 
     out = chat_json([{"role": "system", "content": system}, {"role": "user", "content": user}])
     enriched = out.get("resources", [])
     if not isinstance(enriched, list) or len(enriched) != len(resources):
         raise ValueError(f"Expected {len(resources)} resources, got {len(enriched) if isinstance(enriched, list) else 'non-list'}")
+
+    _write_debug_jsonl(DEBUG_AI_OUTPUTS_RESOURCES, {"resources": enriched})
     return enriched
 
 
@@ -158,12 +195,22 @@ def _call_openai_for_calendar_items(items: list[dict], context: dict) -> list[di
     if len(items_ctx) != len(items):
         items_ctx = [{"org_id": None, "org_path": [], "label": "unknown", "url": ""}] * len(items)
 
+    mapping = context.get("mapping_context") or {}
+    naic_nodes = mapping.get("naic_group_tree_nodes") or []
+    recent_cal = mapping.get("recent_calendar_items") or []
+
     system = f"""You enrich Bubble Calendar Item objects. Return a JSON object with key "calendar_items" containing an array of objects.
 Each output object MUST have only these allowed keys: {schema_fields}
 Only populate fields you can confidently infer. Leave others null or empty.
-MVP fields to fill: "NAIC Group (tree node)", "NAIC Group (legacy)" (if applicable), "NAIC Date/Meeting Type", "subtopic", "has topic" (yes/no), and refine "title" if needed.
+MVP fields to fill: "NAIC Group (tree node)" (single Tree Node ID), "NAIC Group (legacy)" (if applicable), "NAIC Date/Meeting Type", "subtopic", "has topic" (yes/no), and refine "title" if needed.
 Preserve existing non-null values (Agenda, date, etc.) unless refining. Relevant Documents stays empty for MVP.
-Legacy/unknown fields stay null."""
+For "NAIC Group (tree node)": use only the Bubble node "id" from the NAIC group candidate list below. Output as string. Legacy/unknown fields stay null."""
+
+    if naic_nodes or recent_cal:
+        if naic_nodes:
+            system += "\n\nCandidate NAIC Group tree nodes (use id only): " + json.dumps(naic_nodes[:80], ensure_ascii=False)
+        if recent_cal:
+            system += "\n\nExisting calendar items (for reference): " + json.dumps(recent_cal[:50], ensure_ascii=False)
 
     payload_text = []
     for i, (item, ctx) in enumerate(zip(items, items_ctx)):
@@ -177,12 +224,16 @@ Example populated rows from production (non-empty fields only):
 Calendar items to enrich (same order, return one object per item):
 {chr(10).join(payload_text)}
 
-Return JSON: {{"calendar_items": [ ... ]}} with exactly {len(items)} objects."""
+Return JSON: {{"calendar_items": [ ... ]}} with exactly {len(items)} objects. All keys from schema must be present; use null for unknown. "NAIC Group (tree node)" must be a Bubble node id from the candidate list."""
+
+    _write_debug_jsonl(DEBUG_AI_INPUTS_CALENDAR, {"system": system[:2000], "user": user[:4000], "items_count": len(items), "mapping_keys": list(mapping.keys())})
 
     out = chat_json([{"role": "system", "content": system}, {"role": "user", "content": user}])
     enriched = out.get("calendar_items", [])
     if not isinstance(enriched, list) or len(enriched) != len(items):
         raise ValueError(f"Expected {len(items)} calendar_items, got {len(enriched) if isinstance(enriched, list) else 'non-list'}")
+
+    _write_debug_jsonl(DEBUG_AI_OUTPUTS_CALENDAR, {"calendar_items": enriched})
     return enriched
 
 
@@ -278,9 +329,11 @@ def enrich_payloads(
     *,
     has_changes: bool = True,
     force: bool = False,
+    bubble_snapshot: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """
     Enrich resources and calendar items when conditions are met.
+    When bubble_snapshot is provided, mapping context (candidate tree nodes, calendar items) is passed to the model so it can output valid Bubble IDs.
     Truncates to OPENAI_ENRICH_MAX_* before API call; unenriched tail is preserved.
     Logs: AI enrichment: resources <enriched>/<total>, events <enriched>/<total>, model=..., effort=...
     """
@@ -296,10 +349,22 @@ def enrich_payloads(
     resource_ctx_trunc = resource_ctx[: len(resources_to_enrich)]
     calendar_ctx_trunc = calendar_ctx[: len(items_to_enrich)]
 
+    # Build context; include mapping context when snapshot available (E2E)
+    resource_context: dict = {"items": resource_ctx_trunc}
+    calendar_context: dict = {"items": calendar_ctx_trunc}
+    if bubble_snapshot:
+        try:
+            from bubble.mapping_context import build_mapping_context
+            mapping_context = build_mapping_context(bubble_snapshot)
+            resource_context["mapping_context"] = mapping_context
+            calendar_context["mapping_context"] = mapping_context
+        except Exception as e:
+            log.debug("Failed to build mapping context from snapshot: %s", e)
+
     # Enrich truncated portions
     try:
         enriched_resources = _enrich_resources_internal(
-            resources_to_enrich, {"items": resource_ctx_trunc}, FULL_RESOURCE_SCHEMA_FIELDS
+            resources_to_enrich, resource_context, FULL_RESOURCE_SCHEMA_FIELDS
         )
     except Exception as e:
         log.warning("AI enrichment of Resources failed, using original: %s", e)
@@ -307,7 +372,7 @@ def enrich_payloads(
 
     try:
         enriched_items = _enrich_calendar_items_internal(
-            items_to_enrich, {"items": calendar_ctx_trunc}, CALENDAR_ITEM_SCHEMA_FIELDS
+            items_to_enrich, calendar_context, CALENDAR_ITEM_SCHEMA_FIELDS
         )
     except Exception as e:
         log.warning("AI enrichment of Calendar Items failed, using original: %s", e)
