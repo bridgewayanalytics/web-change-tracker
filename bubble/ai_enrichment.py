@@ -19,6 +19,20 @@ from bubble.schemas import (
 
 log = logging.getLogger(__name__)
 
+# Bubble reference fields (TreeNode refs and dynamic object refs). AI must not overwrite these.
+REFERENCE_FIELDS = frozenset({
+    "Organization",
+    "Type",
+    "Type1",
+    "topic suggestion",
+    "NAIC Group (tree node)",
+    "Related calendar items",
+    "Agenda",
+    "attached agenda items",
+    "Relevant Documents",
+    "parent",
+})
+
 DEBUG_AI_DIR = Path("debug")
 DEBUG_AI_INPUTS_RESOURCES = DEBUG_AI_DIR / "ai_inputs_resources.jsonl"
 DEBUG_AI_OUTPUTS_RESOURCES = DEBUG_AI_DIR / "ai_outputs_resources.jsonl"
@@ -237,16 +251,24 @@ Return JSON: {{"calendar_items": [ ... ]}} with exactly {len(items)} objects. Al
     return enriched
 
 
-def _merge_enriched(base: dict, enriched: dict, schema_fields: list[str]) -> dict | None:
+def _merge_enriched(
+    base: dict, enriched: dict, schema_fields: list[str]
+) -> tuple[dict | None, list[str]]:
     """
     Merge AI-enriched values into base, validate, return result.
-    Returns None if validation fails (caller should fall back to base).
+    Never merges REFERENCE_FIELDS (TreeNode/dynamic refs); those stay from base.
+    Returns (merged_dict, ignored_reference_fields). merged_dict is None if validation fails.
     """
     if not isinstance(enriched, dict):
-        return None
+        return (None, [])
     result = dict(base)
+    ignored: list[str] = []
     for k, v in enriched.items():
         if k not in schema_fields:
+            continue
+        if k in REFERENCE_FIELDS:
+            if v is not None and not (isinstance(v, str) and not v.strip()) and not (isinstance(v, list) and not v):
+                ignored.append(k)
             continue
         if v is None:
             continue
@@ -256,9 +278,10 @@ def _merge_enriched(base: dict, enriched: dict, schema_fields: list[str]) -> dic
             continue
         result[k] = v
     try:
-        return validate_payload(schema_fields, result)
+        merged = validate_payload(schema_fields, result)
+        return (merged, ignored)
     except Exception:
-        return None
+        return (None, ignored)
 
 
 def _enrich_resources_internal(
@@ -267,13 +290,20 @@ def _enrich_resources_internal(
     """Enrich resources via OpenAI. Validates each; on invalid, falls back to base. Returns enriched list."""
     enriched_raw = _call_openai_for_resources(resources, context)
     result: list[dict] = []
+    ignored_refs: set[str] = set()
     for base, enc in zip(resources, enriched_raw):
-        merged = _merge_enriched(base, enc, schema_fields)
+        merged, ignored = _merge_enriched(base, enc, schema_fields)
+        ignored_refs.update(ignored)
         if merged is None:
             log.warning("AI enrichment produced invalid Resource, using original")
             result.append(base)
         else:
             result.append(merged)
+    if ignored_refs:
+        _write_debug_jsonl(
+            DEBUG_AI_OUTPUTS_RESOURCES,
+            {"ignored_reference_fields": sorted(ignored_refs)},
+        )
     return result
 
 
@@ -283,13 +313,20 @@ def _enrich_calendar_items_internal(
     """Enrich calendar items via OpenAI. Validates each; on invalid, falls back to base."""
     enriched_raw = _call_openai_for_calendar_items(items, context)
     result: list[dict] = []
+    ignored_refs: set[str] = set()
     for base, enc in zip(items, enriched_raw):
-        merged = _merge_enriched(base, enc, schema_fields)
+        merged, ignored = _merge_enriched(base, enc, schema_fields)
+        ignored_refs.update(ignored)
         if merged is None:
             log.warning("AI enrichment produced invalid Calendar Item, using original")
             result.append(base)
         else:
             result.append(merged)
+    if ignored_refs:
+        _write_debug_jsonl(
+            DEBUG_AI_OUTPUTS_CALENDAR,
+            {"ignored_reference_fields": sorted(ignored_refs)},
+        )
     return result
 
 

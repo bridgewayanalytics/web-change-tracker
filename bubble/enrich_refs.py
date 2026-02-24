@@ -14,6 +14,7 @@ from typing import Any
 
 from bubble import lookups
 from bubble.client import BubbleAPIError
+from bubble.reference_resolution import record_resolution
 
 log = logging.getLogger(__name__)
 
@@ -333,11 +334,14 @@ def _build_type1_nodes_by_name(tree_name: str, bubble_snapshot: dict | None = No
 
 def _match_calendar_item_from_snapshot(
     snapshot: dict, title: str, notes: str, tolerance_days: int = 7
-) -> str | None:
-    """Match a calendar item from snapshot by title and optional date. Returns _id or None."""
+) -> list[tuple[str, float]]:
+    """
+    Return candidate calendar items from snapshot as (id, score), sorted by score desc.
+    Score is based on title match and presence of a matching date token.
+    """
     title = (title or "").strip().lower()
     if not title:
-        return None
+        return []
     date_iso = None
     for m in re.finditer(r"(\d{4})[-/](\d{2})[-/](\d{2})", (notes or "") + " " + (title or "")):
         date_iso = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
@@ -356,24 +360,24 @@ def _match_calendar_item_from_snapshot(
             date_iso = f"{m.group(3)}-{month_map.get(m.group(1).lower(), '01')}-{m.group(2).zfill(2)}"
             break
     items = snapshot.get("calendar_items") or []
+    candidates: list[tuple[str, float]] = []
     for c in items:
         ct = (c.get("title") or "").strip().lower()
+        if not ct:
+            continue
+        # Basic title similarity: substring either way
         if title not in ct and ct not in title:
             continue
+        score = 1.0
         cd = c.get("date")
-        if date_iso and cd:
-            if isinstance(cd, str) and date_iso in cd:
-                pass
-            else:
-                continue
+        if date_iso and isinstance(cd, str) and date_iso in cd:
+            score += 1.0
         cid = c.get("_id") or c.get("id")
         if cid:
-            return cid
-    for c in items:
-        ct = (c.get("title") or "").strip().lower()
-        if title in ct or ct in title:
-            return c.get("_id") or c.get("id")
-    return None
+            candidates.append((str(cid), score))
+    # If no candidates with date filter, allow title-only matches (already added above)
+    candidates.sort(key=lambda t: t[1], reverse=True)
+    return candidates
 
 
 def _match_calendar_item_for_resource(
@@ -384,22 +388,38 @@ def _match_calendar_item_for_resource(
     calendar_context: list[dict],
     tolerance_days: int = 7,
     bubble_snapshot: dict | None = None,
-) -> str | None:
+) -> tuple[str | None, list[str], str]:
     """
     Try to match an existing Bubble calendar item by title + date (from notes or context).
-    Returns calendar item _id if found, else None. For new items not yet in Bubble,
-    we do not create; caller may link in-payload by index after create.
+    Returns (calendar item id or None, candidate_ids, status).
+    status: "RESOLVED", "AMBIGUOUS", or "UNRESOLVED".
+    For new items not yet in Bubble, we do not create; caller may link in-payload by
+    index after create.
     """
+    SCORE_THRESHOLD = 1.0
+    AMBIGUOUS_DELTA = 0.25
+
     if bubble_snapshot:
         cid = _match_calendar_item_from_snapshot(
             bubble_snapshot, resource_title, resource_notes, tolerance_days
         )
+        candidates = cid  # now list[(id, score)]
+        if not candidates:
+            return (None, [], "UNRESOLVED")
+        top_id, top_score = candidates[0]
+        second_score = candidates[1][1] if len(candidates) > 1 else None
+        candidate_ids = [c[0] for c in candidates[:5]]
+        if top_score < SCORE_THRESHOLD:
+            return (None, candidate_ids, "UNRESOLVED")
+        if second_score is not None and (top_score - second_score) < AMBIGUOUS_DELTA:
+            return (None, candidate_ids, "AMBIGUOUS")
+        cid = top_id
         if cid:
             log.info(
                 "Calendar link: matched meeting id=%s (title match + date tolerance, snapshot)",
                 cid,
             )
-        return cid
+        return (cid, candidate_ids, "RESOLVED" if cid else "UNRESOLVED")
     title = (resource_title or "").strip()
     notes = (resource_notes or "").strip()
     date_iso = None
@@ -424,12 +444,13 @@ def _match_calendar_item_for_resource(
     )
     if existing:
         cid = existing.get("_id") or existing.get("id")
-        log.info(
-            "Calendar link: matched meeting id=%s (title match + date tolerance)",
-            cid,
-        )
-        return cid
-    return None
+        if cid:
+            log.info(
+                "Calendar link: matched meeting id=%s (title match + date tolerance)",
+                cid,
+            )
+            return (cid, [str(cid)], "RESOLVED")
+    return (None, [], "UNRESOLVED")
 
 
 # ---------------------------------------------------------------------------
@@ -510,9 +531,30 @@ def enrich_refs(
 
     # Resolve Organization: NAIC node (single node in list)
     org_naic_id = _resolve_organization_naic_node(organization_tree_name, bubble_snapshot)
-    if org_naic_id:
-        for r in updated_resources:
+    for ri, r in enumerate(updated_resources):
+        if org_naic_id:
             r["Organization"] = [org_naic_id]
+            record_resolution(
+                "organization",
+                "Organization",
+                chosen_ids=[org_naic_id],
+                candidates=[org_naic_id],
+                status="resolved",
+                evidence={"method": "fixed_naic_node", "tree": organization_tree_name},
+                target="Resource",
+                index=ri,
+            )
+        else:
+            record_resolution(
+                "organization",
+                "Organization",
+                chosen_ids=[],
+                candidates=[],
+                status="no_match",
+                evidence={"method": "fixed_naic_node", "tree": organization_tree_name},
+                target="Resource",
+                index=ri,
+            )
 
     # Resolve NAIC group tree node per calendar from context (Calendar has "NAIC Group (tree node)")
     for i, ctx in enumerate(calendar_context):
@@ -523,10 +565,41 @@ def enrich_refs(
         if label:
             path = path + [label]
         if not path:
+            record_resolution(
+                "naic_group",
+                "NAIC Group (tree node)",
+                chosen_ids=[],
+                candidates=[],
+                status="skipped",
+                evidence={"reason": "empty_path"},
+                target="CalendarItem",
+                index=i,
+            )
             continue
         nid = _resolve_naic_group_node(naic_group_tree_name, path, bubble_snapshot)
         if nid:
             updated_calendar[i]["NAIC Group (tree node)"] = nid
+            record_resolution(
+                "naic_group",
+                "NAIC Group (tree node)",
+                chosen_ids=[nid],
+                candidates=[nid],
+                status="resolved",
+                evidence={"path": path, "tree": naic_group_tree_name},
+                target="CalendarItem",
+                index=i,
+            )
+        else:
+            record_resolution(
+                "naic_group",
+                "NAIC Group (tree node)",
+                chosen_ids=[],
+                candidates=[],
+                status="no_match",
+                evidence={"path": path, "tree": naic_group_tree_name},
+                target="CalendarItem",
+                index=i,
+            )
 
     # Type1: deterministic first, then optional AI override
     type1_by_name = _build_type1_nodes_by_name(type1_tree_name, bubble_snapshot)
@@ -541,6 +614,7 @@ def enrich_refs(
         if tree:
             naic_group_tree_id = tree.get("_id") or tree.get("id")
 
+    type1_candidates = list(type1_by_name.values()) if type1_by_name else []
     for i, r in enumerate(updated_resources):
         ctx = resource_context[i] if i < len(resource_context) else {}
         title = (r.get("Name") or "").strip()
@@ -552,8 +626,28 @@ def enrich_refs(
             type1_id = type1_by_name[type1_name]
             r["Type1"] = [type1_id] if type1_id else []
             log.info("Type1: %s (deterministic) -> node_id=%s", type1_name, type1_id)
+            record_resolution(
+                "type1",
+                "Type1",
+                chosen_ids=[type1_id] if type1_id else [],
+                candidates=type1_candidates,
+                status="resolved",
+                evidence={"method": "deterministic", "type1_name": type1_name},
+                target="Resource",
+                index=i,
+            )
         else:
             r["Type1"] = []
+            record_resolution(
+                "type1",
+                "Type1",
+                chosen_ids=[],
+                candidates=type1_candidates,
+                status="no_match",
+                evidence={"method": "deterministic", "type1_name": type1_name},
+                target="Resource",
+                index=i,
+            )
 
         if use_ai:
             ai_resp = request_ai_classification(r, ctx)
@@ -573,6 +667,20 @@ def enrich_refs(
                         ai_resp.get("confidence", 0),
                         ai_type1_id,
                     )
+                    record_resolution(
+                        "type1",
+                        "Type1",
+                        chosen_ids=[ai_type1_id],
+                        candidates=type1_candidates,
+                        status="ai_override",
+                        evidence={
+                            "method": "ai",
+                            "type1_name": ai_resp.get("type1_node_name"),
+                            "confidence": ai_resp.get("confidence", 0),
+                        },
+                        target="Resource",
+                        index=i,
+                    )
                 if topic_id:
                     r["topic suggestion"] = topic_id
                     log.info(
@@ -586,7 +694,7 @@ def enrich_refs(
         ctx = resource_context[i] if i < len(resource_context) else {}
         title = (r.get("Name") or "").strip()
         notes = (r.get("notes") or "").strip()
-        cid = _match_calendar_item_for_resource(
+        cid, candidate_ids, status = _match_calendar_item_for_resource(
             title,
             notes,
             ctx,
@@ -595,9 +703,21 @@ def enrich_refs(
             tolerance_days=calendar_link_tolerance_days,
             bubble_snapshot=bubble_snapshot,
         )
-        if cid:
+        if cid and status == "RESOLVED":
             r["Related calendar items"] = r.get("Related calendar items") or []
             if cid not in r["Related calendar items"]:
                 r["Related calendar items"] = r["Related calendar items"] + [cid]
+        # Record decision (resolved, ambiguous, or unresolved) with top candidates
+        rec_status = status if status in ("AMBIGUOUS", "UNRESOLVED") else "RESOLVED"
+        record_resolution(
+            "calendar_linking",
+            "Related calendar items",
+            chosen_ids=[cid] if cid and rec_status == "RESOLVED" else [],
+            candidates=candidate_ids,
+            status=rec_status,
+            evidence={"method": "title_date_match", "resource_title": title[:80]},
+            target="Resource",
+            index=i,
+        )
 
     return (updated_resources, updated_calendar)

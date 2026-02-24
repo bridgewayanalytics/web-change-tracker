@@ -211,10 +211,43 @@ No Bubble **write** endpoints are called; resolution uses `bubble/lookups.py` (s
 | `--no-ai` | Disable AI in reference enrichment even when `AI_ENRICHMENT_ENABLED` is set |
 | `--ai-enrich` | Force OpenAI payload enrichment (categorization, schema fill); requires `OPENAI_API_KEY` |
 | `--e2e-bubble` | E2E Bubble: build snapshot, pass into payload + AI; write debug artifacts; no write endpoints |
+| `--e2e-bubble-verify` | After enrichment, verify all reference IDs against snapshot; exit non-zero if invalid (use with `--e2e-bubble`) |
 | `--bubble-snapshot-limit` | Max items per type in snapshot (default 200) |
 | `--dry-run-bubble` | Do not call Bubble write endpoints (default True; app has no write calls) |
 | `--no-dry-run-bubble` | Opt out of dry-run (for future write support) |
 | `--print-bubble-schema` | Print Bubble Resource field list and exit |
+
+### Run spec (production)
+
+Runtime behavior is controlled by a **RunSpec** (single source of truth) derived from CLI args and environment. Precedence: **CLI > env > defaults**. The RunSpec summary is logged at startup and included at the top of every email report.
+
+| Env / behavior | Description |
+|----------------|-------------|
+| `PROD_OBSERVE_MODE` | When `true`: requires `bubble_enrich_enabled`, `ai_reference_fields_blocked`, and debug artifacts; intended for production observe (live Bubble reads, no silent degraded modes). |
+| `AI_REFERENCE_FIELDS_BLOCKED` | Default `true`: AI must not overwrite reference fields (Organization, Type1, Related calendar items, etc.). If `false` while AI enrich is on, a HIGH severity warning is emitted (and included in email header). |
+| `ARTIFACT_OUTPUT_DIR` | Directory for `reference_resolution_report.json` and `verify_report.json` (default `debug`). |
+| `S3_ARTIFACT_UPLOAD_ENABLED` | When `true`, upload the two reports to S3 (requires `ARTIFACT_BUCKET`; optional `ARTIFACT_PREFIX`). |
+| `RUN_SPEC_VALIDATION_FAIL_FAST` | When `true`, validation failures (e.g. prod_observe without bubble_enrich) raise and exit instead of only logging warnings. |
+
+**Recommended production (observe, live Bubble, safe):**
+
+```bash
+PROD_OBSERVE_MODE=true ARTIFACT_OUTPUT_DIR=debug EMAIL_ENABLED=true \
+  python spike.py --bubble-enrich --emit-bubble-json --bubble-report
+```
+
+**E2E verify (snapshot, strict):**
+
+```bash
+python spike.py --e2e-bubble --e2e-bubble-verify --bubble-enrich --emit-bubble-json
+```
+
+**Minimal scrape-only (explicitly low quality, no Bubble refs):**
+
+```bash
+# No --bubble-enrich, no AI; refs unresolved (suitable for local/dev only)
+python spike.py
+```
 
 ### Bubble Doctor CLI
 
@@ -312,6 +345,8 @@ web-change-tracker/
 │   ├── ssm_loader.py        # Load OpenAI settings from SSM in prod
 │   ├── doctor.py            # CLI: list-trees, dump-tree, find-node, find-calendar (read-only)
 │   └── schema_exports/      # CSV exports for validation & examples
+├── config/
+│   └── run_spec.py         # RunSpec: compute_run_spec, validate_run_spec, render_run_spec_summary
 ├── schema_loader.py         # Bubble schema loading from CSV exports
 ├── emailer.py               # Optional SES email when changes detected
 ├── targets.json             # Target config with extract rules

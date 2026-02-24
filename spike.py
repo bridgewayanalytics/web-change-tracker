@@ -1607,6 +1607,13 @@ def parse_args() -> argparse.Namespace:
         help="E2E Bubble: build snapshot, pass into payload mapping/enrichment; debug artifacts under debug/; no write endpoints.",
     )
     p.add_argument(
+        "--e2e-bubble-verify",
+        action="store_true",
+        default=False,
+        dest="e2e_bubble_verify",
+        help="After enrich_refs, verify all reference fields against snapshot; exit non-zero if any invalid IDs.",
+    )
+    p.add_argument(
         "--bubble-snapshot-limit",
         type=int,
         default=200,
@@ -1847,11 +1854,33 @@ def _write_bubble_payload(
         u = (r.get("URL") or "").strip()
         if u and u not in web_urls:
             web_urls.append(u)
+    # Build debug views with __key and __source for report only (not in Bubble payload JSON).
+    try:
+        from bubble.payload import build_resource_context, build_calendar_item_context
+        from bubble.debug_keys import make_calendar_debug_entry, make_resource_debug_entry
+
+        resource_ctx = build_resource_context(change_events)
+        calendar_ctx = build_calendar_item_context(change_events)
+
+        debug_resources: list[dict] = []
+        for idx, r in enumerate(resources):
+            ctx = resource_ctx[idx] if idx < len(resource_ctx) else {"label": "unknown", "url": ""}
+            debug_resources.append(make_resource_debug_entry(r, ctx))
+
+        debug_calendar_items: list[dict] = []
+        for idx, c in enumerate(calendar_items):
+            ctx = calendar_ctx[idx] if idx < len(calendar_ctx) else {"label": "unknown", "url": ""}
+            debug_calendar_items.append(make_calendar_debug_entry(c, ctx))
+    except Exception:
+        # Fallback: no debug keys if context/build fails
+        debug_resources = list(resources)
+        debug_calendar_items = list(calendar_items)
+
     report = {
         "counts": {"resources": len(resources), "calendar_items": len(calendar_items)},
         "web_urls": web_urls,
-        "resources": resources,
-        "calendar_items": calendar_items,
+        "resources": debug_resources,
+        "calendar_items": debug_calendar_items,
     }
     BUBBLE_REPORT_FILE.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     log.info("Wrote Bubble report to %s", BUBBLE_REPORT_FILE)
@@ -1946,6 +1975,8 @@ def _run_simulate_change_all(
         log.info("\n[SIMULATE-CHANGE-ALL - not persisted]\n%s", report)
     REPORT_FILE.write_text(report, encoding="utf-8")
     log.info("Report written to %s", REPORT_FILE)
+    from bubble.reference_resolution import write_reference_resolution_report
+    write_reference_resolution_report()
 
 
 def _run_simulate_change(
@@ -2065,10 +2096,25 @@ def _run_simulate_change(
         log.info("\n[SIMULATED CHANGE - not persisted]\n%s", report)
     REPORT_FILE.write_text(report, encoding="utf-8")
     log.info("Report written to %s", REPORT_FILE)
+    from bubble.reference_resolution import write_reference_resolution_report
+    write_reference_resolution_report()
 
 
 def main() -> None:
     args = parse_args()
+
+    from config.run_spec import (
+        compute_run_spec,
+        render_run_spec_summary,
+        validate_run_spec,
+    )
+    run_spec = compute_run_spec(args)
+    validate_run_spec(run_spec)
+    human_summary, _ = render_run_spec_summary(run_spec)
+    log.info("RunSpec:\n%s", human_summary)
+
+    from bubble.reference_resolution import clear_records
+    clear_records()
 
     # Load OpenAI settings from SSM in AWS/prod mode (before any bubble/ai code)
     try:
@@ -2180,29 +2226,54 @@ def main() -> None:
     else:
         change_events.append(process_one({"id": "default", "label": "default", "url": TARGET_URL}))
 
-    # Build Bubble snapshot when E2E so mapping/enrichment can use real Bubble objects (read-only; no writes)
+    # Build Bubble snapshot when E2E or verify so mapping/enrichment (and verification) can use real Bubble objects
     bubble_snapshot = None
-    if getattr(args, "e2e_bubble", False):
+    if run_spec.bubble_mode == "SNAPSHOT":
         try:
             from bubble.client import get_client
             from bubble.snapshot import build_bubble_snapshot
             client = get_client(use_cache=True)
             bubble_snapshot = build_bubble_snapshot(client, limit=getattr(args, "bubble_snapshot_limit", 200))
         except Exception as e:
-            log.warning("E2E Bubble snapshot build failed, continuing without snapshot: %s", e)
+            log.warning("Bubble snapshot build failed, continuing without snapshot: %s", e)
+
+    # Snapshot stats for RunSpec summary and SNAPSHOT low-count warning
+    snapshot_stats = None
+    if bubble_snapshot is not None:
+        snapshot_stats = {
+            "calendar_items": len(bubble_snapshot.get("calendar_items") or []),
+            "resources": len(bubble_snapshot.get("resources") or []),
+            "tree_nodes": len(bubble_snapshot.get("tree_nodes") or []),
+        }
+        from config.run_spec import add_snapshot_warnings
+        add_snapshot_warnings(run_spec, snapshot_stats)
 
     # Always build bubble payloads for the email report (and optional bubble output)
     resources, calendar_items = _build_bubble_payloads(
         change_events,
-        ai_enrich=args.ai_enrich,
-        bubble_enrich=args.bubble_enrich,
+        ai_enrich=run_spec.ai_enrich_enabled,
+        bubble_enrich=run_spec.bubble_enrich_enabled,
         no_ai=args.no_ai,
         bubble_snapshot=bubble_snapshot,
     )
 
-    # Build and write the email report (summary + links + JSON blocks)
+    # Verify reference fields against snapshot: drop invalid IDs + warn, or exit non-zero in --e2e-bubble-verify
+    if bubble_snapshot is not None:
+        from bubble.mapping_pipeline import verify_all_references
+        verify_mode = "e2e_verify" if run_spec.e2e_bubble_verify else "normal"
+        resources, calendar_items = verify_all_references(
+            resources, calendar_items, bubble_snapshot, mode=verify_mode,
+            artifact_output_dir=run_spec.artifact_output_dir or None,
+        )
+
+    # RunSpec summary (with snapshot_stats and warnings) for logs and email header
+    human_summary, _ = render_run_spec_summary(run_spec, snapshot_stats)
+    log.info("RunSpec (final):\n%s", human_summary)
+
+    # Build and write the email report: RunSpec header first, then report body
     email_report = render_email_report(change_events, resources, calendar_items)
-    LAST_EMAIL_REPORT_FILE.write_text(email_report, encoding="utf-8")
+    full_email = human_summary + "\n\n" + email_report
+    LAST_EMAIL_REPORT_FILE.write_text(full_email, encoding="utf-8")
     log.info("Email report written to %s", LAST_EMAIL_REPORT_FILE)
 
     if args.bubble_report or args.emit_bubble_json:
@@ -2215,8 +2286,8 @@ def main() -> None:
         if args.emit_bubble_json:
             _write_bubble_payload(
                 change_events,
-                ai_enrich=args.ai_enrich,
-                bubble_enrich=args.bubble_enrich,
+                ai_enrich=run_spec.ai_enrich_enabled,
+                bubble_enrich=run_spec.bubble_enrich_enabled,
                 no_ai=args.no_ai,
                 resources=resources,
                 calendar_items=calendar_items,
@@ -2250,6 +2321,14 @@ def main() -> None:
         uri = s3_append(run_timestamp, change_events)
         if uri:
             log.info("Change events appended to %s", uri)
+
+    # Always write resolution and verify artifacts to RunSpec artifact dir; upload to S3 when enabled
+    artifact_dir = run_spec.artifact_output_dir or "debug"
+    from bubble.reference_resolution import write_reference_resolution_report
+    write_reference_resolution_report(path=Path(artifact_dir) / "reference_resolution_report.json")
+    if run_spec.s3_artifact_upload_enabled:
+        from config.run_spec import upload_artifacts_to_s3
+        upload_artifacts_to_s3(artifact_dir, run_timestamp)
 
 
 if __name__ == "__main__":
