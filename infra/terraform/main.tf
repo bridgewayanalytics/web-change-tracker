@@ -32,6 +32,14 @@ locals {
     "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.openai_model_param}",
     "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.openai_effort_param}",
   ]
+
+  # Bubble API: injected via ECS secrets (valueFrom); execution role needs SSM + KMS
+  bubble_api_url_param = "/web-change-tracker/prod/bubble_api_url"
+  bubble_api_key_param = "/web-change-tracker/prod/bubble_api_key"
+  bubble_ssm_param_arns = [
+    "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.bubble_api_url_param}",
+    "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.bubble_api_key_param}",
+  ]
 }
 
 # -----------------------------------------------------------------------------
@@ -151,6 +159,30 @@ resource "aws_iam_role_policy_attachment" "execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+# Execution role: read Bubble credentials from SSM (injected as env via ECS secrets valueFrom)
+resource "aws_iam_role_policy" "execution_ssm_bubble" {
+  name = "${local.name}-execution-ssm-bubble"
+  role = aws_iam_role.execution.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "SSMGetBubbleParams"
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter"]
+        Resource = local.bubble_ssm_param_arns
+      },
+      {
+        Sid      = "KMSDecryptBubble"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = "arn:aws:kms:${var.region}:${data.aws_caller_identity.current.account_id}:alias/aws/ssm"
+      }
+    ]
+  })
+}
+
 # -----------------------------------------------------------------------------
 # IAM: Task role (DynamoDB, S3, SES, CloudWatch Logs)
 # -----------------------------------------------------------------------------
@@ -261,6 +293,9 @@ resource "aws_ecs_task_definition" "app" {
       }
     }
 
+    # Prod observe: RunSpec-driven mode. Command enforces --bubble-enrich --bubble-report --emit-bubble-json (no Bubble writes).
+    command = ["python", "spike.py", "--bubble-enrich", "--bubble-report", "--emit-bubble-json"]
+
     environment = [
       { name = "STATE_BACKEND", value = "dynamodb" },
       { name = "STATE_TABLE", value = aws_dynamodb_table.state.name },
@@ -281,7 +316,19 @@ resource "aws_ecs_task_definition" "app" {
       { name = "OPENAI_REASONING_EFFORT_SSM_PARAM", value = local.openai_effort_param },
       { name = "OPENAI_ENRICH_ONLY_IF_CHANGED", value = "true" },
       { name = "OPENAI_ENRICH_MAX_RESOURCES", value = "25" },
-      { name = "OPENAI_ENRICH_MAX_EVENTS", value = "10" }
+      { name = "OPENAI_ENRICH_MAX_EVENTS", value = "10" },
+      # RunSpec prod observe: bubble enrich on, refs blocked, debug artifacts, dry-run Bubble (validated at startup)
+      { name = "PROD_OBSERVE_MODE", value = "true" },
+      { name = "AI_ENRICHMENT_ENABLED", value = "true" },
+      { name = "ARTIFACT_OUTPUT_DIR", value = "debug" },
+      { name = "AI_REFERENCE_FIELDS_BLOCKED", value = "true" },
+      { name = "RUN_SPEC_VALIDATION_FAIL_FAST", value = "true" }
+    ]
+
+    # Bubble credentials from SSM (valueFrom); never in plaintext env. Create params via CLI (see README).
+    secrets = [
+      { name = "BUBBLE_API_URL", valueFrom = local.bubble_ssm_param_arns[0] },
+      { name = "BUBBLE_API_KEY", valueFrom = local.bubble_ssm_param_arns[1] }
     ]
 
     essential = true

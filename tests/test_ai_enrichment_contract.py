@@ -24,12 +24,12 @@ def _mock_resource_list(n: int) -> list[dict]:
     return [
         {
             "archive": False,
-            "Available To Vector Store": True,
-            "Chunk Overlap": 200,
-            "Chunk Size": 1000,
-            "date": None,
-            "Date display": None,
-            "Name": "Test Doc",
+"Available To Vector Store": False,
+        "Chunk Overlap": 200,
+        "Chunk Size": 1000,
+        "date": None,
+        "Date display": None,
+        "Name": "Test Doc",
             "notes": "New doc",
             "Organization": "NAIC",
             "parent": "NAIC › E › Working Groups › Life RBC WG",
@@ -90,7 +90,7 @@ class TestAIEnrichmentContract(unittest.TestCase):
         mock_call.return_value = [
             {
                 "archive": False,
-                "Available To Vector Store": True,
+                "Available To Vector Store": False,
                 "Chunk Overlap": 200,
                 "Chunk Size": 1000,
                 "date": None,

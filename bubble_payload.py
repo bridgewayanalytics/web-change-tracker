@@ -75,7 +75,7 @@ def _build_one_resource(
 
     return {
         "archive": False,
-        "Available To Vector Store": True,
+        "Available To Vector Store": False,
         "Chunk Overlap": 200,
         "Chunk Size": 1000,
         "date": date_val,

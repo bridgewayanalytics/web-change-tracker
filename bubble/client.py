@@ -1,7 +1,9 @@
 """
 Bubble Data API client. Single client for reading/writing Bubble app data.
-Config via env: BUBBLE_API_URL, BUBBLE_API_KEY, optional BUBBLE_APP_VERSION (default live).
-Loads .env from cwd if python-dotenv is installed (dev).
+
+Config: BUBBLE_API_URL, BUBBLE_API_KEY (optional BUBBLE_APP_VERSION, default live).
+- Production (ECS): Injected via ECS task definition secrets (valueFrom SSM). Never log these.
+- Local dev: Set in .env (python-dotenv loads from cwd). .env is for local dev only and must not be committed.
 """
 
 import json
@@ -41,7 +43,7 @@ class BubbleAPIError(Exception):
 
 
 def _safe_snippet(obj: Any) -> str:
-    """Produce a short, safe string from a response (no secrets)."""
+    """Produce a short, safe string from a response (no secrets). Never log BUBBLE_API_URL/BUBBLE_API_KEY."""
     if obj is None:
         return ""
     try:

@@ -2270,9 +2270,16 @@ def main() -> None:
     human_summary, _ = render_run_spec_summary(run_spec, snapshot_stats)
     log.info("RunSpec (final):\n%s", human_summary)
 
-    # Build and write the email report: RunSpec header first, then report body
+    # Debug metric summary: snapshot counts, resolved vs unresolved per field, calendar-too-small warning
+    from bubble.reference_resolution import get_resolution_summary
+    from config.run_spec import render_debug_metric_summary
+    resolution_by_field = get_resolution_summary()
+    debug_metric_text, _ = render_debug_metric_summary(snapshot_stats, resolution_by_field)
+    log.info("Debug metric summary:\n%s", debug_metric_text)
+
+    # Build and write the email report: RunSpec + debug metric summary + report body
     email_report = render_email_report(change_events, resources, calendar_items)
-    full_email = human_summary + "\n\n" + email_report
+    full_email = human_summary + "\n\n" + debug_metric_text + "\n\n" + email_report
     LAST_EMAIL_REPORT_FILE.write_text(full_email, encoding="utf-8")
     log.info("Email report written to %s", LAST_EMAIL_REPORT_FILE)
 

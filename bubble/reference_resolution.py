@@ -85,6 +85,40 @@ def get_records() -> list[dict[str, Any]]:
     return list(_records)
 
 
+# Statuses that count as "resolved" for metric summary
+_RESOLVED_STATUSES = frozenset({"resolved", "RESOLVED", "ai_override"})
+
+
+def get_resolution_summary(records: list[dict[str, Any]] | None = None) -> dict[str, dict[str, int]]:
+    """
+    Aggregate resolution records by field: resolved vs unresolved counts.
+    records: default get_records(). Returns e.g. {"Organization": {"resolved": 5, "unresolved": 1}, ...}.
+    """
+    recs = records if records is not None else get_records()
+    by_field: dict[str, dict[str, int]] = {}
+    for r in recs:
+        field = (r.get("field") or "unknown").strip() or "unknown"
+        if field not in by_field:
+            by_field[field] = {"resolved": 0, "unresolved": 0}
+        status = (r.get("status") or "").strip()
+        if status in _RESOLVED_STATUSES:
+            by_field[field]["resolved"] += 1
+        else:
+            by_field[field]["unresolved"] += 1
+    return by_field
+
+
+def format_resolution_summary(by_field: dict[str, dict[str, int]]) -> str:
+    """Human-readable per-field resolved/unresolved summary."""
+    lines = ["Reference resolution (resolved / unresolved):"]
+    for field in sorted(by_field.keys()):
+        counts = by_field[field]
+        r = counts.get("resolved", 0)
+        u = counts.get("unresolved", 0)
+        lines.append(f"  {field}: {r} resolved, {u} unresolved")
+    return "\n".join(lines) if lines else "Reference resolution: no records"
+
+
 def clear_records() -> None:
     """Clear the in-memory list (e.g. before a new run)."""
     _records.clear()

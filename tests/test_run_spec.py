@@ -83,10 +83,24 @@ class TestComputeRunSpec(unittest.TestCase):
             e2e_bubble=False,
             e2e_bubble_verify=False,
             bubble_snapshot_limit=200,
+            dry_run_bubble=True,
         )
         env = {"AI_REFERENCE_FIELDS_BLOCKED": "0"}
         spec = compute_run_spec(args, env)
         self.assertFalse(spec.ai_reference_fields_blocked)
+
+    def test_dry_run_bubble_default_true(self):
+        args = MagicMock(
+            ai_enrich=False,
+            no_ai=False,
+            bubble_enrich=False,
+            e2e_bubble=False,
+            e2e_bubble_verify=False,
+            bubble_snapshot_limit=200,
+            dry_run_bubble=True,
+        )
+        spec = compute_run_spec(args, {})
+        self.assertTrue(spec.dry_run_bubble)
 
 
 class TestValidateRunSpec(unittest.TestCase):
@@ -151,6 +165,18 @@ class TestValidateRunSpec(unittest.TestCase):
         )
         validate_run_spec(spec, env={"ENVIRONMENT": "production"})
         self.assertEqual(len(spec.validation_warnings), 0)
+
+    def test_prod_observe_requires_dry_run_bubble(self):
+        spec = RunSpec(
+            prod_observe_mode=True,
+            bubble_enrich_enabled=True,
+            ai_reference_fields_blocked=True,
+            artifact_output_dir="debug",
+            dry_run_bubble=False,
+            validation_fail_fast=False,
+        )
+        validate_run_spec(spec, env={})
+        self.assertTrue(any("dry_run_bubble" in w for w in spec.validation_warnings))
 
 
 class TestAddSnapshotWarnings(unittest.TestCase):

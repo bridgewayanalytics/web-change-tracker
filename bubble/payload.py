@@ -58,7 +58,7 @@ def _build_one_resource(item: dict, rtype: str, label: str, org_path: list) -> d
 
     return {
         "archive": False,
-        "Available To Vector Store": True,
+        "Available To Vector Store": False,
         "Chunk Overlap": 200,
         "Chunk Size": 1000,
         "date": None,

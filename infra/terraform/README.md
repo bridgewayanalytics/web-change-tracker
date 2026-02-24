@@ -58,6 +58,28 @@ aws ssm put-parameter --name "/web-change-tracker/prod/openai_reasoning_effort" 
 
 The ECS task role has `ssm:GetParameter` and `kms:Decrypt` (for `alias/aws/ssm`) scoped to these parameters.
 
+**Bubble API (required for Bubble enrichment):** Stored in SSM; injected into the container via ECS task definition `secrets` (valueFrom). The task **execution** role can read them. Create before or after apply. Use **SecureString** for the API key. Local dev: use `.env` only (never commit; not used in ECS).
+
+```bash
+# Replace with your Bubble app URL and API key (from Bubble Data API settings)
+REGION=us-east-1
+aws ssm put-parameter --name "/web-change-tracker/prod/bubble_api_url" \
+  --value "https://your-app.bubbleapps.io" \
+  --type "String" \
+  --region "$REGION"
+aws ssm put-parameter --name "/web-change-tracker/prod/bubble_api_key" \
+  --value "your-bubble-data-api-key" \
+  --type "SecureString" \
+  --region "$REGION"
+```
+
+To update the API key later without redeploying:
+
+```bash
+aws ssm put-parameter --name "/web-change-tracker/prod/bubble_api_key" \
+  --value "new-key" --type "SecureString" --overwrite --region us-east-1
+```
+
 ### 2. Initialize and Plan
 
 ```bash
@@ -122,7 +144,27 @@ terraform -chdir=infra/terraform output -raw cloudwatch_log_group
 
 **AWS Console:** CloudWatch → Log groups → `/ecs/web-change-tracker-prod`
 
-### 7. Build and Push Docker Image
+### 7. Deploy script (build, push, apply)
+
+From the repo root, use the deploy script to build the image, push to ECR, and run `terraform apply` with the new image tag:
+
+```bash
+./scripts/deploy.sh
+# Optional: run one ECS task after apply (no ECS service; new task definition is used on next run)
+./scripts/deploy.sh --run-task
+# Custom tag
+./scripts/deploy.sh --tag v1.2.3
+```
+
+### 8. Smoke test (run one task, tail logs, verify state/S3)
+
+Run one ECS task on-demand, wait for it to stop, print CloudWatch logs, and verify DynamoDB table and S3 bucket (PASS/FAIL):
+
+```bash
+./scripts/smoke_test.sh
+```
+
+### 9. Build and Push Docker Image (manual)
 
 After `terraform apply`, push the app image to ECR. Use the same tag you deploy with:
 
@@ -188,3 +230,136 @@ aws s3 cp targets.json s3://$(terraform -chdir=infra/terraform output -raw s3_bu
 | `subnet_ids` | No | default subnets | Override subnets |
 | `cpu` | No | `512` | Fargate CPU units |
 | `memory` | No | `1024` | Fargate memory MB |
+
+---
+
+## Deploy Contract
+
+Exact variable names and how they are passed. All behavior is driven by **tfvars** (or `-var` / `TF_VAR_*`); no Terraform workspaces are used.
+
+### How variables are passed
+
+- **Primary:** `terraform.tfvars` (or `terraform.tfvars.json`) in `infra/terraform/`. Copy from `terraform.tfvars.example`.
+- **Override at apply:** `terraform apply -var="image_tag=abc123"` or `terraform apply -var-file=prod.tfvars`.
+- **Env:** `TF_VAR_<name>` (e.g. `export TF_VAR_image_tag=$(git rev-parse --short HEAD)`). Env overrides tfvars when both are set; CLI `-var` overrides env.
+
+### Terraform variables (exact names + example values)
+
+| Variable | Example value | Passed via |
+|----------|----------------|------------|
+| `project_name` | `web-change-tracker` | tfvars |
+| `region` | `us-east-1` | tfvars |
+| `environment` | `prod` | tfvars |
+| `email_from` | `notifications@yourdomain.com` | tfvars (required) |
+| `email_to` | `alerts@yourdomain.com` | tfvars (required) |
+| `email_subject_prefix` | `[Web Change Report]` | tfvars |
+| `schedule_expression` | `rate(6 hours)` | tfvars |
+| `schedule_expression_timezone` | `America/New_York` | tfvars |
+| `enable_scheduler` | `true` | tfvars |
+| `vpc_id` | `null` | tfvars |
+| `subnet_ids` | `null` | tfvars |
+| `image_tag` | `latest` or `abc1234` | tfvars / `TF_VAR_image_tag` / `-var=image_tag=...` |
+| `cpu` | `512` | tfvars |
+| `memory` | `1024` | tfvars |
+
+### Container image in task definition
+
+- **Reference:** `image = "${aws_ecr_repository.app.repository_url}:${var.image_tag}"`
+- **Type:** Variable tag; repository URL comes from Terraform resource `aws_ecr_repository.app`.
+- **Example resolved:** `123456789012.dkr.ecr.us-east-1.amazonaws.com/web-change-tracker-prod:latest` (or `:abc1234` when `image_tag` is set).
+- No digest pinning; tag is mutable. Use a specific tag (e.g. git SHA) for reproducible deploys.
+
+### ECS task command / entrypoint
+
+- **Entrypoint:** `ENTRYPOINT ["/app/scripts/entrypoint.sh"]` (image default). Fetches `targets.json` from S3 when `TARGETS_SOURCE` is set.
+- **Command override (prod):** Task definition sets `command = ["python", "spike.py", "--bubble-enrich", "--bubble-report", "--emit-bubble-json"]` so prod always runs in intended mode. No `--no-dry-run-bubble`, so Bubble write API is never called.
+
+### Environment variables injected into the task (plaintext)
+
+| Env var | Example / source | Notes |
+|---------|------------------|--------|
+| `STATE_BACKEND` | `dynamodb` | Plaintext |
+| `STATE_TABLE` | `web-change-tracker-prod-state` | From Terraform resource |
+| `CHANGELOG_BUCKET` | `web-change-tracker-prod-artifacts-123456789012` | S3 bucket id |
+| `CHANGELOG_PREFIX` | `changelog/` | Plaintext |
+| `TARGETS_SOURCE` | `s3://...-artifacts-.../targets/targets.json` | From Terraform local |
+| `TARGETS_FILE` | `/app/targets.json` | Plaintext |
+| `EMAIL_ENABLED` | `true` | Plaintext |
+| `FROM_EMAIL` | From `var.email_from` | tfvars |
+| `TO_EMAILS` | From `var.email_to` | tfvars |
+| `EMAIL_SUBJECT_PREFIX` | From `var.email_subject_prefix` | tfvars |
+| `ENVIRONMENT` | `prod` | Plaintext |
+| `SES_REGION` | From `var.region` | tfvars |
+| `AWS_REGION` | From `var.region` | tfvars |
+| `OPENAI_ENABLED` | `true` | Plaintext |
+| `OPENAI_API_KEY_SSM_PARAM` | `/web-change-tracker/prod/openai_api_key` | Param name only; app fetches value at runtime |
+| `OPENAI_MODEL_SSM_PARAM` | `/web-change-tracker/prod/openai_model` | Param name only |
+| `OPENAI_REASONING_EFFORT_SSM_PARAM` | `/web-change-tracker/prod/openai_reasoning_effort` | Param name only |
+| `OPENAI_ENRICH_ONLY_IF_CHANGED` | `true` | Plaintext |
+| `OPENAI_ENRICH_MAX_RESOURCES` | `25` | Plaintext |
+| `OPENAI_ENRICH_MAX_EVENTS` | `10` | Plaintext |
+| `PROD_OBSERVE_MODE` | `true` | RunSpec: validate bubble_enrich, refs blocked, artifacts, dry-run |
+| `AI_ENRICHMENT_ENABLED` | `true` | Enables bubble enrich path |
+| `ARTIFACT_OUTPUT_DIR` | `debug` | Debug artifacts dir |
+| `AI_REFERENCE_FIELDS_BLOCKED` | `true` | AI must not write reference fields |
+| `RUN_SPEC_VALIDATION_FAIL_FAST` | `true` | Exit on RunSpec validation failure |
+
+### Secrets (valueFrom SSM) — never logged
+
+Bubble credentials are injected as env vars via the task definition **secrets** block (valueFrom). The task **execution** role has `ssm:GetParameter` and `kms:Decrypt` for these parameters. The app must never log these values.
+
+| Env var | SSM parameter path | Type |
+|---------|--------------------|------|
+| `BUBBLE_API_URL` | `/web-change-tracker/prod/bubble_api_url` | String |
+| `BUBBLE_API_KEY` | `/web-change-tracker/prod/bubble_api_key` | **SecureString** |
+
+Create them with the AWS CLI commands in the "Bubble API" section above. Local dev: use `.env` only (not used in ECS; do not commit).
+
+**OpenAI:** The task **role** (not execution role) has `ssm:GetParameter` on the three OpenAI param ARNs. The app (e.g. `bubble/ssm_loader.py`) fetches those values at runtime; they are not injected by ECS.
+
+---
+
+## Final ECS command and env vars (prod)
+
+What the scheduled task actually runs and which env vars it receives.
+
+### Final ECS command
+
+```
+/app/scripts/entrypoint.sh python spike.py --bubble-enrich --bubble-report --emit-bubble-json
+```
+
+- Entrypoint runs first (fetches targets from S3 if `TARGETS_SOURCE` is set), then execs the command below.
+- **CLI flags:** `--bubble-enrich` (reference enrichment), `--bubble-report` (Bubble format in report/email), `--emit-bubble-json` (write payloads to JSON). No `--no-dry-run-bubble`, so Bubble write API is never called.
+
+### Env vars list (all names; secrets from SSM)
+
+| Name | Source / example value |
+|------|------------------------|
+| `STATE_BACKEND` | `dynamodb` |
+| `STATE_TABLE` | `{project}-{env}-state` |
+| `CHANGELOG_BUCKET` | artifacts bucket id |
+| `CHANGELOG_PREFIX` | `changelog/` |
+| `TARGETS_SOURCE` | `s3://{bucket}/targets/targets.json` |
+| `TARGETS_FILE` | `/app/targets.json` |
+| `EMAIL_ENABLED` | `true` |
+| `FROM_EMAIL` | tfvars `email_from` |
+| `TO_EMAILS` | tfvars `email_to` |
+| `EMAIL_SUBJECT_PREFIX` | tfvars `email_subject_prefix` |
+| `ENVIRONMENT` | `prod` |
+| `SES_REGION` | tfvars `region` |
+| `AWS_REGION` | tfvars `region` |
+| `OPENAI_ENABLED` | `true` |
+| `OPENAI_API_KEY_SSM_PARAM` | `/web-change-tracker/prod/openai_api_key` |
+| `OPENAI_MODEL_SSM_PARAM` | `/web-change-tracker/prod/openai_model` |
+| `OPENAI_REASONING_EFFORT_SSM_PARAM` | `/web-change-tracker/prod/openai_reasoning_effort` |
+| `OPENAI_ENRICH_ONLY_IF_CHANGED` | `true` |
+| `OPENAI_ENRICH_MAX_RESOURCES` | `25` |
+| `OPENAI_ENRICH_MAX_EVENTS` | `10` |
+| `PROD_OBSERVE_MODE` | `true` |
+| `AI_ENRICHMENT_ENABLED` | `true` |
+| `ARTIFACT_OUTPUT_DIR` | `debug` |
+| `AI_REFERENCE_FIELDS_BLOCKED` | `true` |
+| `RUN_SPEC_VALIDATION_FAIL_FAST` | `true` |
+| `BUBBLE_API_URL` | **Secrets (valueFrom SSM)** `/web-change-tracker/prod/bubble_api_url` |
+| `BUBBLE_API_KEY` | **Secrets (valueFrom SSM)** `/web-change-tracker/prod/bubble_api_key` (SecureString) |
