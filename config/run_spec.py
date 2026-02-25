@@ -38,6 +38,8 @@ class RunSpec:
     prod_observe_mode: bool = False
     e2e_bubble_verify: bool = False
     dry_run_bubble: bool = True  # No Bubble write API calls (prod must stay true)
+    # Set after bubble_healthcheck() when bubble_enrich_enabled and bubble_mode=LIVE
+    bubble_live_ok: bool | None = None  # True=healthcheck passed, False=failed, None=not run
     # Internal: fail fast on validation (vs collect warnings for email)
     validation_fail_fast: bool = False
     # Collected after validate_run_spec (HIGH severity warnings for email header)
@@ -109,6 +111,7 @@ def compute_run_spec(args: Any, env: dict[str, str] | None = None) -> RunSpec:
         bubble_enrich_enabled=bubble_enrich_enabled,
         bubble_mode=bubble_mode,
         bubble_snapshot_path=bubble_snapshot_path or None,
+        bubble_live_ok=None,
         calendar_link_tolerance_days=calendar_link_tolerance_days,
         calendar_lookback_days=calendar_lookback_days,
         max_calendar_api_results=max_calendar_api_results,
@@ -218,13 +221,23 @@ def upload_artifacts_to_s3(artifact_dir: str, run_timestamp: int) -> list[str]:
 def render_debug_metric_summary(
     snapshot_stats: dict[str, int] | None,
     resolution_by_field: dict[str, dict[str, int]],
+    bubble_live_ok: bool | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """
     Build debug metric summary: Bubble snapshot counts, per-field resolved/unresolved, calendar-too-small warning.
+    bubble_live_ok: result of startup healthcheck when bubble_mode=LIVE (None=not run).
     Returns (human_text, dict_for_json). Log and include in email header so matching quality is visible.
     """
     lines = ["--- Debug metric summary ---"]
-    out: dict[str, Any] = {"resolution_by_field": resolution_by_field}
+    out: dict[str, Any] = {"resolution_by_field": resolution_by_field, "bubble_live_ok": bubble_live_ok}
+
+    # Aggregate Bubble HTTP request metrics for this run (if client module is loaded)
+    bubble_request_stats: dict[str, Any] | None = None
+    try:
+        from bubble.client import get_bubble_request_stats
+        bubble_request_stats = get_bubble_request_stats()
+    except Exception:
+        bubble_request_stats = None
 
     if snapshot_stats:
         n_cal = snapshot_stats.get("calendar_items", 0)
@@ -241,6 +254,21 @@ def render_debug_metric_summary(
         lines.append("Bubble snapshot: not loaded (LIVE mode or no E2E)")
         out["snapshot"] = None
 
+    if bubble_request_stats is not None:
+        total = bubble_request_stats.get("total", 0)
+        failures = bubble_request_stats.get("failures", 0)
+        successes = bubble_request_stats.get("successes", max(0, total - failures))
+        lines.append(f"Bubble API requests: total={total}, successes={successes}, failures={failures}")
+        out["bubble_requests"] = {
+            "total": total,
+            "successes": successes,
+            "failures": failures,
+        }
+        if failures:
+            log.warning("Debug metric: Bubble API failures detected (failures=%s)", failures)
+
+    if bubble_live_ok is not None:
+        lines.append(f"bubble_live_ok={bubble_live_ok}")
     from bubble.reference_resolution import format_resolution_summary
     lines.append(format_resolution_summary(resolution_by_field))
     lines.append("---")
@@ -268,6 +296,7 @@ def render_run_spec_summary(
         f"ai_reference_fields_blocked={run_spec.ai_reference_fields_blocked}",
         f"bubble_enrich_enabled={run_spec.bubble_enrich_enabled}",
         f"bubble_mode={run_spec.bubble_mode}",
+        f"bubble_live_ok={run_spec.bubble_live_ok}",
         f"dry_run_bubble={run_spec.dry_run_bubble}",
         f"e2e_bubble_verify={run_spec.e2e_bubble_verify}",
         f"artifact_output_dir={run_spec.artifact_output_dir}",

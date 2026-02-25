@@ -19,11 +19,11 @@ TYPE1_OPTIONS = ("News", "Agenda/Materials", "In the weeds", "Agenda & Materials
 
 
 def _tree_id_from_obj(obj: dict) -> str | None:
-    """Tree id from tree or tree node (Tree field may be id string or object)."""
+    """Tree id from tree or tree node (Tree/parent_tree field may be id string or object)."""
     tid = obj.get("_id") or obj.get("id")
     if isinstance(tid, str):
         return tid
-    tree = obj.get("Tree") or obj.get("tree")
+    tree = obj.get("Tree") or obj.get("tree") or obj.get("parent_tree")
     if isinstance(tree, str):
         return tree
     if isinstance(tree, dict):

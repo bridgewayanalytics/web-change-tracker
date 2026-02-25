@@ -67,8 +67,9 @@ def _pick_tree_node(obj: dict) -> dict:
     for k in ("Parent", "parent", "parent_node"):
         if k in obj:
             out[k] = obj[k]
-    if "Tree" in obj:
-        out["Tree"] = obj["Tree"]
+    for k in ("Tree", "tree", "parent_tree"):
+        if k in obj:
+            out[k] = obj[k]
     for k in ("topic", "chronicle", "topic (chronicle)"):
         if k in obj:
             out[k] = obj[k]

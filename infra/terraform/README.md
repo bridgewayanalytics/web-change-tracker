@@ -60,13 +60,32 @@ The ECS task role has `ssm:GetParameter` and `kms:Decrypt` (for `alias/aws/ssm`)
 
 **Bubble API (required for Bubble enrichment):** Stored in SSM; injected into the container via ECS task definition `secrets` (valueFrom). The task **execution** role can read them. Create before or after apply. Use **SecureString** for the API key. Local dev: use `.env` only (never commit; not used in ECS).
 
+**BUBBLE_API_URL** must point to the Bubble Data API. The client accepts:
+- **App root:** `https://your-app.bubbleapps.io` → requests go to `.../live/api/1.1/obj/tree` etc.
+- **With version:** `https://your-app.bubbleapps.io/live` → same (no duplicate version).
+- **Full obj base (recommended):** Set this to the **exact root URL shown in Bubble’s API settings** (Settings → API). Examples:
+  - **Custom domain:** often `https://your-domain.com/api/1.1/obj` (no `/live`).
+  - **Bubbleapps.io:** often `https://your-app.bubbleapps.io/live/api/1.1/obj`.
+
+After updating SSM, **start a new ECS task** (secrets are read when the task starts). To test with curl, fetch the value and call the tree endpoint:
+
 ```bash
-# Replace with your Bubble app URL and API key (from Bubble Data API settings)
+BUBBLE_API_URL=$(aws ssm get-parameter --region us-east-1 --name "/web-change-tracker/prod/bubble_api_url" --query "Parameter.Value" --output text)
+BUBBLE_API_KEY=$(aws ssm get-parameter --with-decryption --region us-east-1 --name "/web-change-tracker/prod/bubble_api_key" --query "Parameter.Value" --output text)
+echo "Base URL: $BUBBLE_API_URL"
+curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $BUBBLE_API_KEY" "$BUBBLE_API_URL/tree?limit=1"
+# Expect 200. If 404, try the other base (with or without /live) per Bubble’s API settings.
+```
+
+```bash
+# Use the exact root URL from Bubble: Settings → API (Data API). Custom domains often use /api/1.1/obj with no /live.
 REGION=us-east-1
+# If your API settings show .../live/api/1.1/obj use that; if they show .../api/1.1/obj (no live) use that:
 aws ssm put-parameter --name "/web-change-tracker/prod/bubble_api_url" \
-  --value "https://your-app.bubbleapps.io" \
+  --value "https://your-app.bubbleapps.io/api/1.1/obj" \
   --type "String" \
   --region "$REGION"
+# Or for custom domain without /live: https://art.bridgewayanalytics.com/api/1.1/obj
 aws ssm put-parameter --name "/web-change-tracker/prod/bubble_api_key" \
   --value "your-bubble-data-api-key" \
   --type "SecureString" \
@@ -79,6 +98,15 @@ To update the API key later without redeploying:
 aws ssm put-parameter --name "/web-change-tracker/prod/bubble_api_key" \
   --value "new-key" --type "SecureString" --overwrite --region us-east-1
 ```
+
+**Bubble tree names:** The ECS task sets `BUBBLE_ORGANIZATION_TREE`, `BUBBLE_NAIC_GROUP_TREE`, and `BUBBLE_TYPE1_TREE` so they match the **exact Tree "Name"** in your Bubble app (e.g. `Organization`, `Resources Types`). If your app uses different names, override them in `main.tf` or via Terraform variables.
+
+**Validate all Bubble API endpoints** (trees, tree nodes, calendar items, resources) from the repo root:
+
+```bash
+./scripts/validate_bubble_api.sh
+```
+Uses `BUBBLE_API_URL` and `BUBBLE_API_KEY` from env or SSM. Override tree names with `BUBBLE_ORGANIZATION_TREE` / `BUBBLE_TYPE1_TREE` if needed.
 
 ### 2. Initialize and Plan
 

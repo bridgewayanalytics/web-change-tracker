@@ -9,7 +9,9 @@ Config: BUBBLE_API_URL, BUBBLE_API_KEY (optional BUBBLE_APP_VERSION, default liv
 import json
 import logging
 import os
+import time
 from typing import Any, Generator
+from urllib.parse import urlparse
 
 try:
     from dotenv import load_dotenv
@@ -23,6 +25,19 @@ log = logging.getLogger(__name__)
 
 # Default app version for API path (Bubble: "live" or "version-test")
 DEFAULT_APP_VERSION = "live"
+
+# Per-process Bubble HTTP request metrics (approx. per-run for CLI/ECS tasks)
+_REQUEST_COUNT: int = 0
+_REQUEST_FAILURES: int = 0
+
+
+def get_bubble_request_stats() -> dict[str, int]:
+    """Return aggregate Bubble HTTP request stats for this process."""
+    return {
+        "total": _REQUEST_COUNT,
+        "failures": _REQUEST_FAILURES,
+        "successes": max(0, _REQUEST_COUNT - _REQUEST_FAILURES),
+    }
 
 
 class BubbleAPIError(Exception):
@@ -84,13 +99,19 @@ class BubbleClient:
         self._use_cache = use_cache
         self._cache: dict[str, Any] = {}
 
-        # Build object API base: .../version/api/1.1/obj (avoid duplicate /obj)
-        if self._base_url.rstrip("/").endswith("/obj"):
-            self._obj_base = self._base_url.rstrip("/")
+        # Build object API base: .../version/api/1.1/obj (Bubble Data API path).
+        # BUBBLE_API_URL can be: (1) app root https://example.com, (2) with version https://example.com/live,
+        # or (3) full obj base https://example.com/live/api/1.1/obj. We avoid duplicating the version segment.
+        base = self._base_url.rstrip("/")
+        if base.endswith("/obj"):
+            self._obj_base = base
         elif "/api/1.1" in self._base_url or "/api/1.0" in self._base_url:
-            self._obj_base = f"{self._base_url}/obj"
+            self._obj_base = f"{base}/obj"
+        elif base.endswith("/live") or base.endswith("/version-test"):
+            # URL already has version; append only /api/1.1/obj
+            self._obj_base = f"{base}/api/1.1/obj"
         else:
-            self._obj_base = f"{self._base_url}/{self._app_version}/api/1.1/obj"
+            self._obj_base = f"{base}/{self._app_version}/api/1.1/obj"
 
     @property
     def base_url(self) -> str:
@@ -98,6 +119,12 @@ class BubbleClient:
         return self._base_url
 
     def _request(self, method: str, path: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+        """
+        Low-level HTTP request wrapper with structured logging and per-run metrics.
+        Logs method, endpoint path (no secrets), status code, and duration.
+        """
+        global _REQUEST_COUNT, _REQUEST_FAILURES
+
         url = f"{self._obj_base}/{path}" if not path.startswith("http") else path
         params = params or {}
         headers = {
@@ -105,6 +132,16 @@ class BubbleClient:
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+
+        # Derive a safe endpoint path for logs (no base URL or query secrets)
+        if path.startswith("http"):
+            parsed = urlparse(path)
+            endpoint = parsed.path or "/"
+        else:
+            # Bubble object API paths are always under /obj
+            endpoint = f"/obj/{path}"
+
+        start = time.monotonic()
         try:
             resp = requests.request(
                 method,
@@ -113,7 +150,18 @@ class BubbleClient:
                 headers=headers,
                 timeout=30,
             )
+            duration = time.monotonic() - start
         except requests.RequestException as e:
+            duration = time.monotonic() - start
+            _REQUEST_COUNT += 1
+            _REQUEST_FAILURES += 1
+            log.error(
+                "Bubble API request failed: method=%s endpoint=%s duration=%.3fs error=%s",
+                method,
+                endpoint,
+                duration,
+                e,
+            )
             raise BubbleAPIError(
                 f"Bubble API request failed: {e}",
                 response_snippet=str(e),
@@ -125,12 +173,31 @@ class BubbleClient:
             data = {}
 
         if resp.status_code >= 400:
+            _REQUEST_COUNT += 1
+            _REQUEST_FAILURES += 1
+            snippet = _safe_snippet(data or resp.text[:200])
+            log.error(
+                "Bubble API error: method=%s endpoint=%s status=%s duration=%.3fs snippet=%s",
+                method,
+                endpoint,
+                resp.status_code,
+                duration,
+                snippet,
+            )
             raise BubbleAPIError(
                 f"Bubble API error: {resp.reason or 'Unknown'}",
                 status_code=resp.status_code,
                 response_snippet=_safe_snippet(data or resp.text[:500]),
             )
 
+        _REQUEST_COUNT += 1
+        log.info(
+            "Bubble API request: method=%s endpoint=%s status=%s duration=%.3fs",
+            method,
+            endpoint,
+            resp.status_code,
+            duration,
+        )
         return data
 
     def _cache_key(self, op: str, type_name: str, extra: str = "") -> str:

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build Docker image, push to ECR, run terraform apply with new image tag, optionally run one task.
-# Run from repo root. Requires: docker, aws cli, terraform, jq (for optional run-task).
+# Run from repo root. Requires: docker, aws cli, terraform. Optional --run-task uses python3 to parse Terraform JSON.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,6 +37,7 @@ if [[ -z "${REGION:-}" || -z "${ECR_URL:-}" ]]; then
 fi
 
 echo "==> Building Docker image (tag=$IMAGE_TAG)..."
+echo "    (Image must include spike.py with --bubble-enrich, --bubble-report, --emit-bubble-json support.)"
 docker build -t "${ECR_URL}:${IMAGE_TAG}" .
 
 echo "==> Logging in to ECR..."
@@ -54,7 +55,7 @@ if [[ "$RUN_TASK_AFTER" == "true" ]]; then
   echo "==> Running one ECS task (no service; this uses the new task definition)..."
   CLUSTER=$(terraform -chdir="$TERRAFORM_DIR" output -raw ecs_cluster_name)
   TASK_DEF=$(terraform -chdir="$TERRAFORM_DIR" output -raw task_definition_arn)
-  SUBNETS=$(terraform -chdir="$TERRAFORM_DIR" output -json subnet_ids | jq -r 'join(",")')
+  SUBNETS=$(terraform -chdir="$TERRAFORM_DIR" output -json subnet_ids | python3 -c "import sys,json; print(','.join(json.load(sys.stdin)))")
   SG=$(terraform -chdir="$TERRAFORM_DIR" output -raw security_group_id)
   TASK_ARN=$(aws ecs run-task --region "$REGION" --cluster "$CLUSTER" --task-definition "$TASK_DEF" \
     --launch-type FARGATE \

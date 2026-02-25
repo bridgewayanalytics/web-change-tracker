@@ -170,7 +170,7 @@ resource "aws_iam_role_policy" "execution_ssm_bubble" {
       {
         Sid      = "SSMGetBubbleParams"
         Effect   = "Allow"
-        Action   = ["ssm:GetParameter"]
+        Action   = ["ssm:GetParameter", "ssm:GetParameters"]
         Resource = local.bubble_ssm_param_arns
       },
       {
@@ -293,7 +293,8 @@ resource "aws_ecs_task_definition" "app" {
       }
     }
 
-    # Prod observe: RunSpec-driven mode. Command enforces --bubble-enrich --bubble-report --emit-bubble-json (no Bubble writes).
+    # Prod observe: RunSpec-driven mode. Command requires spike.py to support these flags (rebuild image after changing spike.py CLI).
+    # If you see "unrecognized arguments: --bubble-enrich", rebuild and push the Docker image, then run terraform apply.
     command = ["python", "spike.py", "--bubble-enrich", "--bubble-report", "--emit-bubble-json"]
 
     environment = [
@@ -322,7 +323,11 @@ resource "aws_ecs_task_definition" "app" {
       { name = "AI_ENRICHMENT_ENABLED", value = "true" },
       { name = "ARTIFACT_OUTPUT_DIR", value = "debug" },
       { name = "AI_REFERENCE_FIELDS_BLOCKED", value = "true" },
-      { name = "RUN_SPEC_VALIDATION_FAIL_FAST", value = "true" }
+      { name = "RUN_SPEC_VALIDATION_FAIL_FAST", value = "false" },
+      # Bubble tree names (must match Tree "Name" in your Bubble app; list via Data API /tree)
+      { name = "BUBBLE_ORGANIZATION_TREE", value = "Organization" },
+      { name = "BUBBLE_NAIC_GROUP_TREE", value = "Organization" },
+      { name = "BUBBLE_TYPE1_TREE", value = "Resources Types" }
     ]
 
     # Bubble credentials from SSM (valueFrom); never in plaintext env. Create params via CLI (see README).

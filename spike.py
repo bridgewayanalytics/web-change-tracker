@@ -2109,9 +2109,21 @@ def main() -> None:
         validate_run_spec,
     )
     run_spec = compute_run_spec(args)
-    validate_run_spec(run_spec)
+    try:
+        validate_run_spec(run_spec)
+    except ValueError as e:
+        log.error("RunSpec validation failed: %s", e)
+        raise SystemExit(1) from e
     human_summary, _ = render_run_spec_summary(run_spec)
     log.info("RunSpec:\n%s", human_summary)
+
+    # Bubble LIVE healthcheck at startup when enrichment is on and mode is LIVE
+    if run_spec.bubble_enrich_enabled and run_spec.bubble_mode == "LIVE":
+        from bubble.healthcheck import bubble_healthcheck
+        bubble_ok, _ = bubble_healthcheck()
+        run_spec.bubble_live_ok = bubble_ok
+        if not bubble_ok:
+            log.warning("bubble_live_ok=false: Bubble API healthcheck failed; ref resolution may fail")
 
     from bubble.reference_resolution import clear_records
     clear_records()
@@ -2274,7 +2286,7 @@ def main() -> None:
     from bubble.reference_resolution import get_resolution_summary
     from config.run_spec import render_debug_metric_summary
     resolution_by_field = get_resolution_summary()
-    debug_metric_text, _ = render_debug_metric_summary(snapshot_stats, resolution_by_field)
+    debug_metric_text, _ = render_debug_metric_summary(snapshot_stats, resolution_by_field, run_spec.bubble_live_ok)
     log.info("Debug metric summary:\n%s", debug_metric_text)
 
     # Build and write the email report: RunSpec + debug metric summary + report body

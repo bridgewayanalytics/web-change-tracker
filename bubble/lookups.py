@@ -22,6 +22,8 @@ TYPE_TREE = os.environ.get("BUBBLE_TYPE_TREE", "Tree")
 TYPE_TREE_NODE = os.environ.get("BUBBLE_TYPE_TREE_NODE", "Tree node")
 TYPE_CALENDAR_ITEM = os.environ.get("BUBBLE_TYPE_CALENDAR_ITEM", "Calendar item")
 TYPE_RESOURCE = os.environ.get("BUBBLE_TYPE_RESOURCE", "Resource")
+# Field on Tree node that references the Tree (Bubble may use "Tree" or "parent_tree")
+TREE_NODE_TREE_FIELD = os.environ.get("BUBBLE_TREE_NODE_TREE_FIELD", "parent_tree")
 
 # In-module caches (keyed by cache key string)
 _tree_cache: dict[str, dict] = {}
@@ -118,7 +120,7 @@ def get_tree_nodes_in_tree(tree_id: str) -> list[dict]:
         nodes = list(
             client.list_all(
                 TYPE_TREE_NODE,
-                constraints=[{"key": "Tree", "constraint_type": "equals", "value": tree_id}],
+                constraints=[{"key": TREE_NODE_TREE_FIELD, "constraint_type": "equals", "value": tree_id}],
                 page_size=100,
             )
         )

@@ -175,11 +175,11 @@ def apply_ai_classification(
 
 
 def _tree_id_from_obj(obj: dict) -> str | None:
-    """Get tree id from a tree or tree node object (Tree field may be id string or object)."""
+    """Get tree id from a tree or tree node object (Tree/parent_tree field may be id string or object)."""
     tid = obj.get("_id") or obj.get("id")
     if isinstance(tid, str):
         return tid
-    tree = obj.get("Tree") or obj.get("tree")
+    tree = obj.get("Tree") or obj.get("tree") or obj.get("parent_tree")
     if isinstance(tree, str):
         return tree
     if isinstance(tree, dict):
