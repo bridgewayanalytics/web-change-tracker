@@ -2,14 +2,131 @@
 Build Bubble Resource and Calendar Item payloads from change events.
 """
 
+from __future__ import annotations
+
+import json
 import logging
 import re
+from pathlib import Path
 
 from bubble.schemas import CALENDAR_ITEM_SCHEMA_FIELDS, FULL_RESOURCE_SCHEMA_FIELDS
 
 log = logging.getLogger(__name__)
 
 _AGENDA_LINK_KEYWORDS = ("agenda", "materials", "minutes", "call", "webex")
+
+
+def strip_debug_keys(obj: dict) -> dict:
+    """
+    Return a shallow copy of obj with any key starting with __ removed.
+    Use before producing Bubble payload or writing last_bubble_*.json so debug-only
+    fields (e.g. __meeting_meta, __key, __source) are not sent or persisted.
+    """
+    return {k: v for k, v in obj.items() if not k.startswith("__")}
+
+
+def _fetch_url_bytes(url: str, timeout: int = 15) -> bytes | None:
+    """Fetch URL and return raw bytes, or None on failure."""
+    if not (url or "").strip():
+        return None
+    try:
+        import requests
+        r = requests.get(url.strip(), timeout=timeout)
+        r.raise_for_status()
+        return r.content
+    except Exception as e:
+        log.debug("Fetch PDF bytes failed for %s: %s", url[:80], type(e).__name__)
+        return None
+
+
+def apply_pdf_meeting_metadata(
+    resources: list[dict],
+    *,
+    pdf_meeting_meta_enabled: bool,
+    artifact_output_dir: str | None,
+) -> None:
+    """
+    For PDF resources (VS Content Type == "PDF" or URL ends with .pdf), download bytes,
+    call extract_meeting_metadata_from_pdf; if metadata returned: set date if null,
+    set __meeting_meta (stripped by strip_debug_keys before Bubble payload).
+    Writes artifact_output_dir/pdf_meeting_meta.json for auditing. Mutates resources.
+    """
+    if not pdf_meeting_meta_enabled or not resources:
+        return
+    try:
+        from scrape.pdf_meeting_meta import extract_meeting_metadata_from_pdf, validate_meeting_meta
+    except ImportError:
+        log.warning("PDF meeting meta: scrape.pdf_meeting_meta not available, skipping")
+        return
+
+    artifact_entries: list[dict] = []
+    meeting_meta_valid = 0
+    meeting_meta_invalid = 0
+    for r in resources:
+        url = (r.get("URL") or "").strip()
+        vs_type = (r.get("VS Content Type") or "").strip() if isinstance(r.get("VS Content Type"), str) else ""
+        is_pdf = (vs_type and vs_type.upper() == "PDF") or (url.lower().endswith(".pdf") if url else False)
+        if not is_pdf or not url:
+            continue
+        pdf_bytes = _fetch_url_bytes(url)
+        if not pdf_bytes:
+            continue
+        meta = extract_meeting_metadata_from_pdf(url, pdf_bytes)
+        if not meta:
+            continue
+        validation = validate_meeting_meta(meta)
+        meta_dict: dict = {
+            "group_name": meta.group_name,
+            "date_iso": meta.date_iso,
+            "start_time_local": meta.start_time_local,
+            "end_time_local": meta.end_time_local,
+            "timezone": meta.timezone,
+            "valid": validation["valid"],
+        }
+        if not validation["valid"]:
+            meeting_meta_invalid += 1
+            meta_dict["rejection_reasons"] = validation["reasons"]
+            if any("date_iso" in reason for reason in validation["reasons"]):
+                meta_dict["date_iso"] = None
+            if any("group_name" in reason for reason in validation["reasons"]):
+                meta_dict["group_name"] = None
+            r["__meeting_meta"] = meta_dict
+            log.info("PDF meeting meta REJECTED: %s -> reasons=%s", url[:60], validation["reasons"])
+            artifact_entries.append({
+                "url": url,
+                "Name": r.get("Name"),
+                "meta": meta_dict,
+                "date_set": False,
+                "valid": False,
+                "rejection_reasons": validation["reasons"],
+            })
+            continue
+
+        meeting_meta_valid += 1
+        r["__meeting_meta"] = meta_dict
+        date_set = False
+        if r.get("date") is None or (isinstance(r.get("date"), str) and not (r.get("date") or "").strip()):
+            r["date"] = meta.date_iso
+            date_set = True
+        artifact_entries.append({
+            "url": url,
+            "Name": r.get("Name"),
+            "meta": meta_dict,
+            "date_set": date_set,
+            "valid": True,
+        })
+        log.info("PDF meeting meta: %s -> date_iso=%s, group=%s", url[:60], meta.date_iso, (meta.group_name or "")[:40])
+
+    log.info("PDF meeting meta summary: valid=%d  invalid=%d", meeting_meta_valid, meeting_meta_invalid)
+
+    if artifact_entries and artifact_output_dir:
+        out_path = Path(artifact_output_dir) / "pdf_meeting_meta.json"
+        try:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(json.dumps(artifact_entries, indent=2, ensure_ascii=False), encoding="utf-8")
+            log.info("Wrote PDF meeting meta artifact: %s (%d entries)", out_path, len(artifact_entries))
+        except Exception as e:
+            log.warning("Failed to write pdf_meeting_meta.json: %s", e)
 
 
 def validate_payload(schema_fields: list[str], obj: dict) -> dict:
@@ -283,11 +400,14 @@ def build_resource_context(diff: list[dict]) -> list[dict]:
             for item in added:
                 if _item_should_hide(item, rtype):
                     continue
+                section_label = {"docs": "Docs", "event_links": "Meeting Links", "events": "Meeting Links"}.get(rtype, "")
                 ctx.append({
                     "org_id": org_id,
                     "org_path": org_path,
                     "label": label,
                     "url": url,
+                    "section_type": rtype,
+                    "section_label": section_label,
                 })
     return ctx
 

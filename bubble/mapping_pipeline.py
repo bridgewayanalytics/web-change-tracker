@@ -108,6 +108,7 @@ def assemble_candidates(bubble_snapshot: dict | None) -> dict[str, Any]:
         "organization_tree_nodes",
         "naic_group_tree_nodes",
         "resource_type_tree_nodes",
+        "topic_tree_nodes",
         "recent_calendar_items",
     ):
         for item in ctx.get(key) or []:

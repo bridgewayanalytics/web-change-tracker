@@ -5,25 +5,22 @@ Used when snapshot is available to give the model real tree nodes and calendar i
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
-# Tree names (match enrich_refs / lookups)
-ORGANIZATION_TREE_NAME = os.environ.get("BUBBLE_ORGANIZATION_TREE", "Organization/Publisher")
-NAIC_GROUP_TREE_NAME = os.environ.get("BUBBLE_NAIC_GROUP_TREE", "Organization/Publisher")
-TYPE1_TREE_NAME = os.environ.get("BUBBLE_TYPE1_TREE", "Organization/Publisher")
+from bubble.enrich_refs import (
+    ORGANIZATION_TREE_NAME,
+    NAIC_GROUP_TREE_NAME,
+    TYPE1_TREE_NAME,
+    TOPIC_TREE_NAME,
+    TYPE1_OPTIONS,
+)
 
-# Cap list sizes for token bounds; prefer NAIC-related
 CANDIDATE_LIST_LIMIT = 200
-TYPE1_OPTIONS = ("News", "Agenda/Materials", "In the weeds", "Agenda & Materials")
 
 
-def _tree_id_from_obj(obj: dict) -> str | None:
-    """Tree id from tree or tree node (Tree/parent_tree field may be id string or object)."""
-    tid = obj.get("_id") or obj.get("id")
-    if isinstance(tid, str):
-        return tid
-    tree = obj.get("Tree") or obj.get("tree") or obj.get("parent_tree")
+def _node_tree_id(obj: dict) -> str | None:
+    """The tree that a tree-node belongs to (parent_tree field)."""
+    tree = obj.get("parent_tree") or obj.get("Tree") or obj.get("tree")
     if isinstance(tree, str):
         return tree
     if isinstance(tree, dict):
@@ -31,27 +28,30 @@ def _tree_id_from_obj(obj: dict) -> str | None:
     return None
 
 
+def _obj_id(obj: dict) -> str | None:
+    """The object's own _id."""
+    return obj.get("_id") or obj.get("id")
+
+
 def _node_name(n: dict) -> str:
-    return (n.get("Name") or n.get("name") or "").strip()
-
-
-def _node_id(n: dict) -> str | None:
-    return n.get("_id") or n.get("id")
+    """Display name (live API uses lowercase 'name')."""
+    return (n.get("name") or n.get("Name") or "").strip()
 
 
 def _build_paths_for_tree(snapshot: dict, tree_id: str) -> list[tuple[dict, list[str]]]:
-    """Return list of (node, path_segments) for all nodes in tree. Path from root to node."""
-    nodes = [n for n in (snapshot.get("tree_nodes") or []) if _tree_id_from_obj(n) == tree_id]
+    """Return list of (node, path_segments) for named nodes in tree. Path from root to node."""
+    all_nodes = [n for n in (snapshot.get("tree_nodes") or []) if _node_tree_id(n) == tree_id]
+    nodes = [n for n in all_nodes if _node_name(n)]
     if not nodes:
         return []
     by_id: dict[str, dict] = {}
     for n in nodes:
-        nid = _node_id(n)
+        nid = _obj_id(n)
         if nid:
             by_id[str(nid)] = n
-    # Parent can be id string or object
+
     def parent_id(node: dict) -> str | None:
-        p = node.get("Parent") or node.get("parent") or node.get("parent_node")
+        p = node.get("parent") or node.get("Parent") or node.get("parent_node")
         if p is None:
             return None
         if isinstance(p, str):
@@ -80,7 +80,7 @@ def _path_str(segs: list[str]) -> str:
 
 def extract_organization_tree_nodes(snapshot: dict) -> list[dict[str, Any]]:
     """
-    Tree nodes under Organization/Publisher tree.
+    Tree nodes under Organization tree.
     Returns list of {id, name, path} (path = " › ".join from root to node).
     Capped at CANDIDATE_LIST_LIMIT; NAIC-related nodes preferred.
     """
@@ -88,19 +88,18 @@ def extract_organization_tree_nodes(snapshot: dict) -> list[dict[str, Any]]:
     tree = next((t for t in trees if (t.get("Name") or t.get("name") or "").strip() == ORGANIZATION_TREE_NAME), None)
     if not tree:
         return []
-    tree_id = _tree_id_from_obj(tree)
+    tree_id = _obj_id(tree)
     if not tree_id:
         return []
     node_paths = _build_paths_for_tree(snapshot, tree_id)
     out: list[dict[str, Any]] = []
     for n, segs in node_paths:
-        nid = _node_id(n)
+        nid = _obj_id(n)
         if not nid:
             continue
         path = _path_str(segs)
         name = _node_name(n)
         out.append({"id": nid, "name": name, "path": path})
-    # Prefer NAIC-related (path or name contains NAIC)
     def naic_score(item: dict) -> int:
         p = (item.get("path") or "").lower()
         nm = (item.get("name") or "").lower()
@@ -121,7 +120,7 @@ def extract_naic_group_tree_nodes(snapshot: dict) -> list[dict[str, Any]]:
     tree = next((t for t in trees if (t.get("Name") or t.get("name") or "").strip() == NAIC_GROUP_TREE_NAME), None)
     if not tree:
         return []
-    tree_id = _tree_id_from_obj(tree)
+    tree_id = _obj_id(tree)
     if not tree_id:
         return []
     node_paths = _build_paths_for_tree(snapshot, tree_id)
@@ -130,7 +129,7 @@ def extract_naic_group_tree_nodes(snapshot: dict) -> list[dict[str, Any]]:
         path = _path_str(segs)
         if not path.strip().lower().startswith("naic"):
             continue
-        nid = _node_id(n)
+        nid = _obj_id(n)
         if not nid:
             continue
         name = _node_name(n)
@@ -148,15 +147,14 @@ def extract_resource_type_tree_nodes(snapshot: dict) -> list[dict[str, Any]]:
     tree = next((t for t in trees if (t.get("Name") or t.get("name") or "").strip() == TYPE1_TREE_NAME), None)
     if not tree:
         return []
-    tree_id = _tree_id_from_obj(tree)
+    tree_id = _obj_id(tree)
     if not tree_id:
         return []
     node_paths = _build_paths_for_tree(snapshot, tree_id)
-    # Prefer nodes whose name matches Type1 options
     type1_lower = {s.lower() for s in TYPE1_OPTIONS}
     out: list[dict[str, Any]] = []
     for n, segs in node_paths:
-        nid = _node_id(n)
+        nid = _obj_id(n)
         if not nid:
             continue
         name = _node_name(n)
@@ -203,14 +201,41 @@ def extract_recent_calendar_items(snapshot: dict) -> list[dict[str, Any]]:
     return out[:CANDIDATE_LIST_LIMIT]
 
 
+def extract_topic_tree_nodes(snapshot: dict) -> list[dict[str, Any]]:
+    """
+    Topic / Chronicles tree nodes.
+    Returns list of {id, name, path}. Capped at CANDIDATE_LIST_LIMIT.
+    """
+    trees = snapshot.get("trees") or []
+    tree = next((t for t in trees if (t.get("Name") or t.get("name") or "").strip() == TOPIC_TREE_NAME), None)
+    if not tree:
+        return []
+    tree_id = _obj_id(tree)
+    if not tree_id:
+        return []
+    node_paths = _build_paths_for_tree(snapshot, tree_id)
+    out: list[dict[str, Any]] = []
+    for n, segs in node_paths:
+        nid = _obj_id(n)
+        if not nid:
+            continue
+        name = _node_name(n)
+        path = _path_str(segs)
+        out.append({"id": nid, "name": name, "path": path})
+    out.sort(key=lambda x: x.get("path") or "")
+    return out[:CANDIDATE_LIST_LIMIT]
+
+
 def build_mapping_context(snapshot: dict) -> dict[str, Any]:
     """
-    Build full mapping context for AI: organization nodes, NAIC group nodes, resource type nodes, calendar items.
+    Build full mapping context for AI: organization nodes, NAIC group nodes,
+    resource type nodes, topic nodes, calendar items.
     All lists truncated to CANDIDATE_LIST_LIMIT with NAIC/relevance preferred.
     """
     return {
         "organization_tree_nodes": extract_organization_tree_nodes(snapshot),
         "naic_group_tree_nodes": extract_naic_group_tree_nodes(snapshot),
         "resource_type_tree_nodes": extract_resource_type_tree_nodes(snapshot),
+        "topic_tree_nodes": extract_topic_tree_nodes(snapshot),
         "recent_calendar_items": extract_recent_calendar_items(snapshot),
     }

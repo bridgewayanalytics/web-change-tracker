@@ -39,9 +39,9 @@ def _safe_display(obj: Any) -> Any:
 
 def _node_display(node: dict) -> dict:
     """Minimal node for display: id + name only."""
-    name = (node.get("Name") or node.get("name") or "").strip()
+    name = (node.get("name") or node.get("Name") or "").strip()
     nid = node.get("_id") or node.get("id")
-    return {"_id": nid, "Name": name}
+    return {"_id": nid, "name": name}
 
 
 def cmd_list_trees() -> int:
@@ -51,7 +51,7 @@ def cmd_list_trees() -> int:
         return 0
     print(f"Trees ({len(trees)}):")
     for t in trees:
-        name = (t.get("Name") or t.get("name") or "").strip() or "(no name)"
+        name = (t.get("name") or t.get("Name") or "").strip() or "(no name)"
         nid = t.get("_id") or t.get("id") or "(no id)"
         print(f"  {name}")
         print(f"    id: {nid}")
@@ -64,7 +64,7 @@ def cmd_dump_tree(tree_name: str, sample: int = 10) -> int:
         print(f"Tree not found: {tree_name!r}")
         return 1
     tree_id = tree.get("_id") or tree.get("id")
-    name = tree.get("Name") or tree.get("name") or tree_name
+    name = tree.get("name") or tree.get("Name") or tree_name
     print(f"Tree: {name}")
     print(f"  id: {tree_id}")
     nodes = get_tree_nodes_in_tree(tree_id)
@@ -75,7 +75,7 @@ def cmd_dump_tree(tree_name: str, sample: int = 10) -> int:
     print(f"  sample nodes (first {len(show)}):")
     for n in show:
         d = _node_display(n)
-        print(f"    - {d.get('Name', '')!r}  id: {d.get('_id', '')}")
+        print(f"    - {d.get('name', '')!r}  id: {d.get('_id', '')}")
     return 0
 
 
@@ -92,7 +92,7 @@ def cmd_find_node(tree_name: str, query: str, limit: int = 20) -> int:
     print(f"Matches for {query!r} in tree {tree_name!r} ({len(matches)}):")
     for n in matches:
         d = _node_display(n)
-        print(f"  - {d.get('Name', '')!r}  id: {d.get('_id', '')}")
+        print(f"  - {d.get('name', '')!r}  id: {d.get('_id', '')}")
     return 0
 
 
@@ -127,7 +127,7 @@ def main() -> int:
     sub.add_parser("list-trees", help="List all trees (name + id)")
 
     p_dump = sub.add_parser("dump-tree", help="Print node count and sample nodes for a tree")
-    p_dump.add_argument("--tree-name", required=True, metavar="NAME", help="Tree name (e.g. Organization/Publisher)")
+    p_dump.add_argument("--tree-name", required=True, metavar="NAME", help="Tree name (e.g. Organization, Resources Types, Chronicles)")
     p_dump.add_argument("--sample", type=int, default=10, help="Number of sample nodes to print (default 10)")
 
     p_node = sub.add_parser("find-node", help="Find tree nodes by name query")

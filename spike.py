@@ -1633,6 +1633,25 @@ def parse_args() -> argparse.Namespace:
         dest="dry_run_bubble",
         help="Allow Bubble write endpoints (still none implemented in this app)",
     )
+    p.add_argument(
+        "--pdf-meeting-meta",
+        action="store_true",
+        dest="pdf_meeting_meta",
+        help="Extract meeting metadata from PDF resources (date, group, times); default ON when PROD_OBSERVE_MODE=true",
+    )
+    p.add_argument(
+        "--no-pdf-meeting-meta",
+        action="store_true",
+        dest="no_pdf_meeting_meta",
+        help="Disable PDF meeting metadata extraction",
+    )
+    p.add_argument(
+        "--smoke-bubble-resolvers",
+        action="store_true",
+        default=False,
+        dest="smoke_bubble_resolvers",
+        help="Run resolver smoke tests against LIVE Bubble and exit 0 (pass) / 1 (fail).",
+    )
     args = p.parse_args()
     # Default bubble_enrich on when AI_ENRICHMENT_ENABLED is set
     if os.environ.get("AI_ENRICHMENT_ENABLED", "").strip().lower() in ("1", "true", "yes"):
@@ -1843,11 +1862,15 @@ def _write_bubble_payload(
             no_ai=no_ai,
         )
 
-    BUBBLE_RESOURCES_FILE.write_text(json.dumps(resources, indent=2, ensure_ascii=False), encoding="utf-8")
-    log.info("Wrote Bubble Resource payload to %s (%d items)", BUBBLE_RESOURCES_FILE, len(resources))
+    from bubble.payload import strip_debug_keys
+    resources_clean = [strip_debug_keys(r) for r in resources]
+    calendar_items_clean = [strip_debug_keys(c) for c in calendar_items]
 
-    BUBBLE_CALENDAR_ITEMS_FILE.write_text(json.dumps(calendar_items, indent=2, ensure_ascii=False), encoding="utf-8")
-    log.info("Wrote Bubble Calendar Item payload to %s (%d items)", BUBBLE_CALENDAR_ITEMS_FILE, len(calendar_items))
+    BUBBLE_RESOURCES_FILE.write_text(json.dumps(resources_clean, indent=2, ensure_ascii=False), encoding="utf-8")
+    log.info("Wrote Bubble Resource payload to %s (%d items)", BUBBLE_RESOURCES_FILE, len(resources_clean))
+
+    BUBBLE_CALENDAR_ITEMS_FILE.write_text(json.dumps(calendar_items_clean, indent=2, ensure_ascii=False), encoding="utf-8")
+    log.info("Wrote Bubble Calendar Item payload to %s (%d items)", BUBBLE_CALENDAR_ITEMS_FILE, len(calendar_items_clean))
 
     web_urls = list({(e.get("url") or "").strip() for e in change_events if (e.get("url") or "").strip()})
     for r in resources:
@@ -2100,6 +2123,141 @@ def _run_simulate_change(
     write_reference_resolution_report()
 
 
+def _run_smoke_bubble_resolvers() -> int:
+    """Run resolver smoke tests against LIVE Bubble. Returns exit code 0 (pass) or 1 (fail)."""
+    from bubble import lookups
+    from bubble.enrich_refs import (
+        ORGANIZATION_TREE_NAME,
+        TYPE1_TREE_NAME,
+        TOPIC_TREE_NAME,
+        _normalize_for_matching,
+        _build_naic_group_node_map,
+        _resolve_naic_group_node,
+        _resolve_organization_naic_node,
+        _build_type1_nodes_by_name,
+        _build_topic_candidates,
+        _node_name,
+        _obj_id,
+    )
+
+    results: list[tuple[str, bool, str]] = []
+
+    def _record(name: str, passed: bool, detail: str = "") -> None:
+        tag = "PASS" if passed else "FAIL"
+        results.append((name, passed, detail))
+        print(f"  [{tag}] {name}" + (f"  — {detail}" if detail else ""))
+
+    print("\n=== Bubble Resolver Smoke Suite ===\n")
+
+    # --- 1. Load trees and print node counts ---
+    tree_checks = {
+        "Organization": ORGANIZATION_TREE_NAME,
+        "Resources Types": TYPE1_TREE_NAME,
+        "Chronicles": TOPIC_TREE_NAME,
+    }
+    tree_ids: dict[str, str | None] = {}
+    tree_node_counts: dict[str, int] = {}
+
+    for label, tree_name in tree_checks.items():
+        tree = lookups.get_tree_by_name(tree_name)
+        if not tree:
+            _record(f"Load tree: {label}", False, f"tree '{tree_name}' not found")
+            tree_ids[label] = None
+            tree_node_counts[label] = 0
+            continue
+        tid = tree.get("_id") or tree.get("id")
+        tree_ids[label] = tid
+        nodes = lookups.get_tree_nodes_in_tree(tid)
+        tree_node_counts[label] = len(nodes)
+        ok = len(nodes) > 0
+        _record(f"Load tree: {label}", ok, f"tree_id={tid}  nodes={len(nodes)}")
+
+    # --- 2. Organization: resolve NAIC node (normalized name matching) ---
+    naic_node_id: str | None = None
+    naic_nid, naic_ev = _resolve_organization_naic_node(ORGANIZATION_TREE_NAME)
+    if naic_nid:
+        naic_node_id = naic_nid
+        raw_name = naic_ev.get("resolved_name", "NAIC")
+        _record("Organization: NAIC node", True, f"'{raw_name}' node_id={naic_node_id}")
+    else:
+        failure = naic_ev.get("failure", "unknown")
+        candidates = naic_ev.get("naic_candidates", [])
+        detail = f"failure={failure}"
+        if candidates:
+            detail += f"  candidates={candidates}"
+        _record("Organization: NAIC node", False, detail)
+
+    # --- 3. NAIC Group normalized label matching ---
+    test_labels = [
+        "Statutory Accounting Principles Working Group",
+        "Life Actuarial Task Force",
+    ]
+    for label in test_labels:
+        nid, evidence = _resolve_naic_group_node(ORGANIZATION_TREE_NAME, [label])
+        if nid:
+            raw = evidence.get("chosen_raw_name", "?")
+            _record(f"NAIC Group: \"{label}\"", True, f"→ \"{raw}\" (id={nid})")
+        else:
+            failure = evidence.get("failure", "unknown")
+            _record(f"NAIC Group: \"{label}\"", False, f"failure={failure}")
+
+    # --- 4. Calendar lookup by group ---
+    for label in test_labels:
+        nid, _ = _resolve_naic_group_node(ORGANIZATION_TREE_NAME, [label])
+        if not nid:
+            _record(f"Calendar for \"{label}\"", True, "skipped (group not resolved)")
+            continue
+        cal_items = lookups.search_calendar_items_by_naic_group(nid)
+        count = len(cal_items)
+        if count == 0:
+            print(f"  [WARN] Calendar for \"{label}\": 0 items (group_id={nid})")
+            results.append((f"Calendar for \"{label}\"", True, f"0 items (warning)"))
+        else:
+            _record(f"Calendar for \"{label}\"", True, f"{count} item(s)")
+
+    # --- 5. Type1: verify "Agenda & Materials" ---
+    type1_map = _build_type1_nodes_by_name(TYPE1_TREE_NAME)
+    agenda_id = type1_map.get("Agenda & Materials") or type1_map.get("agenda & materials")
+    if agenda_id:
+        _record("Type1: Agenda & Materials", True, f"node_id={agenda_id}")
+    else:
+        available = sorted(k for k in type1_map if k == k.lower())[:10]
+        _record("Type1: Agenda & Materials", False, f"not found; available: {available}")
+
+    # --- 6. Topic: Chronicles nodes loaded, check for known node ---
+    topic_map = _build_topic_candidates(TOPIC_TREE_NAME)
+    topic_count = len(topic_map)
+    if topic_count > 0:
+        known = "NAIC Investments"
+        known_lower = known.lower()
+        tid = topic_map.get(known) or topic_map.get(known_lower)
+        if tid:
+            _record("Topic: Chronicles", True, f"{topic_count} candidates; '{known}' id={tid}")
+        else:
+            sample = list(topic_map.keys())[:8]
+            _record("Topic: Chronicles", True, f"{topic_count} candidates; '{known}' not present; sample: {sample}")
+    else:
+        _record("Topic: Chronicles", False, "0 candidates loaded")
+
+    # --- Summary ---
+    total = len(results)
+    passed = sum(1 for _, ok, _ in results if ok)
+    failed = total - passed
+    print(f"\n{'='*40}")
+    print(f"  {passed}/{total} passed, {failed} failed")
+    print(f"{'='*40}\n")
+
+    hard_fail = (
+        tree_node_counts.get("Organization", 0) == 0
+        or tree_node_counts.get("Resources Types", 0) == 0
+        or tree_node_counts.get("Chronicles", 0) == 0
+        or naic_node_id is None
+        or agenda_id is None
+        or topic_count == 0
+    )
+    return 1 if hard_fail else 0
+
+
 def main() -> None:
     args = parse_args()
 
@@ -2116,6 +2274,13 @@ def main() -> None:
         raise SystemExit(1) from e
     human_summary, _ = render_run_spec_summary(run_spec)
     log.info("RunSpec:\n%s", human_summary)
+
+    if run_spec.prod_observe_mode:
+        from bubble.enrich_refs import ORGANIZATION_TREE_NAME, TYPE1_TREE_NAME, TOPIC_TREE_NAME
+        log.info(
+            "Bubble tree config: Organization=%r  ResourceTypes=%r  Topic=%r",
+            ORGANIZATION_TREE_NAME, TYPE1_TREE_NAME, TOPIC_TREE_NAME,
+        )
 
     # Bubble LIVE healthcheck at startup when enrichment is on and mode is LIVE
     if run_spec.bubble_enrich_enabled and run_spec.bubble_mode == "LIVE":
@@ -2140,6 +2305,9 @@ def main() -> None:
         for f in BUBBLE_RESOURCE_FIELDS:
             print(f)
         raise SystemExit(0)
+
+    if args.smoke_bubble_resolvers:
+        raise SystemExit(_run_smoke_bubble_resolvers())
 
     from datetime import datetime, timezone
     run_timestamp = int(datetime.now(timezone.utc).timestamp())
@@ -2278,6 +2446,15 @@ def main() -> None:
             artifact_output_dir=run_spec.artifact_output_dir or None,
         )
 
+    # PDF meeting metadata: download PDFs, extract date/group/times; set date if null, __meeting_meta for audit
+    if run_spec.pdf_meeting_meta_enabled:
+        from bubble.payload import apply_pdf_meeting_metadata
+        apply_pdf_meeting_metadata(
+            resources,
+            pdf_meeting_meta_enabled=True,
+            artifact_output_dir=run_spec.artifact_output_dir or None,
+        )
+
     # RunSpec summary (with snapshot_stats and warnings) for logs and email header
     human_summary, _ = render_run_spec_summary(run_spec, snapshot_stats)
     log.info("RunSpec (final):\n%s", human_summary)
@@ -2297,7 +2474,11 @@ def main() -> None:
 
     if args.bubble_report or args.emit_bubble_json:
         if args.bubble_report:
-            report = _render_bubble_report(resources, calendar_items)
+            from bubble.payload import strip_debug_keys
+            report = _render_bubble_report(
+                [strip_debug_keys(r) for r in resources],
+                [strip_debug_keys(c) for c in calendar_items],
+            )
             log.info("Bubble report: %d Calendar Items, %d Resources", len(calendar_items), len(resources))
         else:
             report = render_report(change_events, verbose=args.verbose)

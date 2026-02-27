@@ -327,7 +327,8 @@ resource "aws_ecs_task_definition" "app" {
       # Bubble tree names (must match Tree "Name" in your Bubble app; list via Data API /tree)
       { name = "BUBBLE_ORGANIZATION_TREE", value = "Organization" },
       { name = "BUBBLE_NAIC_GROUP_TREE", value = "Organization" },
-      { name = "BUBBLE_TYPE1_TREE", value = "Resources Types" }
+      { name = "BUBBLE_TYPE1_TREE", value = "Resources Types" },
+      { name = "BUBBLE_TOPIC_TREE", value = "Chronicles" }
     ]
 
     # Bubble credentials from SSM (valueFrom); never in plaintext env. Create params via CLI (see README).

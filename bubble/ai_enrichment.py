@@ -168,7 +168,7 @@ For reference fields (Organization, Type1, topic suggestion): use only the Bubbl
         system += """
 
 Candidate tree nodes (use only these ids):
-- Organization (Organization/Publisher): """ + json.dumps(org_nodes[:80], ensure_ascii=False)
+- Organization: """ + json.dumps(org_nodes[:80], ensure_ascii=False)
         if naic_nodes:
             system += "\n- NAIC Group (path under NAIC): " + json.dumps(naic_nodes[:80], ensure_ascii=False)
         if type_nodes:

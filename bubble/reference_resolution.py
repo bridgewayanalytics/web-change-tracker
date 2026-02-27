@@ -86,7 +86,7 @@ def get_records() -> list[dict[str, Any]]:
 
 
 # Statuses that count as "resolved" for metric summary
-_RESOLVED_STATUSES = frozenset({"resolved", "RESOLVED", "ai_override"})
+_RESOLVED_STATUSES = frozenset({"resolved", "RESOLVED", "multi_resolved", "MULTI_RESOLVED", "ai_override"})
 
 
 def get_resolution_summary(records: list[dict[str, Any]] | None = None) -> dict[str, dict[str, int]]:

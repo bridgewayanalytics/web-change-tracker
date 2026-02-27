@@ -36,8 +36,8 @@ def _client() -> "BubbleClient":
 
 
 def _tree_node_name(node: dict) -> str:
-    """Display name of a tree node (Bubble may use 'Name' or 'name')."""
-    return (node.get("Name") or node.get("name") or "").strip()
+    """Display name of a tree node. Live API returns lowercase 'name'."""
+    return (node.get("name") or node.get("Name") or "").strip()
 
 
 def _tree_node_id(node: dict) -> str | None:
@@ -46,8 +46,8 @@ def _tree_node_id(node: dict) -> str | None:
 
 
 def _tree_node_parent(node: dict) -> str | None:
-    """Parent tree node id (reference)."""
-    parent = node.get("Parent") or node.get("parent")
+    """Parent tree node id (reference). Live API may use 'parent' or 'Parent'."""
+    parent = node.get("parent") or node.get("Parent") or node.get("parent_node")
     if isinstance(parent, str):
         return parent
     if isinstance(parent, dict):
@@ -111,7 +111,7 @@ def get_tree_nodes_in_tree(tree_id: str) -> list[dict]:
     Example:
         nodes = get_tree_nodes_in_tree("123456x789")
         for n in nodes:
-            print(n.get("Name"), n.get("_id"))
+            print(n.get("name"), n.get("_id"))
     """
     if tree_id in _tree_nodes_cache:
         return _tree_nodes_cache[tree_id]
@@ -150,10 +150,11 @@ def find_tree_node_by_path(tree_id: str, path: list[str]) -> dict | None:
         return None
 
     nodes = get_tree_nodes_in_tree(tree_id)
-    by_id = {_tree_node_id(n): n for n in nodes if _tree_node_id(n)}
+    named_nodes = [n for n in nodes if _tree_node_name(n)]
+    by_id = {_tree_node_id(n): n for n in named_nodes if _tree_node_id(n)}
     by_parent: dict[str, list[dict]] = {}
     roots: list[dict] = []
-    for n in nodes:
+    for n in named_nodes:
         pid = _tree_node_parent(n)
         if not pid:
             roots.append(n)
@@ -192,7 +193,10 @@ def find_tree_nodes_fuzzy(tree_id: str, query: str, limit: int = 10) -> list[dic
     nodes = get_tree_nodes_in_tree(tree_id)
     out: list[dict] = []
     for n in nodes:
-        if q in _tree_node_name(n).lower():
+        name = _tree_node_name(n)
+        if not name:
+            continue
+        if q in name.lower():
             out.append(n)
             if len(out) >= limit:
                 break
@@ -240,6 +244,89 @@ def find_calendar_item_by_title_date(
     except Exception as e:
         log.warning("find_calendar_item_by_title_date failed: %s", e)
         return None
+
+
+def search_calendar_items_by_date_window(
+    date_iso: str,
+    window_days: int = 2,
+    limit: int = 50,
+) -> list[dict]:
+    """
+    Return Calendar items whose date falls in [date_iso - window_days, date_iso + window_days].
+    Used for __meeting_meta-based calendar linking; scoring by title/group_name is done by caller.
+
+    date_iso: center date (YYYY-MM-DD).
+    window_days: half-window in days (default 2 → ±2 days).
+    limit: max results (default 50).
+
+    Returns list of full calendar item dicts (each has _id, title, date, etc.).
+    """
+    if not date_iso or not str(date_iso).strip():
+        return []
+    try:
+        dt = datetime.fromisoformat(str(date_iso).strip().replace("Z", "+00:00")[:10])
+    except ValueError:
+        return []
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    low = (dt - timedelta(days=window_days)).strftime("%Y-%m-%d")
+    high = (dt + timedelta(days=window_days)).strftime("%Y-%m-%d")
+    try:
+        client = _client()
+        constraints: list[dict] = [
+            {"key": "date", "constraint_type": "greater than", "value": low},
+            {"key": "date", "constraint_type": "less than", "value": high},
+        ]
+        out = client.search(TYPE_CALENDAR_ITEM, constraints=constraints, limit=limit)
+        return out.get("results", []) or []
+    except BubbleAPIError:
+        raise
+    except Exception as e:
+        log.warning("search_calendar_items_by_date_window failed: %s", e)
+        return []
+
+
+def search_calendar_items_by_naic_group(
+    naic_group_node_id: str,
+    date_iso: str | None = None,
+    window_days: int = 7,
+    limit: int = 50,
+) -> list[dict]:
+    """
+    Return Calendar items whose "NAIC Group (tree node)" equals the given node ID.
+
+    If date_iso is provided, also constrains date to ±window_days.
+    If date_iso is None, returns upcoming items (date > today) capped at limit.
+    """
+    if not naic_group_node_id or not str(naic_group_node_id).strip():
+        return []
+    constraints: list[dict] = [
+        {"key": "NAIC Group (tree node)", "constraint_type": "equals", "value": naic_group_node_id},
+    ]
+    if date_iso and str(date_iso).strip():
+        try:
+            dt = datetime.fromisoformat(str(date_iso).strip().replace("Z", "+00:00")[:10])
+        except ValueError:
+            dt = None
+        if dt:
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            low = (dt - timedelta(days=window_days)).strftime("%Y-%m-%d")
+            high = (dt + timedelta(days=window_days)).strftime("%Y-%m-%d")
+            constraints.append({"key": "date", "constraint_type": "greater than", "value": low})
+            constraints.append({"key": "date", "constraint_type": "less than", "value": high})
+    else:
+        today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+        constraints.append({"key": "date", "constraint_type": "greater than", "value": today})
+    try:
+        client = _client()
+        out = client.search(TYPE_CALENDAR_ITEM, constraints=constraints, limit=limit)
+        return out.get("results", []) or []
+    except BubbleAPIError:
+        raise
+    except Exception as e:
+        log.warning("search_calendar_items_by_naic_group failed: %s", e)
+        return []
 
 
 def find_resources_by_url(url: str) -> list[dict]:

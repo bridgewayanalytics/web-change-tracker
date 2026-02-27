@@ -38,6 +38,7 @@ class RunSpec:
     prod_observe_mode: bool = False
     e2e_bubble_verify: bool = False
     dry_run_bubble: bool = True  # No Bubble write API calls (prod must stay true)
+    pdf_meeting_meta_enabled: bool = False  # Extract PDF meeting metadata (default ON when prod_observe_mode)
     # Set after bubble_healthcheck() when bubble_enrich_enabled and bubble_mode=LIVE
     bubble_live_ok: bool | None = None  # True=healthcheck passed, False=failed, None=not run
     # Internal: fail fast on validation (vs collect warnings for email)
@@ -104,6 +105,15 @@ def compute_run_spec(args: Any, env: dict[str, str] | None = None) -> RunSpec:
     dry_run_bubble = getattr(args, "dry_run_bubble", True)
     if "DRY_RUN_BUBBLE" in env:
         dry_run_bubble = _bool_from_env(env, "DRY_RUN_BUBBLE", True)
+    # PDF meeting meta: default ON when prod_observe_mode, else OFF unless --pdf-meeting-meta
+    no_pdf_meeting_meta = getattr(args, "no_pdf_meeting_meta", False)
+    pdf_meeting_meta = getattr(args, "pdf_meeting_meta", False)
+    if no_pdf_meeting_meta:
+        pdf_meeting_meta_enabled = False
+    elif pdf_meeting_meta:
+        pdf_meeting_meta_enabled = True
+    else:
+        pdf_meeting_meta_enabled = prod_observe_mode
 
     return RunSpec(
         ai_enrich_enabled=ai_enrich_enabled,
@@ -120,6 +130,7 @@ def compute_run_spec(args: Any, env: dict[str, str] | None = None) -> RunSpec:
         prod_observe_mode=prod_observe_mode,
         e2e_bubble_verify=e2e_verify,
         dry_run_bubble=dry_run_bubble,
+        pdf_meeting_meta_enabled=pdf_meeting_meta_enabled,
         validation_fail_fast=validation_fail_fast,
     )
 
@@ -194,7 +205,7 @@ def upload_artifacts_to_s3(artifact_dir: str, run_timestamp: int) -> list[str]:
     if not prefix.endswith("/"):
         prefix += "/"
     root = Path(artifact_dir)
-    names = ["reference_resolution_report.json", "verify_report.json"]
+    names = ["reference_resolution_report.json", "verify_report.json", "pdf_meeting_meta.json"]
     uris: list[str] = []
     try:
         import boto3
@@ -302,6 +313,7 @@ def render_run_spec_summary(
         f"artifact_output_dir={run_spec.artifact_output_dir}",
         f"s3_artifact_upload_enabled={run_spec.s3_artifact_upload_enabled}",
         f"prod_observe_mode={run_spec.prod_observe_mode}",
+        f"pdf_meeting_meta_enabled={run_spec.pdf_meeting_meta_enabled}",
     ]
     if snapshot_stats:
         lines.append(f"snapshot: calendar_items={snapshot_stats.get('calendar_items', 0)}, resources={snapshot_stats.get('resources', 0)}, tree_nodes={snapshot_stats.get('tree_nodes', 0)}")

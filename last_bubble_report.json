@@ -11,7 +11,7 @@
   "resources": [
     {
       "archive": false,
-      "Available To Vector Store": true,
+      "Available To Vector Store": false,
       "Chunk Overlap": 200,
       "Chunk Size": 1000,
       "date": null,
@@ -41,11 +41,16 @@
       "Creator": null,
       "Modified Date": null,
       "Created Date": null,
-      "Slug": null
+      "Slug": null,
+      "__key": "https://example.com/fake.pdf",
+      "__source": {
+        "source_page_url": "https://content.naic.org/committees/e/life-risk-based-capital-wg",
+        "target_label": "Life Risk-Based Capital Working Group"
+      }
     },
     {
       "archive": false,
-      "Available To Vector Store": true,
+      "Available To Vector Store": false,
       "Chunk Overlap": 200,
       "Chunk Size": 1000,
       "date": null,
@@ -75,7 +80,12 @@
       "Creator": null,
       "Modified Date": null,
       "Created Date": null,
-      "Slug": null
+      "Slug": null,
+      "__key": "https://example.com/fake-event",
+      "__source": {
+        "source_page_url": "https://content.naic.org/committees/e/life-risk-based-capital-wg",
+        "target_label": "Life Risk-Based Capital Working Group"
+      }
     }
   ],
   "calendar_items": [
@@ -101,7 +111,12 @@
       "Relevant Documents": [],
       "subtopic": null,
       "Timezone Code": "America/New_York",
-      "title": "FAKE TEST MEETING"
+      "title": "FAKE TEST MEETING",
+      "__key": "0097bd622d41434ac3993e28128efd6236d3a0bafb85dca240c467a5c642c8eb",
+      "__source": {
+        "source_page_url": "https://content.naic.org/committees/e/life-risk-based-capital-wg",
+        "target_label": "Life Risk-Based Capital Working Group"
+      }
     }
   ]
 }

@@ -19,6 +19,7 @@ fi
 # Tree names (match ECS / enrich_refs defaults)
 BUBBLE_ORGANIZATION_TREE="${BUBBLE_ORGANIZATION_TREE:-Organization}"
 BUBBLE_TYPE1_TREE="${BUBBLE_TYPE1_TREE:-Resources Types}"
+BUBBLE_TOPIC_TREE="${BUBBLE_TOPIC_TREE:-Chronicles}"
 
 echo "Base URL: ${BUBBLE_API_URL}"
 echo ""
@@ -100,12 +101,38 @@ else
     --data-urlencode "limit=20" "$BUBBLE_API_URL/treenode")
   TYPE1_COUNT=$(echo "$TYPE1_NODES_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=(d.get("response") or d).get("results",[]); print(len(r))' 2>/dev/null || echo "0")
   echo "  tree nodes (Type1 options): $TYPE1_COUNT"
+  echo "  (code expects node names matching: News, Agenda/Materials, In the weeds — or set BUBBLE_TYPE1_OPTIONS)"
   echo "$TYPE1_NODES_JSON" | python3 -c '
 import sys,json
 d=json.load(sys.stdin)
 r=(d.get("response") or d).get("results",[])
 for x in r[:10]: print("    -", (x.get("Name") or x.get("name") or ""), "  id:", x.get("_id") or x.get("id"))
 if len(r)>10: print("    ...")
+' 2>/dev/null || true
+fi
+echo ""
+
+# 3b) Topic tree (Chronicles) + nodes
+echo "=== 3b. Topic tree + nodes ($BUBBLE_TOPIC_TREE) ==="
+TOPIC_TREE_JSON=$(curl -s -G -H "Authorization: Bearer $BUBBLE_API_KEY" \
+  --data-urlencode "constraints=[{\"key\":\"Name\",\"constraint_type\":\"equals\",\"value\":\"$BUBBLE_TOPIC_TREE\"}]" \
+  --data-urlencode "limit=1" "$BUBBLE_API_URL/tree")
+TOPIC_TREE_ID=$(echo "$TOPIC_TREE_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=(d.get("response") or d).get("results",[]); print(r[0].get("_id") or r[0].get("id") if r else "")' 2>/dev/null || echo "")
+if [[ -z "$TOPIC_TREE_ID" ]]; then
+  echo "  Topic tree not found (name=$BUBBLE_TOPIC_TREE). Check BUBBLE_TOPIC_TREE."
+else
+  echo "  tree _id: $TOPIC_TREE_ID"
+  TOPIC_NODES_JSON=$(curl -s -G -H "Authorization: Bearer $BUBBLE_API_KEY" \
+    --data-urlencode "constraints=[{\"key\":\"parent_tree\",\"constraint_type\":\"equals\",\"value\":\"$TOPIC_TREE_ID\"}]" \
+    --data-urlencode "limit=50" "$BUBBLE_API_URL/treenode")
+  TOPIC_COUNT=$(echo "$TOPIC_NODES_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=(d.get("response") or d).get("results",[]); print(len(r))' 2>/dev/null || echo "0")
+  echo "  tree nodes (topic paths): $TOPIC_COUNT"
+  echo "$TOPIC_NODES_JSON" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+r=(d.get("response") or d).get("results",[])
+for x in r[:15]: print("    -", (x.get("Name") or x.get("name") or ""), "  id:", x.get("_id") or x.get("id"), "  parent:", x.get("Parent") or x.get("parent") or x.get("parent_node") or "")
+if len(r)>15: print("    ...")
 ' 2>/dev/null || true
 fi
 echo ""

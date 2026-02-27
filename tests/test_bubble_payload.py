@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from bubble.payload import build_resource_payload, build_calendar_item_payload, validate_payload
+from bubble.payload import build_resource_payload, build_calendar_item_payload, validate_payload, strip_debug_keys
 from bubble.schemas import CALENDAR_ITEM_SCHEMA_FIELDS, FULL_RESOURCE_SCHEMA_FIELDS
 from spike import BUBBLE_RESOURCES_FILE, BUBBLE_CALENDAR_ITEMS_FILE, _write_bubble_payload
 
@@ -99,6 +99,13 @@ class TestBubblePayload(unittest.TestCase):
         _write_bubble_payload([])
         self.assertEqual(json.loads(BUBBLE_RESOURCES_FILE.read_text(encoding="utf-8")), [])
         self.assertEqual(json.loads(BUBBLE_CALENDAR_ITEMS_FILE.read_text(encoding="utf-8")), [])
+
+    def test_strip_debug_keys_removes_leading_double_underscore(self) -> None:
+        """strip_debug_keys removes __meeting_meta, __key, __source; keeps other keys."""
+        obj = {"Name": "Doc", "URL": "https://example.com/x.pdf", "__meeting_meta": {"date_iso": "2026-03-02"}, "__key": "abc"}
+        out = strip_debug_keys(obj)
+        self.assertEqual(out, {"Name": "Doc", "URL": "https://example.com/x.pdf"})
+        self.assertIn("__meeting_meta", obj, "Original unchanged")
 
 
 if __name__ == "__main__":

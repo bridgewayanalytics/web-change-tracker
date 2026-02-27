@@ -1,7 +1,7 @@
 [
   {
     "archive": false,
-    "Available To Vector Store": true,
+    "Available To Vector Store": false,
     "Chunk Overlap": 200,
     "Chunk Size": 1000,
     "date": null,
@@ -35,7 +35,7 @@
   },
   {
     "archive": false,
-    "Available To Vector Store": true,
+    "Available To Vector Store": false,
     "Chunk Overlap": 200,
     "Chunk Size": 1000,
     "date": null,
