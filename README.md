@@ -172,7 +172,7 @@ Change events are mapped to **Bubble** Resource and Calendar Item payloads for i
 | **event_links / meeting links** | Resource objects; if link suggests agenda/materials/webex/call, also attached to Calendar Item Agenda |
 | **meetings added** | Calendar Item objects (title, date, Agenda from associated links) |
 
-Meeting links are associated with meetings by date match when possible; otherwise the first upcoming meeting. Schema fields are in `bubble/schemas.py`.
+Meeting links are associated with meetings by date match when possible; otherwise the first upcoming meeting. Schema fields are in `bubble/schemas.py`. **PDF meeting meta** (optional): for PDF resources, the pipeline can extract meeting metadata (date, group, times) from the PDF content; quality gates validate and reject invalid extractions; results are written to `debug/pdf_meeting_meta.json`.
 
 ### Reference Enrichment (existing Bubble data)
 
@@ -180,13 +180,13 @@ When `--bubble-enrich` is on (default on if `AI_ENRICHMENT_ENABLED=true`), **ref
 
 | Field | How it's set |
 |-------|----------------|
-| **Organization** (Resource) | NAIC node under the organization tree (e.g. Organization/Publisher) |
-| **NAIC Group (tree node)** (Calendar) | Tree node at path `org_path + [label]` from target context |
-| **Type1** (Resource) | Deterministic keyword classification (News, Agenda/Materials, In the weeds) or optional AI override (confidence ≥ 0.7) |
-| **topic suggestion** (Resource) | Optional AI-suggested topic path, resolved to node ID when confidence ≥ 0.7 |
-| **Related calendar items** (Resource) | Existing Bubble calendar items matched by title + date (tolerance window) |
+| **Organization** (Resource) | NAIC node under the organization tree (default `Organization`). Uses **normalized name matching** (lowercase, strip `(E)`-style codes, hyphen→space); selects the "NAIC" node. |
+| **NAIC Group (tree node)** (Calendar) | Tree node from target context (`org_path` + `label`). Uses **normalized label matching** (no path-walking): exact normalized, substring containment, or token-overlap (Jaccard ≥ 0.75). |
+| **Type1** (Resource) | Deterministic keyword classification (News, Agenda/Materials, In the weeds) or optional AI override (confidence ≥ 0.7). Tree: `Resources Types`. |
+| **topic suggestion** (Resource) | Optional AI-suggested topic path, resolved to node ID when confidence ≥ 0.7. Tree: `Chronicles`. |
+| **Related calendar items** (Resource) | Existing Bubble calendar items matched by **NAIC Group (tree node)** + date window (±7 days) or no-date fallback (up to 3 upcoming). Constraints JSON recorded in evidence. |
 
-No Bubble **write** endpoints are called; resolution uses `bubble/lookups.py` (search/list) or snapshot data. Env overrides: `BUBBLE_ORGANIZATION_TREE`, `BUBBLE_NAIC_GROUP_TREE`, `BUBBLE_TYPE1_TREE`; type names via `BUBBLE_TYPE_TREE`, `BUBBLE_TYPE_TREE_NODE`, etc.
+No Bubble **write** endpoints are called; resolution uses `bubble/lookups.py` (search/list) or snapshot data. Env overrides: `BUBBLE_ORGANIZATION_TREE` (default `Organization`), `BUBBLE_TYPE1_TREE` (default `Resources Types`), `BUBBLE_TOPIC_TREE` (default `Chronicles`).
 
 ### Output Files
 
@@ -200,6 +200,8 @@ No Bubble **write** endpoints are called; resolution uses `bubble/lookups.py` (s
 | `debug/ai_outputs_resources.jsonl` | AI enrichment outputs for resources |
 | `debug/ai_inputs_calendar_items.jsonl` | AI enrichment inputs for calendar items |
 | `debug/ai_outputs_calendar_items.jsonl` | AI enrichment outputs for calendar items |
+| `debug/reference_resolution_report.json` | Resolution decisions (organization, type1, naic_group, calendar_linking) with evidence |
+| `debug/pdf_meeting_meta.json` | Extracted meeting metadata from PDF resources (date, group, times); valid/invalid counts |
 
 ### CLI Flags
 
@@ -216,6 +218,8 @@ No Bubble **write** endpoints are called; resolution uses `bubble/lookups.py` (s
 | `--dry-run-bubble` | Do not call Bubble write endpoints (default True; app has no write calls) |
 | `--no-dry-run-bubble` | Opt out of dry-run (for future write support) |
 | `--print-bubble-schema` | Print Bubble Resource field list and exit |
+| `--smoke-bubble-resolvers` | Run resolver smoke tests against LIVE Bubble (NAIC Group → Calendar); exit 0/1 |
+| `--pdf-meeting-meta` | Extract meeting metadata from PDF resources (date, group, times); default ON when `PROD_OBSERVE_MODE=true` |
 
 ### Run spec (production)
 
@@ -226,7 +230,7 @@ Runtime behavior is controlled by a **RunSpec** (single source of truth) derived
 | `PROD_OBSERVE_MODE` | When `true`: requires `bubble_enrich_enabled`, `ai_reference_fields_blocked`, and debug artifacts; intended for production observe (live Bubble reads, no silent degraded modes). |
 | `AI_REFERENCE_FIELDS_BLOCKED` | Default `true`: AI must not overwrite reference fields (Organization, Type1, Related calendar items, etc.). If `false` while AI enrich is on, a HIGH severity warning is emitted (and included in email header). |
 | `ARTIFACT_OUTPUT_DIR` | Directory for `reference_resolution_report.json` and `verify_report.json` (default `debug`). |
-| `S3_ARTIFACT_UPLOAD_ENABLED` | When `true`, upload the two reports to S3 (requires `ARTIFACT_BUCKET`; optional `ARTIFACT_PREFIX`). |
+| `S3_ARTIFACT_UPLOAD_ENABLED` | When `true`, upload `reference_resolution_report.json`, `verify_report.json`, and `pdf_meeting_meta.json` to S3 (requires `ARTIFACT_BUCKET`; optional `ARTIFACT_PREFIX`). |
 | `RUN_SPEC_VALIDATION_FAIL_FAST` | When `true`, validation failures (e.g. prod_observe without bubble_enrich) raise and exit instead of only logging warnings. |
 
 **Recommended production (observe, live Bubble, safe):**
@@ -255,10 +259,21 @@ Read-only diagnostics (no secrets in output):
 
 ```bash
 python -m bubble.doctor list-trees
-python -m bubble.doctor dump-tree --tree-name "Organization/Publisher"
-python -m bubble.doctor find-node --tree-name "Organization/Publisher" --query "NAIC"
+python -m bubble.doctor dump-tree --tree-name "Organization"
+python -m bubble.doctor find-node --tree-name "Organization" --query "NAIC"
 python -m bubble.doctor find-calendar --title "Life Risk-Based Capital" --date "2026-02-25"
 ```
+
+### Resolver Smoke Test
+
+Smoke-test the NAIC Group → Calendar Item resolver against LIVE Bubble:
+
+```bash
+python scripts/bubble_resolver_smoke.py "Risk-Based Capital Investment Risk Evaluation Working Group"
+python scripts/bubble_resolver_smoke.py "Life Actuarial Task Force" --date 2026-03-02
+```
+
+Requires `BUBBLE_API_URL` and `BUBBLE_API_KEY`. Or run the full resolver smoke suite via `--smoke-bubble-resolvers`.
 
 ### AI Enrichment
 
@@ -335,20 +350,29 @@ web-change-tracker/
 ├── bubble/
 │   ├── client.py            # Bubble Data API client (read/write endpoints)
 │   ├── lookups.py           # Read-only lookups: trees, tree nodes, calendar items, resources (cached)
-│   ├── payload.py           # Bubble payload building, link association, context helpers
+│   ├── payload.py           # Bubble payload building, link association, context helpers, PDF meeting meta
 │   ├── schemas.py           # Resource & Calendar Item schema field definitions
 │   ├── enrich_refs.py       # Reference enrichment: resolve Organization, NAIC Group, Type1, topic, calendar links
+│   ├── reference_resolution.py  # Report resolution decisions and evidence for debugging
 │   ├── snapshot.py          # Build Bubble snapshot (trees, nodes, calendar, resources) for E2E
 │   ├── mapping_context.py   # Extract candidate tree nodes / calendar items from snapshot for AI
 │   ├── ai_enrichment.py     # OpenAI enrichment for Bubble payloads (with snapshot context)
 │   ├── openai_client.py     # OpenAI Responses API client
 │   ├── ssm_loader.py        # Load OpenAI settings from SSM in prod
 │   ├── doctor.py            # CLI: list-trees, dump-tree, find-node, find-calendar (read-only)
+│   ├── healthcheck.py       # Read-only Bubble API healthcheck (BUBBLE_API_URL/BUBBLE_API_KEY)
 │   └── schema_exports/      # CSV exports for validation & examples
+├── scripts/
+│   ├── bubble_resolver_smoke.py  # Smoke-test NAIC Group → Calendar resolver against LIVE Bubble
+│   ├── deploy.sh                 # Build Docker, push ECR, terraform apply
+│   ├── validate_bubble_api.sh    # Validate Bubble API endpoints (trees, nodes, calendar, resources)
+│   └── run-local.sh
 ├── config/
 │   └── run_spec.py         # RunSpec: compute_run_spec, validate_run_spec, render_run_spec_summary
 ├── schema_loader.py         # Bubble schema loading from CSV exports
 ├── emailer.py               # Optional SES email when changes detected
+├── scrape/
+│   └── pdf_meeting_meta.py  # Extract meeting metadata from PDFs (date, group, times)
 ├── targets.json             # Target config with extract rules
 ├── Dockerfile
 ├── requirements.txt
@@ -358,7 +382,7 @@ web-change-tracker/
 ├── last_bubble_calendar_items.json
 ├── last_bubble_report.json  # Combined counts, web_urls, payloads
 ├── snapshots/               # Test mode: saved snapshots per target (gitignored)
-├── debug/                   # E2E/AI debug: bubble_snapshot.json, ai_inputs_*.jsonl, ai_outputs_*.jsonl
+├── debug/                   # E2E/AI debug: bubble_snapshot.json, reference_resolution_report.json, pdf_meeting_meta.json, ai_inputs_*.jsonl, ai_outputs_*.jsonl
 ├── infra/terraform/         # Terraform: ECS Fargate, EventBridge, DynamoDB, S3, IAM
 ├── prompts/                 # Prompt templates for AI enrichment
 └── tests/
@@ -378,9 +402,10 @@ End-to-end testing depends on real site changes, so we rely on layered testing:
 | Strategy | Description |
 |----------|-------------|
 | **Snapshot test mode** | `--snapshot-dir` saves content per target; `--compare-snapshot` compares against snapshots. Edit snapshot files to simulate changes without waiting for site updates. Works with `USE_PLAYWRIGHT=0` (requests fallback). Use `--simulate-change` for deterministic diffs. |
-| **Unit tests** | `test_bubble_payload.py` (payload building, link association), `test_ai_enrichment_contract.py` (schema/output checks, mocked), `test_enrich_refs.py` (infer_naic_group_path, classify_resource_type_deterministic, apply_ai_classification), `test_report.py`, `test_ai_review.py` |
+| **Unit tests** | `test_bubble_payload.py` (payload building, link association), `test_ai_enrichment_contract.py` (schema/output checks, mocked), `test_enrich_refs.py` (reference resolution, NAIC group, calendar linking), `test_report.py`, `test_ai_review.py` |
 | **E2E Bubble** | `--e2e-bubble` builds a Bubble snapshot and passes it into payload mapping and AI enrichment; no Bubble write endpoints are called. Debug artifacts written to `debug/`. |
 | **Integration tests** | Against static snapshots; fixtures in `tests/fixtures/` |
+| **Resolver smoke** | `scripts/bubble_resolver_smoke.py` or `--smoke-bubble-resolvers` runs NAIC Group → Calendar resolver against LIVE Bubble |
 | **Manual test plan** | Deploy to dev, add test target, trigger run, verify email and state |
 
 ---
@@ -412,8 +437,12 @@ End-to-end testing depends on real site changes, so we rely on layered testing:
 - [x] Bubble reference enrichment: Organization, NAIC Group, Type1, topic suggestion, Related calendar (deterministic + optional AI)
 - [x] Bubble snapshot + E2E mode: `--e2e-bubble`, snapshot passed into mapping/AI; debug artifacts under `debug/`
 - [x] Bubble Doctor CLI: `python -m bubble.doctor` (list-trees, dump-tree, find-node, find-calendar)
+- [x] Resolver smoke script: `scripts/bubble_resolver_smoke.py`; `--smoke-bubble-resolvers` flag
 - [x] `--emit-bubble-json`, `--bubble-report`, `--bubble-enrich`, `--no-ai`, `--ai-enrich`, `--e2e-bubble`, `--print-bubble-schema` CLI flags
 - [x] Optional OpenAI enrichment for Bubble payloads (Type, NAIC Group, topic, etc.); mapping context from snapshot when available
+- [x] PDF meeting meta extraction (date, group, times) with quality gates; `debug/pdf_meeting_meta.json`
+- [x] Reference resolution report (`debug/reference_resolution_report.json`) with evidence
+- [x] Deployment script: `scripts/deploy.sh` (Docker build, ECR push, Terraform apply)
 
 **Remaining (AWS):**
 
@@ -449,7 +478,7 @@ Required env vars for Docker (see `.env.example`):
 - **State backend:** `STATE_BACKEND=local` (default) for `state.json`; `STATE_BACKEND=dynamodb` + `STATE_TABLE` for production.
 - **Changelog:** `CHANGELOG_BUCKET`, `CHANGELOG_PREFIX` (default `changelog/`) to append events to S3.
 - **Email:** `SEND_EMAIL`, `FROM_EMAIL`, `TO_EMAILS`, `SES_REGION`; `DRY_RUN=true` to test without sending.
-- **Bubble / AI enrichment:** `OPENAI_API_KEY` (required when enrichment runs); `OPENAI_MODEL`, `OPENAI_REASONING_EFFORT` (see AI Enrichment section). For Bubble read lookups and E2E snapshot: `BUBBLE_API_URL`, `BUBBLE_API_KEY` (see `bubble/client.py`).
+- **Bubble / AI enrichment:** `OPENAI_API_KEY` (required when enrichment runs); `OPENAI_MODEL`, `OPENAI_REASONING_EFFORT` (see AI Enrichment section). For Bubble read lookups and E2E snapshot: `BUBBLE_API_URL`, `BUBBLE_API_KEY` (see `bubble/client.py`). **BUBBLE_API_URL** must be the exact root from Bubble's API settings (Settings → API). Custom domains often use `https://your-domain.com/api/1.1/obj` (no `/live`); bubbleapps.io often uses `https://your-app.bubbleapps.io/live/api/1.1/obj`. No spaces after `=` in `.env`.
 - **AWS:** `AWS_REGION`, credentials when using DynamoDB/S3/SES.
 
 Or use the script:
@@ -457,6 +486,16 @@ Or use the script:
 ```bash
 ./scripts/run-local.sh
 ```
+
+**Deploy (ECS Fargate):**
+
+```bash
+./scripts/deploy.sh              # Build, push ECR, terraform apply
+./scripts/deploy.sh --run-task   # Same + run one ECS task after apply
+./scripts/deploy.sh --tag v1.2   # Use custom image tag
+```
+
+Requires Terraform outputs (region, ECR URL) from `infra/terraform`. See `infra/terraform/README.md` for SSM parameters (Bubble API, OpenAI).
 
 **CI (e.g. GitHub Actions):**
 

@@ -291,18 +291,25 @@ def search_calendar_items_by_naic_group(
     date_iso: str | None = None,
     window_days: int = 7,
     limit: int = 50,
-) -> list[dict]:
+) -> tuple[list[dict], dict]:
     """
     Return Calendar items whose "NAIC Group (tree node)" equals the given node ID.
 
     If date_iso is provided, also constrains date to ±window_days.
     If date_iso is None, returns upcoming items (date > today) capped at limit.
+
+    Returns (results, meta) where meta includes the constraints JSON sent to Bubble
+    and any error information for auditing.
     """
+    meta: dict = {"naic_group_node_id": naic_group_node_id, "date_iso": date_iso,
+                  "window_days": window_days, "limit": limit}
     if not naic_group_node_id or not str(naic_group_node_id).strip():
-        return []
+        meta["error"] = "empty_node_id"
+        return [], meta
     constraints: list[dict] = [
         {"key": "NAIC Group (tree node)", "constraint_type": "equals", "value": naic_group_node_id},
     ]
+    date_mode = "no_date_upcoming"
     if date_iso and str(date_iso).strip():
         try:
             dt = datetime.fromisoformat(str(date_iso).strip().replace("Z", "+00:00")[:10])
@@ -315,18 +322,32 @@ def search_calendar_items_by_naic_group(
             high = (dt + timedelta(days=window_days)).strftime("%Y-%m-%d")
             constraints.append({"key": "date", "constraint_type": "greater than", "value": low})
             constraints.append({"key": "date", "constraint_type": "less than", "value": high})
+            date_mode = "date_window"
+            meta["date_low"] = low
+            meta["date_high"] = high
+        else:
+            date_mode = "date_parse_failed_fallback_upcoming"
+            today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+            constraints.append({"key": "date", "constraint_type": "greater than", "value": today})
     else:
         today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
         constraints.append({"key": "date", "constraint_type": "greater than", "value": today})
+    meta["date_mode"] = date_mode
+    meta["constraints"] = constraints
     try:
         client = _client()
         out = client.search(TYPE_CALENDAR_ITEM, constraints=constraints, limit=limit)
-        return out.get("results", []) or []
+        results = out.get("results", []) or []
+        meta["result_count"] = len(results)
+        return results, meta
     except BubbleAPIError:
         raise
     except Exception as e:
+        import traceback
         log.warning("search_calendar_items_by_naic_group failed: %s", e)
-        return []
+        meta["error"] = str(e)
+        meta["traceback"] = traceback.format_exc()
+        return [], meta
 
 
 def find_resources_by_url(url: str) -> list[dict]:

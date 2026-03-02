@@ -334,9 +334,12 @@ _PUNCT_RE = re.compile(r"[^\w\s]")
 def _normalize_for_matching(name: str) -> str:
     """Normalize a node/label name for fuzzy matching.
 
-    Lowercase, strip parenthesised codes like (E), remove punctuation, collapse whitespace.
+    Lowercase, strip parenthesised codes like (E), replace hyphens with spaces
+    (so "Risk-Based" and "Risk Based" both become "risk based"),
+    remove remaining punctuation, collapse whitespace.
     """
     s = _PARENS_RE.sub(" ", name)
+    s = s.replace("-", " ")
     s = _PUNCT_RE.sub("", s)
     s = re.sub(r"\s+", " ", s).strip().lower()
     return s
@@ -439,6 +442,47 @@ def _resolve_naic_group_node(
                      label, len(substring_matches),
                      [(r, n) for r, n, _ in substring_matches[:5]])
         return None, evidence
+
+    # Token-overlap fallback: score each node by Jaccard-like overlap of word tokens.
+    # Handles labels that differ by a word or two (e.g. missing "and").
+    TOKEN_OVERLAP_THRESHOLD = 0.75
+    label_tokens = set(norm_label.split())
+    if len(label_tokens) >= 3:
+        scored: list[tuple[float, str, str, str]] = []
+        for norm_key, entries in node_map.items():
+            node_tokens = set(norm_key.split())
+            if not node_tokens:
+                continue
+            intersection = label_tokens & node_tokens
+            union = label_tokens | node_tokens
+            score = len(intersection) / len(union) if union else 0.0
+            if score >= TOKEN_OVERLAP_THRESHOLD:
+                for raw, nid in entries:
+                    scored.append((score, raw, nid, norm_key))
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        evidence["token_scored_top5"] = [
+            {"raw": raw, "id": nid, "score": round(sc, 3)} for sc, raw, nid, _ in scored[:5]
+        ]
+
+        if len(scored) == 1 or (len(scored) > 1 and scored[0][0] - scored[1][0] >= 0.05):
+            best_score, raw_name, nid, _ = scored[0]
+            evidence["match_type"] = "token_overlap"
+            evidence["token_overlap_score"] = round(best_score, 3)
+            evidence["candidate_matches"] = [(raw, nid_) for _, raw, nid_, _ in scored]
+            evidence["chosen_raw_name"] = raw_name
+            evidence["chosen_node_id"] = nid
+            log.info("NAIC group resolved: '%s' -> '%s' (id=%s) [token_overlap=%.3f]",
+                     label, raw_name, nid, best_score)
+            return nid, evidence
+
+        if len(scored) > 1 and scored[0][0] - scored[1][0] < 0.05:
+            evidence["match_type"] = "token_overlap_ambiguous"
+            evidence["failure"] = "ambiguous_token_matches"
+            evidence["candidate_matches"] = [(raw, nid_) for _, raw, nid_, _ in scored]
+            log.warning("NAIC group token-overlap ambiguous for '%s': top scores %s",
+                        label, [(round(s, 3), r) for s, r, _, _ in scored[:3]])
+            return None, evidence
 
     evidence["match_type"] = "none"
     evidence["failure"] = "no_match"
@@ -939,7 +983,6 @@ def _resolve_calendar_by_naic_group(
 
     if bubble_snapshot:
         all_items = bubble_snapshot.get("calendar_items") or []
-        # Filter by NAIC Group (tree node) field
         group_items = []
         for c in all_items:
             naic_ref = c.get("NAIC Group (tree node)")
@@ -947,6 +990,7 @@ def _resolve_calendar_by_naic_group(
                 group_items.append(c)
             elif isinstance(naic_ref, list) and group_node_id in naic_ref:
                 group_items.append(c)
+        snapshot_date_mode = "no_date_upcoming"
         if has_date:
             from datetime import datetime as _dt, timedelta as _td, timezone as _tz
             try:
@@ -959,9 +1003,12 @@ def _resolve_calendar_by_naic_group(
                     c for c in group_items
                     if isinstance(c.get("date"), str) and low <= c["date"][:10] <= high
                 ]
+                snapshot_date_mode = "date_window"
+                evidence["date_low"] = low
+                evidence["date_high"] = high
             except (ValueError, TypeError):
-                pass
-        else:
+                snapshot_date_mode = "date_parse_failed_fallback_upcoming"
+        if snapshot_date_mode != "date_window":
             from datetime import datetime as _dt, timezone as _tz
             today = _dt.now(tz=_tz.utc).strftime("%Y-%m-%d")
             group_items = [
@@ -969,14 +1016,19 @@ def _resolve_calendar_by_naic_group(
                 if isinstance(c.get("date"), str) and c["date"][:10] >= today
             ]
             group_items = group_items[:no_date_cap]
+            evidence["fallback_no_date"] = True
+        evidence["date_mode"] = snapshot_date_mode
         items = group_items
     else:
-        items = lookups.search_calendar_items_by_naic_group(
+        items, lookup_meta = lookups.search_calendar_items_by_naic_group(
             group_node_id,
             date_iso=date_iso if has_date else None,
             window_days=window_days,
             limit=50 if has_date else no_date_cap,
         )
+        evidence["bubble_lookup_meta"] = lookup_meta
+        if not has_date and items:
+            evidence["fallback_no_date"] = True
 
     evidence["candidate_count"] = len(items)
     candidates_detail: list[dict] = []

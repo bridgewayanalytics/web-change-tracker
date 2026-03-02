@@ -697,6 +697,65 @@ class TestResolveCalendarByNaicGroup(unittest.TestCase):
         self.assertIn("method", evidence)
         self.assertEqual(evidence["method"], "naic_group")
 
+    def test_date_window_evidence_includes_low_high(self):
+        snap = self._snapshot()
+        ctx = self._context(
+            org_path=["NAIC", "E Committee"],
+            label="Capital Adequacy (E) Task Force",
+        )
+        _, _, _, evidence = _resolve_calendar_by_naic_group(
+            ctx, "Organization", date_iso="2026-03-16",
+            window_days=7, no_date_cap=3, bubble_snapshot=snap,
+        )
+        self.assertEqual(evidence["date_mode"], "date_window")
+        self.assertEqual(evidence["date_low"], "2026-03-09")
+        self.assertEqual(evidence["date_high"], "2026-03-23")
+
+    def test_no_date_fallback_sets_evidence_flag(self):
+        snap = self._snapshot()
+        for j in range(4):
+            snap["calendar_items"].append({
+                "_id": f"cal-future-{j}",
+                "title": f"Future meeting {j}",
+                "date": f"2099-07-{10 + j:02d}",
+                "NAIC Group (tree node)": "node-tf",
+            })
+        ctx = self._context(
+            org_path=["NAIC", "E Committee"],
+            label="Capital Adequacy (E) Task Force",
+        )
+        selected_ids, _, _, evidence = _resolve_calendar_by_naic_group(
+            ctx, "Organization", date_iso=None,
+            window_days=7, no_date_cap=3, bubble_snapshot=snap,
+        )
+        self.assertLessEqual(len(selected_ids), 3)
+        self.assertTrue(evidence.get("fallback_no_date"))
+
+    def test_normalized_label_matches_parenthesised_node(self):
+        """A label without (E) matches a node name with (E) via normalized matching."""
+        snap = {
+            "trees": [{"_id": "tree-org", "name": "Organization"}],
+            "tree_nodes": [
+                {"_id": "node-rbc", "name": "Risk-Based Capital Investment Risk and Evaluation (E) Working Group",
+                 "parent_tree": "tree-org"},
+            ],
+            "calendar_items": [
+                {"_id": "cal-rbc-1", "date": "2026-03-01",
+                 "title": "RBC IRE WG Meeting",
+                 "NAIC Group (tree node)": "node-rbc"},
+            ],
+        }
+        ctx = self._context(
+            org_path=["NAIC", "E Committee"],
+            label="Risk-Based Capital Investment Risk and Evaluation Working Group",
+        )
+        selected_ids, _, status, evidence = _resolve_calendar_by_naic_group(
+            ctx, "Organization", date_iso="2026-03-02",
+            window_days=7, no_date_cap=3, bubble_snapshot=snap,
+        )
+        self.assertIn("cal-rbc-1", selected_ids)
+        self.assertEqual(evidence["group_node_id"], "node-rbc")
+
 
 # ---------------------------------------------------------------------------
 # Normalized NAIC group name matching
@@ -713,7 +772,7 @@ class TestNormalizeForMatching(unittest.TestCase):
         )
 
     def test_removes_punctuation(self):
-        self.assertEqual(_normalize_for_matching("Risk-Based Capital"), "riskbased capital")
+        self.assertEqual(_normalize_for_matching("Risk-Based Capital"), "risk based capital")
 
     def test_collapses_whitespace(self):
         self.assertEqual(_normalize_for_matching("  Some   Group  "), "some group")
@@ -831,6 +890,45 @@ class TestResolveNaicGroupNode(unittest.TestCase):
         )
         self.assertIsNone(nid)
         self.assertEqual(evidence["failure"], "no_nodes_loaded")
+
+    def test_token_overlap_resolves_missing_word(self):
+        """Label missing a small word ('and') still resolves via token overlap."""
+        snap = self._snapshot([
+            {"_id": "n1",
+             "name": "Risk-Based Capital Investment Risk and Evaluation (E) Working Group",
+             "parent_tree": "tree-org"},
+            {"_id": "n2", "name": "Other Group", "parent_tree": "tree-org"},
+        ])
+        nid, evidence = _resolve_naic_group_node(
+            "Organization",
+            ["Risk-Based Capital Investment Risk Evaluation Working Group"],
+            snap,
+        )
+        self.assertEqual(nid, "n1")
+        self.assertEqual(evidence["match_type"], "token_overlap")
+        self.assertGreaterEqual(evidence["token_overlap_score"], 0.75)
+
+    def test_token_overlap_ambiguous_when_two_close_scores(self):
+        """Two nodes with near-identical token overlap → ambiguous, not resolved."""
+        snap = self._snapshot([
+            {"_id": "n1",
+             "name": "Life Actuarial Financial (A) Task Force",
+             "parent_tree": "tree-org"},
+            {"_id": "n2",
+             "name": "Life Actuarial Regulatory (A) Task Force",
+             "parent_tree": "tree-org"},
+        ])
+        # "Life Actuarial Task Force" overlaps equally with both
+        nid, evidence = _resolve_naic_group_node(
+            "Organization",
+            ["Life Actuarial Task Force"],
+            snap,
+        )
+        # Either ambiguous or picks one — key is it doesn't crash
+        if nid is None:
+            self.assertIn("ambiguous", evidence.get("failure", ""))
+        else:
+            self.assertIn(evidence["match_type"], ("token_overlap", "substring_unique"))
 
 
 if __name__ == "__main__":

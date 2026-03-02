@@ -2207,10 +2207,12 @@ def _run_smoke_bubble_resolvers() -> int:
         if not nid:
             _record(f"Calendar for \"{label}\"", True, "skipped (group not resolved)")
             continue
-        cal_items = lookups.search_calendar_items_by_naic_group(nid)
+        cal_items, cal_meta = lookups.search_calendar_items_by_naic_group(nid)
         count = len(cal_items)
+        constraints_json = cal_meta.get("constraints", [])
         if count == 0:
             print(f"  [WARN] Calendar for \"{label}\": 0 items (group_id={nid})")
+            print(f"         constraints: {constraints_json}")
             results.append((f"Calendar for \"{label}\"", True, f"0 items (warning)"))
         else:
             _record(f"Calendar for \"{label}\"", True, f"{count} item(s)")
