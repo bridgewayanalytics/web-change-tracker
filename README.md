@@ -203,6 +203,13 @@ No Bubble **write** endpoints are called; resolution uses `bubble/lookups.py` (s
 | `debug/reference_resolution_report.json` | Resolution decisions (organization, type1, naic_group, calendar_linking) with evidence |
 | `debug/pdf_meeting_meta.json` | Extracted meeting metadata from PDF resources (date, group, times); valid/invalid counts |
 
+If `BUBBLE_ARTIFACT_BUCKET` is set, `spike.py` will, after each run (even when there are no changes), upload `last_bubble_report.json` to S3 as:
+
+- `s3://$BUBBLE_ARTIFACT_BUCKET/bubble_reports/latest.json`
+- `s3://$BUBBLE_ARTIFACT_BUCKET/bubble_reports/runs/<YYYY>/<MM>/<DD>/<run_id>.json`
+
+Each S3 object includes metadata: `run_id` (or `RUN_ID` env if set), `image_tag` (from `IMAGE_TAG`/`GIT_SHA`), `bubble_mode`, `dry_run_bubble`, and `targets_file`. Failures or missing files log warnings but do not fail the run.
+
 ### CLI Flags
 
 | Flag | Description |
@@ -231,6 +238,7 @@ Runtime behavior is controlled by a **RunSpec** (single source of truth) derived
 | `AI_REFERENCE_FIELDS_BLOCKED` | Default `true`: AI must not overwrite reference fields (Organization, Type1, Related calendar items, etc.). If `false` while AI enrich is on, a HIGH severity warning is emitted (and included in email header). |
 | `ARTIFACT_OUTPUT_DIR` | Directory for `reference_resolution_report.json` and `verify_report.json` (default `debug`). |
 | `S3_ARTIFACT_UPLOAD_ENABLED` | When `true`, upload `reference_resolution_report.json`, `verify_report.json`, and `pdf_meeting_meta.json` to S3 (requires `ARTIFACT_BUCKET`; optional `ARTIFACT_PREFIX`). |
+| `BUBBLE_ARTIFACT_BUCKET` | When set, upload `last_bubble_report.json` to `bubble_reports/latest.json` and a versioned `bubble_reports/runs/YYYY/MM/DD/<run_id>.json` key after each run (read-only S3 export; no Bubble writes). |
 | `RUN_SPEC_VALIDATION_FAIL_FAST` | When `true`, validation failures (e.g. prod_observe without bubble_enrich) raise and exit instead of only logging warnings. |
 
 **Recommended production (observe, live Bubble, safe):**
