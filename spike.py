@@ -234,6 +234,87 @@ def _normalize_href_to_absolute(href: str, base_url: str) -> str | None:
     return urljoin(base_url, href)
 
 
+def _upload_bubble_report_to_s3(
+    run_timestamp: int,
+    run_spec,  # RunSpec, but keep untyped here to avoid circular import
+    targets_file: Path,
+) -> None:
+    """
+    If BUBBLE_ARTIFACT_BUCKET is set and last_bubble_report.json exists, upload it to S3:
+      - s3://$BUBBLE_ARTIFACT_BUCKET/bubble_reports/latest.json
+      - s3://$BUBBLE_ARTIFACT_BUCKET/bubble_reports/runs/YYYY/MM/DD/<run_id>.json
+
+    Includes S3 object metadata for run_id, image_tag/git_sha (if present), bubble_mode,
+    dry_run_bubble, and targets_file. Logs warnings on failure, but never raises.
+    """
+    bucket = (os.environ.get("BUBBLE_ARTIFACT_BUCKET") or "").strip()
+    if not bucket:
+        return
+
+    if not BUBBLE_REPORT_FILE.exists():
+        log.warning(
+            "Bubble report upload skipped: %s does not exist (nothing to upload)",
+            BUBBLE_REPORT_FILE,
+        )
+        return
+
+    try:
+        import boto3
+        from datetime import datetime, timezone
+    except Exception as e:  # pragma: no cover - boto3/import issues are non-fatal
+        log.warning("Bubble report upload skipped: boto3 not available (%s)", e)
+        return
+
+    try:
+        region = os.environ.get("AWS_REGION", "us-east-1")
+        client = boto3.client("s3", region_name=region)
+
+        dt = datetime.fromtimestamp(run_timestamp, tz=timezone.utc)
+
+        # Prefer an explicit RUN_ID if provided; fall back to timestamp-based ID.
+        run_id = (os.environ.get("RUN_ID") or "").strip() or f"run-{run_timestamp}"
+
+        # Try to capture an image tag / git sha if deployment has set one.
+        image_tag = (
+            (os.environ.get("IMAGE_TAG") or "").strip()
+            or (os.environ.get("GIT_SHA") or "").strip()
+        )
+
+        bubble_mode = getattr(run_spec, "bubble_mode", None)
+        dry_run_bubble = getattr(run_spec, "dry_run_bubble", None)
+
+        metadata: dict[str, str] = {
+            "run_id": str(run_id),
+            "bubble_mode": str(bubble_mode),
+            "dry_run_bubble": str(dry_run_bubble).lower(),
+            "targets_file": str(targets_file),
+        }
+        if image_tag:
+            metadata["image_tag"] = image_tag
+
+        body = BUBBLE_REPORT_FILE.read_bytes()
+
+        latest_key = "bubble_reports/latest.json"
+        versioned_key = (
+            f"bubble_reports/runs/{dt.year:04d}/{dt.month:02d}/{dt.day:02d}/{run_id}.json"
+        )
+
+        for key in (latest_key, versioned_key):
+            try:
+                client.put_object(
+                    Bucket=bucket,
+                    Key=key,
+                    Body=body,
+                    ContentType="application/json",
+                    Metadata=metadata,
+                )
+                log.info("Uploaded Bubble report to s3://%s/%s", bucket, key)
+            except Exception as e:
+                log.warning("Bubble report upload failed for s3://%s/%s: %s", bucket, key, e)
+    except Exception as e:  # pragma: no cover - defensive catch-all
+        log.warning("Bubble report upload encountered an unexpected error: %s", e)
+
+
 def _path_matches_extension(path: str, extensions: list[str]) -> bool:
     """Check if path ends with any extension. Path is from urlparse (no query). E.g. /doc.pdf?x=y -> path /doc.pdf."""
     path_lower = (path or "").lower()
@@ -2500,6 +2581,10 @@ def main() -> None:
 
     REPORT_FILE.write_text(report, encoding="utf-8")
     log.info("Report written to %s", REPORT_FILE)
+
+    # After a successful run (even if no changes), optionally upload last_bubble_report.json to S3
+    # when BUBBLE_ARTIFACT_BUCKET is set. This is read-only: no Bubble writes are performed.
+    _upload_bubble_report_to_s3(run_timestamp, run_spec, args.targets_file)
 
     # Only send email when EMAIL_ENABLED=true and there are meaningful changes (targets_changed > 0)
     events_with_meaningful_changes = [
