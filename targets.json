@@ -377,5 +377,19 @@
     "extract": [
       { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } }
     ]
+  },
+
+  {
+    "id": "naic.resource_center",
+    "label": "NAIC Resource Center",
+    "org_id": "naic",
+    "org_path": ["NAIC", "Resource Center"],
+    "group": "resource_center",
+    "tags": ["resources"],
+    "url": "https://content.naic.org/resource-center",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call", "notice", "release"] } }
+    ]
   }
 ]

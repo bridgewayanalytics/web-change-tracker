@@ -1801,6 +1801,17 @@ def _build_bubble_payloads(
         except Exception as e:
             log.warning("Bubble reference enrichment failed, using payloads as-is: %s", e)
 
+    # Build calendar alerts from newly-detected resources and attach to calendar items.
+    # Safe even when the Bubble Calendar Item type has no "Alerts" field yet —
+    # alerts only appear in local JSON output, never written to Bubble.
+    try:
+        from bubble.calendar_alerts import attach_alerts_to_calendar_items, build_calendar_alerts
+        alerts_by_cal = build_calendar_alerts(resources, resource_context=resource_ctx)
+        if alerts_by_cal:
+            calendar_items = attach_alerts_to_calendar_items(calendar_items, alerts_by_cal)
+    except Exception as e:
+        log.warning("Calendar alert generation failed, continuing without alerts: %s", e)
+
     return (resources, calendar_items)
 
 
@@ -2586,12 +2597,16 @@ def main() -> None:
     # when BUBBLE_ARTIFACT_BUCKET is set. This is read-only: no Bubble writes are performed.
     _upload_bubble_report_to_s3(run_timestamp, run_spec, args.targets_file)
 
-    # Only send email when EMAIL_ENABLED=true and there are meaningful changes (targets_changed > 0)
+    # Only send email when EMAIL_ENABLED=true, there are meaningful changes, and at least one
+    # Resource or Calendar Item in the Bubble payload (avoid empty payload emails).
+    has_payload = bool(resources or calendar_items)
+
+    # "Meaningful changes" at the target level (diffs / first_run / include_hash_changes)
     events_with_meaningful_changes = [
         e for e in change_events if "error" not in e and _has_displayable_changes(e)
     ]
     targets_changed = len(events_with_meaningful_changes)
-    if targets_changed > 0:
+    if targets_changed > 0 and has_payload:
         from emailer import send_report
 
         if LAST_EMAIL_REPORT_FILE.exists():

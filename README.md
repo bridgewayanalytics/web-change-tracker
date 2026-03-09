@@ -325,7 +325,7 @@ When Bubble output is used, the email body includes:
 - **Bubble Resource payload:** JSON block
 - **Bubble Calendar Item payload:** JSON block
 
-Email is sent only when there are meaningful changes (`targets_changed > 0`).
+Email is sent only when there are meaningful changes at the target level **and** at least one new Bubble Resource or Calendar Item (i.e., `targets_changed > 0` and the payload arrays are non-empty).
 
 ---
 

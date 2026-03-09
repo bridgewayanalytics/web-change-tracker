@@ -6,7 +6,7 @@ environment  = "prod"
 
 # Required: SES verified sender and recipients
 email_from = "notifications@yourdomain.com"
-email_to   = "alerts@yourdomain.com"
+email_to   = "alerts@yourdomain.com,Amnon.Levy@bridgewayanalytics.com"
 
 # Optional overrides
 # schedule_expression = "rate(6 hours)"

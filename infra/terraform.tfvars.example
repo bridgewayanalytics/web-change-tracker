@@ -16,7 +16,7 @@ private_subnet_ids = ["subnet-aaaaaaa", "subnet-bbbbbbb"]
 # Email (set enable_ses = true and fill in)
 # enable_ses  = true
 # from_email  = "verified@example.com"
-# to_emails   = "recipient@example.com"
+# to_emails   = "alerts@yourdomain.com,Amnon.Levy@bridgewayanalytics.com"
 
 # Override defaults
 # schedule_expression = "rate(6 hours)"
