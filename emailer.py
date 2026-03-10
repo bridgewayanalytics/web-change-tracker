@@ -50,16 +50,27 @@ def send_report(report: str, targets_changed: int) -> bool:
     try:
         import boto3
         client = boto3.client("ses", region_name=SES_REGION)
-        client.send_email(
-            Source=FROM_EMAIL,
-            Destination={"ToAddresses": TO_EMAILS},
-            Message={
-                "Subject": {"Data": subject, "Charset": "UTF-8"},
-                "Body": {"Text": {"Data": body_text, "Charset": "UTF-8"}},
-            },
-        )
-        print(f"[emailer] Sent report to {TO_EMAILS}")
-        return True
     except Exception as e:
-        print(f"[emailer] Failed to send: {e}")
+        print(f"[emailer] Failed to create SES client: {e}")
         return False
+
+    # Send to each recipient individually so one unverified/invalid address
+    # does not block delivery to the others (SES rejects the entire call if
+    # any recipient is unverified in sandbox mode).
+    any_sent = False
+    for recipient in TO_EMAILS:
+        try:
+            client.send_email(
+                Source=FROM_EMAIL,
+                Destination={"ToAddresses": [recipient]},
+                Message={
+                    "Subject": {"Data": subject, "Charset": "UTF-8"},
+                    "Body": {"Text": {"Data": body_text, "Charset": "UTF-8"}},
+                },
+            )
+            print(f"[emailer] Sent report to {recipient}")
+            any_sent = True
+        except Exception as e:
+            print(f"[emailer] Failed to send to {recipient}: {e}")
+
+    return any_sent
