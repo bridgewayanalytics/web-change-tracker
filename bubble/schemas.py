@@ -71,7 +71,7 @@ RESOURCE_SCHEMA_FIELDS: list[str] = load_bubble_resource_fields(_RESOURCE_CSV_PA
 # NAIC Date/Meeting Type, NAIC Group (legacy), NAIC Group (tree node), Relevant Documents (List of Chronicle Links)
 FULL_CALENDAR_ITEM_SCHEMA_FIELDS: list[str] = [
     "Agenda",
-    "Alerts",
+    "alerts",
     "attached agenda items",
     "color",
     "date",

@@ -1494,11 +1494,17 @@ def process_target(
     debug_extract: bool = False,
     skip_persist: bool = False,
     inject_fakes: bool = False,
+    run_id: str | None = None,
+    run_timestamp: int | None = None,
 ) -> dict:
     """Process one target: fetch, extract, diff, save, print."""
     log.info("--- %s ---", label)
     log.info("Fetching %s...", url)
     html = fetch_page(url)
+    # Archive raw HTML to S3 (non-blocking, skipped if HTML_SNAPSHOT_BUCKET not set)
+    if run_id and run_timestamp:
+        from storage.html_snapshot_s3 import store_html_snapshot
+        store_html_snapshot(html, url, run_id, run_timestamp)
     # dump-html-snapshot and debug-extract stage 1 use this exact html (no modifications)
     if dump_html_snapshot:
         debug_dir = Path("debug")
@@ -1753,7 +1759,7 @@ def _build_bubble_payloads(
     bubble_enrich: bool = False,
     no_ai: bool = False,
     bubble_snapshot: dict | None = None,
-) -> tuple[list[dict], list[dict]]:
+) -> tuple[list[dict], list[dict], dict[str, list[dict]]]:
     """Build Bubble Resource and Calendar Item payloads. Optionally run AI enrichment and reference enrichment."""
     from bubble.payload import (
         build_calendar_item_context,
@@ -1802,8 +1808,9 @@ def _build_bubble_payloads(
             log.warning("Bubble reference enrichment failed, using payloads as-is: %s", e)
 
     # Build calendar alerts from newly-detected resources and attach to calendar items.
-    # Safe even when the Bubble Calendar Item type has no "Alerts" field yet —
-    # alerts only appear in local JSON output, never written to Bubble.
+    # Alerts are built as Bubble Alert objects and attached to calendar items
+    # via the "alerts" list field.
+    alerts_by_cal: dict[str, list[dict]] = {}
     try:
         from bubble.calendar_alerts import attach_alerts_to_calendar_items, build_calendar_alerts
         alerts_by_cal = build_calendar_alerts(resources, resource_context=resource_ctx)
@@ -1812,7 +1819,7 @@ def _build_bubble_payloads(
     except Exception as e:
         log.warning("Calendar alert generation failed, continuing without alerts: %s", e)
 
-    return (resources, calendar_items)
+    return (resources, calendar_items, alerts_by_cal)
 
 
 def _render_bubble_report(resources: list[dict], calendar_items: list[dict]) -> str:
@@ -1947,7 +1954,7 @@ def _write_bubble_payload(
     import json
 
     if resources is None or calendar_items is None:
-        resources, calendar_items = _build_bubble_payloads(
+        resources, calendar_items, _ = _build_bubble_payloads(
             change_events,
             ai_enrich=ai_enrich,
             bubble_enrich=bubble_enrich,
@@ -2058,7 +2065,7 @@ def _run_simulate_change_all(
         except Exception as e:
             log.warning("E2E Bubble snapshot build failed, continuing without snapshot: %s", e)
 
-    resources, calendar_items = _build_bubble_payloads(
+    resources, calendar_items, _ = _build_bubble_payloads(
         change_events,
         ai_enrich=ai_enrich,
         bubble_enrich=bubble_enrich,
@@ -2179,7 +2186,7 @@ def _run_simulate_change(
         except Exception as e:
             log.warning("E2E Bubble snapshot build failed, continuing without snapshot: %s", e)
 
-    resources, calendar_items = _build_bubble_payloads(
+    resources, calendar_items, _ = _build_bubble_payloads(
         [change_event],
         ai_enrich=ai_enrich,
         bubble_enrich=bubble_enrich,
@@ -2405,6 +2412,7 @@ def main() -> None:
 
     from datetime import datetime, timezone
     run_timestamp = int(datetime.now(timezone.utc).timestamp())
+    run_id = (os.environ.get("RUN_ID") or "").strip() or f"run-{run_timestamp}"
     targets = load_targets(args.targets_file)
 
     # Filter by target_id (single) or target_ids if provided
@@ -2474,6 +2482,8 @@ def main() -> None:
                 dump_extracted=args.dump_extracted,
                 dump_html_snapshot=args.dump_html_snapshot,
                 debug_extract=args.debug_extract,
+                run_id=run_id,
+                run_timestamp=run_timestamp,
             )
             # Include org grouping and report options for reporting
             for k in ("org_id", "org_path", "group", "tags", "include_hash_changes"):
@@ -2523,13 +2533,22 @@ def main() -> None:
         add_snapshot_warnings(run_spec, snapshot_stats)
 
     # Always build bubble payloads for the email report (and optional bubble output)
-    resources, calendar_items = _build_bubble_payloads(
+    resources, calendar_items, alerts_by_cal = _build_bubble_payloads(
         change_events,
         ai_enrich=run_spec.ai_enrich_enabled,
         bubble_enrich=run_spec.bubble_enrich_enabled,
         no_ai=args.no_ai,
         bubble_snapshot=bubble_snapshot,
     )
+
+    # Flush alerts to Bubble: create Alert objects + patch Calendar Item.alerts list.
+    # Gated solely by BUBBLE_ALERTS_ENABLED env var (independent of dry_run_bubble).
+    if alerts_by_cal:
+        try:
+            from bubble.calendar_alerts import flush_alerts_to_bubble
+            flush_alerts_to_bubble(calendar_items, alerts_by_cal)
+        except Exception as e:
+            log.warning("Alert flush to Bubble failed (non-fatal): %s", e)
 
     # Verify reference fields against snapshot: drop invalid IDs + warn, or exit non-zero in --e2e-bubble-verify
     if bubble_snapshot is not None:

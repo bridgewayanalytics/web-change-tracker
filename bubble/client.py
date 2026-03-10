@@ -118,7 +118,13 @@ class BubbleClient:
         """Base API URL (read-only)."""
         return self._base_url
 
-    def _request(self, method: str, path: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        params: dict[str, str] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """
         Low-level HTTP request wrapper with structured logging and per-run metrics.
         Logs method, endpoint path (no secrets), status code, and duration.
@@ -147,6 +153,7 @@ class BubbleClient:
                 method,
                 url,
                 params=params,
+                json=json_body,
                 headers=headers,
                 timeout=30,
             )
@@ -299,6 +306,54 @@ class BubbleClient:
                 cursor = out.get("cursor", cursor)
             if cursor is None:
                 break
+
+    # ------------------------------------------------------------------
+    # Write operations — scoped to an explicit allowlist of types/fields
+    # ------------------------------------------------------------------
+
+    # Only these (type_name, operation) pairs are permitted for writes.
+    # Keeps the blast radius small while the system is read-heavy.
+    _WRITE_ALLOWLIST: set[tuple[str, str]] = {
+        ("Alert", "create"),
+        ("Calendar Item", "patch_alerts"),
+    }
+
+    def _assert_write_allowed(self, type_name: str, operation: str) -> None:
+        if (type_name, operation) not in self._WRITE_ALLOWLIST:
+            raise BubbleAPIError(
+                f"Write not allowed: type={type_name!r} operation={operation!r}. "
+                f"Allowed: {self._WRITE_ALLOWLIST}"
+            )
+
+    def create(self, type_name: str, fields: dict[str, Any]) -> str:
+        """
+        Create a new thing of *type_name* with the given fields.
+        Returns the Bubble ``_id`` of the created object.
+
+        Guarded by ``_WRITE_ALLOWLIST``.
+        """
+        self._assert_write_allowed(type_name, "create")
+        path = self._type_path(type_name)
+        data = self._request("POST", path, json_body=fields)
+        # Bubble returns {"id": "<new_id>", "status": "success"} on creation.
+        obj_id = data.get("id") or ""
+        if not obj_id:
+            raise BubbleAPIError(
+                "Bubble create did not return an id",
+                response_snippet=_safe_snippet(data),
+            )
+        return obj_id
+
+    def patch(self, type_name: str, id: str, fields: dict[str, Any], *, scope: str) -> None:
+        """
+        Update (PATCH) specific fields on an existing thing.
+
+        *scope* is a logical label checked against ``_WRITE_ALLOWLIST``
+        (e.g. ``"patch_alerts"``).  This prevents accidental broad writes.
+        """
+        self._assert_write_allowed(type_name, scope)
+        path = f"{self._type_path(type_name)}/{id}"
+        self._request("PATCH", path, json_body=fields)
 
     def clear_cache(self) -> None:
         """Clear the in-memory read cache."""

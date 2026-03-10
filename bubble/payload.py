@@ -143,7 +143,7 @@ def validate_payload(schema_fields: list[str], obj: dict) -> dict:
             "attached agenda items",
             "Relevant Documents",
             "Agenda",
-            "Alerts",
+            "alerts",
             "Organization",
             "Type1",
         ):

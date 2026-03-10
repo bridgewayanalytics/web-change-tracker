@@ -328,7 +328,10 @@ resource "aws_ecs_task_definition" "app" {
       { name = "BUBBLE_ORGANIZATION_TREE", value = "Organization" },
       { name = "BUBBLE_NAIC_GROUP_TREE", value = "Organization" },
       { name = "BUBBLE_TYPE1_TREE", value = "Resources Types" },
-      { name = "BUBBLE_TOPIC_TREE", value = "Chronicles" }
+      { name = "BUBBLE_TOPIC_TREE", value = "Chronicles" },
+      { name = "BUBBLE_ARTIFACT_BUCKET", value = aws_s3_bucket.artifacts.id },
+      { name = "HTML_SNAPSHOT_BUCKET", value = aws_s3_bucket.artifacts.id },
+      { name = "BUBBLE_ALERTS_ENABLED", value = "true" }
     ]
 
     # Bubble credentials from SSM (valueFrom); never in plaintext env. Create params via CLI (see README).
