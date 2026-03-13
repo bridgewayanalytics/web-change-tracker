@@ -1,15 +1,18 @@
 """Tests for bubble.calendar_alerts module."""
 
+import json
 import os
 import unittest
 import unittest.mock
 
 from bubble.calendar_alerts import (
     ALERT_TYPE_LABELS,
+    ALERTS_LOCAL_FILE,
     attach_alerts_to_calendar_items,
     build_calendar_alerts,
     classify_alert_type,
-    flush_alerts_to_bubble,
+    upload_alerts_to_s3,
+    write_alerts_local,
 )
 
 
@@ -74,6 +77,9 @@ class TestBuildCalendarAlerts(unittest.TestCase):
         alert = result["cal_001"][0]
         self.assertEqual(alert["Alert type"], "Agenda Posted")
         self.assertRegex(alert["date"], r"^\d{4}-\d{2}-\d{2}$")
+        # New fields
+        self.assertEqual(alert["Related calendar item"], "cal_001")
+        self.assertEqual(alert["Trigger URL"], "https://ex.com/agenda.pdf")
         # Debug metadata present
         self.assertEqual(alert["__alert_key"], "new_agenda")
         self.assertEqual(alert["__resource_name"], "March Agenda")
@@ -101,6 +107,9 @@ class TestBuildCalendarAlerts(unittest.TestCase):
         self.assertIn("cal_002", result)
         self.assertEqual(len(result["cal_001"]), 1)
         self.assertEqual(len(result["cal_002"]), 1)
+        # Each alert references its own calendar item
+        self.assertEqual(result["cal_001"][0]["Related calendar item"], "cal_001")
+        self.assertEqual(result["cal_002"][0]["Related calendar item"], "cal_002")
 
     def test_uses_section_type_from_context(self):
         resources = [
@@ -169,85 +178,80 @@ class TestAttachAlertsToCalendarItems(unittest.TestCase):
         self.assertEqual(len(result[0]["alerts"]), 1)
 
 
-class TestFlushAlertsToBubble(unittest.TestCase):
-    """Tests for flush_alerts_to_bubble (mocked Bubble client)."""
+class TestWriteAlertsLocal(unittest.TestCase):
+    """Tests for write_alerts_local (local JSON file)."""
 
     def setUp(self):
         self.alerts_by_cal = {
             "cal_001": [
                 {"Alert type": "Agenda Posted", "date": "2026-03-10",
+                 "Related calendar item": "cal_001", "Trigger URL": "https://ex.com/a.pdf",
                  "__alert_key": "new_agenda", "__resource_name": "Agenda", "__resource_url": "https://ex.com/a.pdf"},
             ],
         }
-        self.calendar_items = [{"_id": "cal_001", "title": "Meeting", "alerts": []}]
 
-    @unittest.mock.patch.dict(os.environ, {"BUBBLE_ALERTS_ENABLED": ""}, clear=False)
-    def test_skipped_when_not_enabled(self):
-        result = flush_alerts_to_bubble(self.calendar_items, self.alerts_by_cal)
-        self.assertEqual(result["created"], 0)
-        self.assertEqual(result["patched"], 0)
+    def test_writes_flat_alert_list(self):
+        write_alerts_local(self.alerts_by_cal)
+        self.assertTrue(ALERTS_LOCAL_FILE.exists())
+        data = json.loads(ALERTS_LOCAL_FILE.read_text(encoding="utf-8"))
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["Alert type"], "Agenda Posted")
+        self.assertEqual(data[0]["Related calendar item"], "cal_001")
+        self.assertEqual(data[0]["Trigger URL"], "https://ex.com/a.pdf")
 
-    @unittest.mock.patch.dict(os.environ, {"BUBBLE_ALERTS_ENABLED": "true"}, clear=False)
-    @unittest.mock.patch("bubble.client.get_client")
-    def test_creates_and_patches(self, mock_get_client):
+    def tearDown(self):
+        if ALERTS_LOCAL_FILE.exists():
+            ALERTS_LOCAL_FILE.unlink()
+
+
+class TestUploadAlertsToS3(unittest.TestCase):
+    """Tests for upload_alerts_to_s3 (mocked boto3)."""
+
+    def setUp(self):
+        self.alerts_by_cal = {
+            "cal_001": [
+                {"Alert type": "Agenda Posted", "date": "2026-03-10",
+                 "Related calendar item": "cal_001", "Trigger URL": "https://ex.com/a.pdf",
+                 "__alert_key": "new_agenda", "__resource_name": "Agenda", "__resource_url": "https://ex.com/a.pdf"},
+            ],
+        }
+        self.run_timestamp = 1710300000
+
+    @unittest.mock.patch.dict(os.environ, {"BUBBLE_ARTIFACT_BUCKET": ""}, clear=False)
+    def test_skipped_when_no_bucket(self):
+        result = upload_alerts_to_s3(self.alerts_by_cal, self.run_timestamp)
+        self.assertEqual(result["uploaded"], 0)
+
+    def test_empty_alerts_is_noop(self):
+        result = upload_alerts_to_s3({}, self.run_timestamp)
+        self.assertEqual(result["uploaded"], 0)
+
+    @unittest.mock.patch.dict(os.environ, {"BUBBLE_ARTIFACT_BUCKET": "my-bucket"}, clear=False)
+    def test_uploads_to_s3(self):
+        import importlib
+        import sys
+
+        mock_boto3 = unittest.mock.MagicMock()
         mock_client = unittest.mock.MagicMock()
-        mock_get_client.return_value = mock_client
-        mock_client.create.return_value = "alert_id_001"
-        mock_client.get.return_value = {"alerts": []}
+        mock_boto3.client.return_value = mock_client
 
-        result = flush_alerts_to_bubble(self.calendar_items, self.alerts_by_cal)
+        with unittest.mock.patch.dict(sys.modules, {"boto3": mock_boto3}):
+            # Need to re-import so the function picks up mocked boto3
+            result = upload_alerts_to_s3(self.alerts_by_cal, self.run_timestamp)
 
-        self.assertEqual(result["created"], 1)
-        self.assertEqual(result["patched"], 1)
+        self.assertEqual(result["uploaded"], 2)  # latest + versioned
         self.assertEqual(result["errors"], [])
+        self.assertEqual(mock_client.put_object.call_count, 2)
 
-        # Verify create was called with correct Bubble fields (no __ debug keys)
-        mock_client.create.assert_called_once_with(
-            "Alert", {"Alert type": "Agenda Posted", "date": "2026-03-10"}
-        )
-        # Verify patch was called with alert ID list
-        mock_client.patch.assert_called_once_with(
-            "Calendar Item", "cal_001", {"alerts": ["alert_id_001"]}, scope="patch_alerts"
-        )
+        # Verify keys
+        calls = mock_client.put_object.call_args_list
+        keys = {c.kwargs["Key"] for c in calls}
+        self.assertTrue(any(k == "alerts/latest.json" for k in keys))
+        self.assertTrue(any(k.startswith("alerts/runs/") for k in keys))
 
-    @unittest.mock.patch.dict(os.environ, {"BUBBLE_ALERTS_ENABLED": "true"}, clear=False)
-    @unittest.mock.patch("bubble.client.get_client")
-    def test_appends_to_existing_alerts(self, mock_get_client):
-        mock_client = unittest.mock.MagicMock()
-        mock_get_client.return_value = mock_client
-        mock_client.create.return_value = "alert_id_002"
-        mock_client.get.return_value = {"alerts": ["existing_alert_id"]}
-
-        result = flush_alerts_to_bubble(self.calendar_items, self.alerts_by_cal)
-
-        # Should append new ID after existing
-        mock_client.patch.assert_called_once_with(
-            "Calendar Item", "cal_001",
-            {"alerts": ["existing_alert_id", "alert_id_002"]},
-            scope="patch_alerts",
-        )
-
-    @unittest.mock.patch.dict(os.environ, {"BUBBLE_ALERTS_ENABLED": "true"}, clear=False)
-    @unittest.mock.patch("bubble.client.get_client")
-    def test_create_failure_does_not_raise(self, mock_get_client):
-        from bubble.client import BubbleAPIError
-
-        mock_client = unittest.mock.MagicMock()
-        mock_get_client.return_value = mock_client
-        mock_client.create.side_effect = BubbleAPIError("network error")
-
-        result = flush_alerts_to_bubble(self.calendar_items, self.alerts_by_cal)
-
-        self.assertEqual(result["created"], 0)
-        self.assertEqual(result["patched"], 0)
-        self.assertEqual(len(result["errors"]), 1)
-
-    @unittest.mock.patch.dict(os.environ, {"BUBBLE_ALERTS_ENABLED": "true"}, clear=False)
-    @unittest.mock.patch("bubble.client.get_client")
-    def test_empty_alerts_is_noop(self, mock_get_client):
-        result = flush_alerts_to_bubble(self.calendar_items, {})
-        self.assertEqual(result["created"], 0)
-        mock_get_client.assert_not_called()
+    def tearDown(self):
+        if ALERTS_LOCAL_FILE.exists():
+            ALERTS_LOCAL_FILE.unlink()
 
 
 if __name__ == "__main__":

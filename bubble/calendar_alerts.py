@@ -3,13 +3,17 @@ Build calendar item alerts from newly detected resources.
 
 When a new resource is detected and linked to one or more calendar items
 (via "Related calendar items"), an alert is generated describing the change
-(e.g. "Agenda Posted", "Materials Posted") and attached to those calendar items.
+(e.g. "Agenda Posted", "Materials Posted") and stored in AWS S3.
 
-Alert payloads match the Bubble "Alert" data type:
-    {"Alert type": "<label>", "date": "<ISO-8601 date>"}
+Alert payloads follow the Bubble "Alert" schema with additional fields:
+    {
+        "Alert type": "<label>",
+        "date": "<ISO-8601 date>",
+        "Related calendar item": "<bubble_calendar_item_id>",
+        "Trigger URL": "<url_of_resource_that_triggered_alert>",
+    }
 
-Calendar items reference alerts via a list field:
-    {"alerts": [<alert_id>, ...]}
+Alerts are uploaded to S3 under the alerts/ prefix (same bucket as bubble reports).
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ import logging
 import os
 from collections import defaultdict
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -109,19 +114,25 @@ def build_calendar_alerts(
 
         alert_key = classify_alert_type(res, section_type=section_type)
 
+        resource_url = (res.get("URL") or "").strip()
+
         alert = {
             "Alert type": _alert_type_label(alert_key),
             "date": today_iso,
-            # Debug metadata (stripped before Bubble upload by __ prefix convention)
+            "Related calendar item": None,  # populated per cal_id below
+            "Trigger URL": resource_url,
+            # Debug metadata (stripped before upload by __ prefix convention)
             "__alert_key": alert_key,
             "__resource_name": (res.get("Name") or "Untitled").strip(),
-            "__resource_url": (res.get("URL") or "").strip(),
+            "__resource_url": resource_url,
         }
 
         for cal_id in related_cal_ids:
             if not cal_id:
                 continue
-            alerts_by_cal_id[cal_id].append(alert)
+            cal_alert = dict(alert)
+            cal_alert["Related calendar item"] = cal_id
+            alerts_by_cal_id[cal_id].append(cal_alert)
 
     total = sum(len(v) for v in alerts_by_cal_id.values())
     if total:
@@ -177,112 +188,112 @@ def attach_alerts_to_calendar_items(
 
 
 # ---------------------------------------------------------------------------
-# Bubble write: create Alert objects + patch Calendar Item.alerts
+# S3 upload: store alert payloads in AWS
 # ---------------------------------------------------------------------------
 
+ALERTS_LOCAL_FILE = Path(__file__).resolve().parent.parent / "last_alerts.json"
 
-def flush_alerts_to_bubble(
-    calendar_items: list[dict],
+
+def write_alerts_local(alerts_by_cal_id: dict[str, list[dict]]) -> Path:
+    """
+    Flatten alerts_by_cal_id into a single list and write to last_alerts.json.
+
+    Returns the path to the written file.
+    """
+    import json
+
+    all_alerts: list[dict] = []
+    for alerts in alerts_by_cal_id.values():
+        all_alerts.extend(alerts)
+
+    ALERTS_LOCAL_FILE.write_text(
+        json.dumps(all_alerts, indent=2, ensure_ascii=False), encoding="utf-8",
+    )
+    log.info("Wrote %d alert(s) to %s", len(all_alerts), ALERTS_LOCAL_FILE)
+    return ALERTS_LOCAL_FILE
+
+
+def upload_alerts_to_s3(
     alerts_by_cal_id: dict[str, list[dict]],
+    run_timestamp: int,
 ) -> dict[str, Any]:
     """
-    Create Alert objects in Bubble and attach their IDs to Calendar Items.
+    Write alert payloads to S3, mirroring the bubble report upload pattern.
 
-    For each calendar item that has pending alerts:
-      1. POST each alert to Bubble ``Alert`` type → get back ``_id``
-      2. PATCH the Calendar Item's ``alerts`` list field to append the new IDs
+    Uploads to:
+      - s3://$BUBBLE_ARTIFACT_BUCKET/alerts/latest.json
+      - s3://$BUBBLE_ARTIFACT_BUCKET/alerts/runs/YYYY/MM/DD/<run_id>.json
 
-    Gated by ``BUBBLE_ALERTS_ENABLED`` env var (must be ``1``/``true``/``yes``).
-    This is independent of ``dry_run_bubble`` — alert writes are scoped by the
-    client allowlist (only Alert create + Calendar Item patch_alerts permitted).
+    Gated by ``BUBBLE_ARTIFACT_BUCKET`` env var. Logs warnings on failure, never raises.
 
-    Returns a summary dict: ``{created: int, patched: int, errors: [str]}``.
-    Never raises — logs warnings on per-item failures and continues.
+    Returns a summary dict: ``{uploaded: int, errors: [str]}``.
     """
-    summary: dict[str, Any] = {"created": 0, "patched": 0, "errors": []}
-
-    enabled = os.environ.get("BUBBLE_ALERTS_ENABLED", "").strip().lower() in ("1", "true", "yes")
-    if not enabled:
-        log.debug("flush_alerts_to_bubble skipped: BUBBLE_ALERTS_ENABLED not set")
-        return summary
+    summary: dict[str, Any] = {"uploaded": 0, "errors": []}
 
     if not alerts_by_cal_id:
         return summary
 
-    from bubble.client import BubbleAPIError, get_client
+    # Write local file first
+    write_alerts_local(alerts_by_cal_id)
 
-    try:
-        client = get_client()
-    except Exception as e:
-        msg = f"Cannot flush alerts: Bubble client init failed: {e}"
-        log.warning(msg)
-        summary["errors"].append(msg)
+    bucket = (os.environ.get("BUBBLE_ARTIFACT_BUCKET") or "").strip()
+    if not bucket:
+        log.debug("upload_alerts_to_s3 skipped: BUBBLE_ARTIFACT_BUCKET not set")
         return summary
 
-    for cal_id, alerts in alerts_by_cal_id.items():
-        if not cal_id or not alerts:
-            continue
+    try:
+        import boto3
+    except Exception as e:
+        log.warning("Alert S3 upload skipped: boto3 not available (%s)", e)
+        return summary
 
-        # 1. Create each Alert object in Bubble
-        new_alert_ids: list[str] = []
-        for alert in alerts:
-            bubble_fields = {
-                "Alert type": alert["Alert type"],
-                "date": alert["date"],
-            }
+    try:
+        region = os.environ.get("AWS_REGION", "us-east-1")
+        client = boto3.client("s3", region_name=region)
+
+        dt = datetime.fromtimestamp(run_timestamp, tz=timezone.utc)
+        run_id = (os.environ.get("RUN_ID") or "").strip() or f"run-{run_timestamp}"
+
+        image_tag = (
+            (os.environ.get("IMAGE_TAG") or "").strip()
+            or (os.environ.get("GIT_SHA") or "").strip()
+        )
+
+        metadata: dict[str, str] = {"run_id": str(run_id)}
+        if image_tag:
+            metadata["image_tag"] = image_tag
+
+        body = ALERTS_LOCAL_FILE.read_bytes()
+
+        latest_key = "alerts/latest.json"
+        versioned_key = (
+            f"alerts/runs/{dt.year:04d}/{dt.month:02d}/{dt.day:02d}/{run_id}.json"
+        )
+
+        for key in (latest_key, versioned_key):
             try:
-                alert_id = client.create("Alert", bubble_fields)
-                new_alert_ids.append(alert_id)
-                summary["created"] += 1
-                log.info(
-                    "Created Bubble Alert: id=%s type=%r for calendar_item=%s",
-                    alert_id,
-                    alert["Alert type"],
-                    cal_id,
+                client.put_object(
+                    Bucket=bucket,
+                    Key=key,
+                    Body=body,
+                    ContentType="application/json",
+                    Metadata=metadata,
                 )
-            except BubbleAPIError as e:
-                msg = f"Failed to create Alert for calendar_item={cal_id}: {e}"
+                summary["uploaded"] += 1
+                log.info("Uploaded alerts to s3://%s/%s", bucket, key)
+            except Exception as e:
+                msg = f"Alert upload failed for s3://{bucket}/{key}: {e}"
                 log.warning(msg)
                 summary["errors"].append(msg)
 
-        if not new_alert_ids:
-            continue
-
-        # 2. Read existing alert IDs on the Calendar Item so we append, not overwrite
-        existing_alert_ids: list[str] = []
-        try:
-            cal_obj = client.get("Calendar Item", cal_id)
-            raw = cal_obj.get("alerts") or []
-            if isinstance(raw, list):
-                existing_alert_ids = [a if isinstance(a, str) else a.get("_id", "") for a in raw]
-                existing_alert_ids = [a for a in existing_alert_ids if a]
-        except BubbleAPIError as e:
-            log.warning("Could not read existing alerts for calendar_item=%s: %s", cal_id, e)
-
-        # 3. Patch the Calendar Item with the combined list
-        merged_ids = existing_alert_ids + new_alert_ids
-        try:
-            client.patch(
-                "Calendar Item",
-                cal_id,
-                {"alerts": merged_ids},
-                scope="patch_alerts",
-            )
-            summary["patched"] += 1
-            log.info(
-                "Patched Calendar Item %s: alerts=%s",
-                cal_id,
-                merged_ids,
-            )
-        except BubbleAPIError as e:
-            msg = f"Failed to patch alerts on calendar_item={cal_id}: {e}"
-            log.warning(msg)
-            summary["errors"].append(msg)
+    except Exception as e:
+        msg = f"Alert S3 upload encountered an unexpected error: {e}"
+        log.warning(msg)
+        summary["errors"].append(msg)
 
     log.info(
-        "flush_alerts_to_bubble complete: created=%d patched=%d errors=%d",
-        summary["created"],
-        summary["patched"],
+        "upload_alerts_to_s3 complete: uploaded=%d errors=%d",
+        summary["uploaded"],
         len(summary["errors"]),
     )
     return summary

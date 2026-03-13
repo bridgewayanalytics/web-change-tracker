@@ -2541,14 +2541,13 @@ def main() -> None:
         bubble_snapshot=bubble_snapshot,
     )
 
-    # Flush alerts to Bubble: create Alert objects + patch Calendar Item.alerts list.
-    # Gated solely by BUBBLE_ALERTS_ENABLED env var (independent of dry_run_bubble).
+    # Upload alerts to S3 (same bucket as bubble reports, under alerts/ prefix).
     if alerts_by_cal:
         try:
-            from bubble.calendar_alerts import flush_alerts_to_bubble
-            flush_alerts_to_bubble(calendar_items, alerts_by_cal)
+            from bubble.calendar_alerts import upload_alerts_to_s3
+            upload_alerts_to_s3(alerts_by_cal, run_timestamp)
         except Exception as e:
-            log.warning("Alert flush to Bubble failed (non-fatal): %s", e)
+            log.warning("Alert upload to S3 failed (non-fatal): %s", e)
 
     # Verify reference fields against snapshot: drop invalid IDs + warn, or exit non-zero in --e2e-bubble-verify
     if bubble_snapshot is not None:
