@@ -100,23 +100,69 @@ Limit: 50
 - Check: do different resources on the same calendar item share a topic?
 - Check: does the calendar item title/group predict the topic?
 
+## Phase 3: PDF Content Analysis (Updated after PDF content analysis)
+
+> **Added after initial Bubble metadata analysis.** The original plan focused on Bubble object relationships. This phase evaluates whether the PDFs themselves contain structured agenda information.
+
+### Query 6: PDF resources for content analysis
+**Goal:** Download and parse PDFs to detect agenda structures, reference numbers, and topic names.
+
+```
+Sources:
+  - PDF resources with topic suggestion (from Query 1, filtered to .pdf URLs)
+  - PDF resources referenced by Agenda Items (from resolved_agenda_items)
+Target: 100 unique PDF resources
+```
+
+**Analysis script:** `analysis/pdf_agenda_detection/analyze_pdf_content.py`
+
+**Per-PDF analysis:**
+- Extract text using pypdf + pdfminer.six (existing infrastructure)
+- Detect: agenda header, numbered items, roman numeral items, reference numbers, SSAP refs
+- Detect: group name in PDF header (regex on first page)
+- Detect: Chronicle topic names in full text (string matching against 87 tree node names)
+- Classify structure type: formal_agenda, numbered_list, meeting_minutes, outline, informal, none
+
+**Cross-comparison:**
+- For each resource-agenda item pair: check if BA title keywords and BA Ref # appear in PDF
+- For each resource with topic suggestion: check if assigned topic name appears in PDF text
+- Compute match rates and identify which signals are strongest
+
+### Results (completed)
+
+See `analysis/pdf_agenda_detection/pdf_detection_stats.md` for full statistics.
+
+Key findings:
+- 84.6% of PDFs contain numbered items
+- 36.3% contain extractable reference numbers (highest-precision signal)
+- 78.0% contain at least one Chronicle topic name
+- But only 31.9% contain the *specific* topic assigned in Bubble
+- PDF ref # extraction + Bubble Agenda Item matching is the strongest combined approach
+
 ## Deliverables
 
 1. **`historical_samples.json`** — Clean dataset with resolved names (not just IDs)
-2. **`findings.md`** — Patterns discovered
-3. **`proposed_strategy.md`** — Recommended approach for production
+2. **`findings.md`** — Patterns discovered (updated with PDF analysis)
+3. **`proposed_strategy.md`** — Recommended approach for production (updated with PDF analysis)
+4. **`analysis/pdf_agenda_detection/pdf_sample_dataset.json`** — 100 PDF analysis results
+5. **`analysis/pdf_agenda_detection/pdf_agenda_examples.md`** — Concrete agenda structure examples
+6. **`analysis/pdf_agenda_detection/pdf_detection_stats.md`** — Signal presence rates and match statistics
+7. **`analysis/pdf_agenda_detection/pdf_vs_bubble_comparison.md`** — Side-by-side comparison of PDF vs Bubble signals
 
 ## Execution Notes
 
 - All queries use read-only Bubble client (`client.search()` / `client.list_all()`)
 - Requires `BUBBLE_API_URL` and `BUBBLE_API_KEY` in environment
-- Script: `analysis/agenda_topic_mapping/pull_historical_data.py`
-- If API access unavailable, we can work from the existing 200-item snapshot + S3 archives
+- Scripts:
+  - `analysis/agenda_topic_mapping/pull_historical_data.py` (Bubble metadata)
+  - `analysis/pdf_agenda_detection/analyze_pdf_content.py` (PDF content analysis)
+- PDF downloads require network access to `content.naic.org`
 - No secrets in output files — IDs are not secrets (Bubble object IDs are opaque timestamps)
 
 ## Assumptions
 
 1. The Chronicles tree is the canonical topic taxonomy (not a separate "topics" table)
-2. `attached agenda items` references a Bubble type we haven't mapped yet — the query will reveal its structure
+2. ~~`attached agenda items` references a Bubble type we haven't mapped yet~~ **Resolved:** "Agenda item" is a distinct Bubble data type with BA Ref #, Topics, Resources, Discussed at, Category, etc.
 3. Historical resources in Bubble represent manually curated ground truth suitable for building heuristics
 4. The `parent` field on Resources (org path) is a strong predictor of topic assignment
+5. **(New)** PDF content from NAIC meeting materials is a reliable supplementary signal for agenda item identification, but not sufficient alone for topic selection

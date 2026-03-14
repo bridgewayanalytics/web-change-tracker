@@ -79,18 +79,42 @@ Agenda Items are created ahead of meetings by Bridgeway analysts. They have:
 
 They are **not auto-generated** — they represent editorial analysis.
 
-## Key Finding 5: PDF Content Is Not the Primary Signal for Topic Assignment
+## Key Finding 5: PDF Content Is a Strong Structural Signal, but Noisy for Topic Selection
+
+> **Updated after PDF content analysis** — the original finding stated "PDF Content Is Not the Primary Signal for Topic Assignment." After downloading and parsing 91 PDFs, this finding is revised: PDF content provides **strong structural signals** but remains **noisy for topic selection specifically**.
+
+### What PDF content IS good at (91 PDFs analyzed):
+
+- **84.6%** contain numbered agenda items — extractable structured lists
+- **75.8%** have the NAIC group name in the header — reliable meeting context
+- **44.0%** have an explicit "AGENDA" header — formal agenda identification
+- **36.3%** contain reference numbers (e.g., `Ref #2024-16`) — **high-precision identifiers for Agenda Item matching**
+- **37.4%** contain SSAP references — specificity for accounting standard items
+- **78.0%** contain at least one Chronicle topic name in text
+
+### What PDF content is NOT good at:
+
+- **Topic selection accuracy is low:** Only **31.9%** of PDFs contain the **specific** Chronicle topic that Bubble assigned to the resource. PDFs average 3.4 chronicle topic name matches — too many to pick the right one.
+- **External publications** (EIOPA, IAIS, FSB reports) don't follow NAIC conventions at all
+- **Supporting materials/proposals** lack agenda structure — they're documents *about* one topic, not meeting agendas listing topics
+- **Shared URLs remain a problem:** Multiple resources share the same bulk materials PDF URL
+
+### The revised picture:
+
+PDF content provides two distinct value streams:
+1. **Agenda item matching** via ref # extraction (high precision, medium recall at 36%)
+2. **Candidate narrowing** for topic suggestion (78% have topic hits, but 32% accuracy for the *correct* topic)
+
+PDF URL alone still cannot distinguish agenda items — but **PDF text content** can, via reference numbers.
 
 For the 100 resources with `topic suggestion`:
 - 66 are PDFs, 34 are not
 - Only 17/100 have significant word overlap between topic name and resource Name
-- The `parent` field (org hierarchy) is a stronger predictor of topic than resource title
+- The `parent` field (org hierarchy) is a stronger predictor of topic than resource title alone
 - Meeting materials PDFs from NAIC often have the same URL (bulk materials PDF) but different agenda items
 
 Example: Resources for SAPWG meeting (5 different agenda items) all share the same URL:
 `https://content.naic.org/sites/default/files/national_meeting/Materials-SAPWG-Hearing-8-13-24.pdf`
-
-This means **PDF URL alone cannot distinguish agenda items** — the resource Name (which encodes the specific agenda topic) is the key differentiator.
 
 ## Key Finding 6: The Chronicles Tree Is Manageable
 
@@ -126,7 +150,43 @@ The agenda item association requires understanding:
 2. Which specific agenda item matches the resource title/content
 3. Whether the resource is a new document for an existing agenda item, or something unrelated
 
+## Key Finding 8: NAIC PDFs Have Reliable Agenda Structure (Updated after PDF content analysis)
+
+> **Added after PDF content analysis.**
+
+Analysis of 91 downloadable NAIC PDF resources reveals that meeting agenda PDFs follow consistent structural patterns:
+
+### Four PDF document types identified:
+
+| Type | Frequency | Key Feature |
+|------|-----------|-------------|
+| **Formal NAIC agenda** | 42.9% | "AGENDA" header + numbered items + roll call/adjournment |
+| **Numbered item list** | 41.8% | Numbered items without explicit header |
+| **Supporting materials** | ~10% | Proposals, reports — no agenda structure |
+| **External publications** | ~6% | Non-NAIC documents — no NAIC conventions |
+
+### Concrete SAPWG example (strongest case for PDF-based matching):
+
+A SAPWG meeting agenda PDF contained:
+```
+1. Ref #2024-16: Repacks and Derivative Instruments
+2. Ref #2024-22: ASU 2024-01, Scope Application...
+...
+1. Ref #2022-14: Tax Credits Project
+```
+
+Both Bubble Agenda Items linked to this resource had their ref numbers in the PDF: **100% match rate** via ref # alone.
+
+### Parent committee agendas are multi-topic:
+
+The Capital Adequacy (E) Task Force agenda PDF contained 44 numbered items and **7 distinct Chronicle topic names** in the text:
+- CLOs and ABS, Tax Credit Structures, Short-Term Investments, Collateral Loans, Generator of Economic Scenarios (GOES), NAIC U.S. Government Money Market Funds, Repurchase Agreements
+
+This makes parent committee agendas useful for **detecting which topics are active at a given meeting**, even if they can't select the one "correct" topic for a specific resource.
+
 ## Summary Table
+
+> **Updated after PDF content analysis** — PDF Text Content row revised with empirical data.
 
 | Signal | Availability | Reliability for Topic | Reliability for Agenda Item |
 |--------|-------------|----------------------|---------------------------|
@@ -134,6 +194,9 @@ The agenda item association requires understanding:
 | Parent / Org Path | Always | Medium-High (narrows to group) | Medium (narrows to group, not item) |
 | Calendar Item Title | When linked | High (encodes topics explicitly) | High (encodes topic list) |
 | PDF URL | For PDFs | Low (shared URLs) | Low (shared URLs) |
-| PDF Text Content | For downloadable PDFs | Medium (group name in header) | Medium (may contain ref # in body) |
+| **PDF Text: Ref numbers** | **36% of PDFs** | N/A | **Very High (near-perfect when present)** |
+| **PDF Text: Group header** | **76% of PDFs** | Medium (scoping) | Medium (scoping) |
+| **PDF Text: Agenda items** | **85% of PDFs** | Medium (multi-topic noise) | **High (lists all items at meeting)** |
+| **PDF Text: Chronicle names** | **78% of PDFs** | **Low-Medium (32% correct match)** | Low (too noisy) |
 | NAIC Group | Via enrichment | Medium (many topics per group) | Medium (scopes candidate items) |
 | Agenda Item BA Ref # | In Bubble | N/A | High (exact match if ref # in title) |
