@@ -226,10 +226,38 @@ def extract_topic_tree_nodes(snapshot: dict) -> list[dict[str, Any]]:
     return out[:CANDIDATE_LIST_LIMIT]
 
 
+def extract_agenda_items(snapshot: dict) -> list[dict[str, Any]]:
+    """
+    Agenda Items from snapshot: id, ba_title, naic_title, ref_num, topics, discussed_at.
+    Returns list of {id, ba_title, naic_title, ref_num, topics, discussed_at}.
+    Capped at CANDIDATE_LIST_LIMIT.
+    """
+    items = snapshot.get("agenda_items") or []
+    out: list[dict[str, Any]] = []
+    for a in items:
+        aid = a.get("_id") or a.get("id")
+        if not aid:
+            continue
+        ba_title = (a.get("BA title") or "").strip()
+        naic_title = (a.get("NAIC Title") or "").strip()
+        ref_num = (a.get("BA Ref #") or a.get("Ref #") or "").strip()
+        topics = a.get("Topics") or []
+        discussed_at = a.get("Discussed at list") or a.get("Discussed at")
+        out.append({
+            "id": aid,
+            "ba_title": ba_title,
+            "naic_title": naic_title,
+            "ref_num": ref_num,
+            "topics": topics,
+            "discussed_at": discussed_at,
+        })
+    return out[:CANDIDATE_LIST_LIMIT]
+
+
 def build_mapping_context(snapshot: dict) -> dict[str, Any]:
     """
     Build full mapping context for AI: organization nodes, NAIC group nodes,
-    resource type nodes, topic nodes, calendar items.
+    resource type nodes, topic nodes, calendar items, agenda items.
     All lists truncated to CANDIDATE_LIST_LIMIT with NAIC/relevance preferred.
     """
     return {
@@ -238,4 +266,5 @@ def build_mapping_context(snapshot: dict) -> dict[str, Any]:
         "resource_type_tree_nodes": extract_resource_type_tree_nodes(snapshot),
         "topic_tree_nodes": extract_topic_tree_nodes(snapshot),
         "recent_calendar_items": extract_recent_calendar_items(snapshot),
+        "agenda_items": extract_agenda_items(snapshot),
     }

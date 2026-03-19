@@ -22,12 +22,14 @@ TYPE_TREE = os.environ.get("BUBBLE_TYPE_TREE", "Tree")
 TYPE_TREE_NODE = os.environ.get("BUBBLE_TYPE_TREE_NODE", "Tree node")
 TYPE_CALENDAR_ITEM = os.environ.get("BUBBLE_TYPE_CALENDAR_ITEM", "Calendar item")
 TYPE_RESOURCE = os.environ.get("BUBBLE_TYPE_RESOURCE", "Resource")
+TYPE_AGENDA_ITEM = os.environ.get("BUBBLE_TYPE_AGENDA_ITEM", "Agenda item")
 # Field on Tree node that references the Tree (Bubble may use "Tree" or "parent_tree")
 TREE_NODE_TREE_FIELD = os.environ.get("BUBBLE_TREE_NODE_TREE_FIELD", "parent_tree")
 
 # In-module caches (keyed by cache key string)
 _tree_cache: dict[str, dict] = {}
 _tree_nodes_cache: dict[str, list[dict]] = {}
+_agenda_items_cache: dict[str, list[dict]] = {}
 
 
 def _client() -> "BubbleClient":
@@ -350,6 +352,162 @@ def search_calendar_items_by_naic_group(
         return [], meta
 
 
+def search_agenda_items_by_naic_group(
+    naic_group_node_id: str,
+    limit: int = 100,
+) -> list[dict]:
+    """
+    Return Agenda Items whose 'Discussed at list' or 'Discussed at' includes
+    the given NAIC group node ID.
+
+    Tries 'Discussed at list' first (newer list field), falls back to
+    'Discussed at' (single reference). Results are cached per node ID.
+
+    Returns list of full Agenda Item dicts (each has _id, BA title, Ref #, Topics, etc.).
+    """
+    cache_key = f"agenda_items:{naic_group_node_id}"
+    if cache_key in _agenda_items_cache:
+        return _agenda_items_cache[cache_key]
+    if not naic_group_node_id or not str(naic_group_node_id).strip():
+        return []
+    try:
+        client = _client()
+        # Try "Discussed at list" first (list field — use "contains" for list membership)
+        results: list[dict] = []
+        try:
+            constraints: list[dict] = [
+                {"key": "Discussed at list", "constraint_type": "contains", "value": naic_group_node_id},
+            ]
+            out = client.search(TYPE_AGENDA_ITEM, constraints=constraints, limit=limit)
+            results = out.get("results", []) or []
+        except BubbleAPIError as e:
+            log.debug("Discussed at list query failed (%s), trying Discussed at", e)
+        if not results:
+            # Fallback: "Discussed at" (single reference field)
+            constraints2: list[dict] = [
+                {"key": "Discussed at", "constraint_type": "equals", "value": naic_group_node_id},
+            ]
+            out2 = client.search(TYPE_AGENDA_ITEM, constraints=constraints2, limit=limit)
+            results = out2.get("results", []) or []
+        _agenda_items_cache[cache_key] = results
+        return results
+    except Exception as e:
+        log.warning("search_agenda_items_by_naic_group(%r) failed: %s", naic_group_node_id, e)
+        return []
+
+
+def search_agenda_items_by_ref(
+    ref_number: str,
+    limit: int = 20,
+) -> list[dict]:
+    """
+    Search Agenda Items whose 'BA Ref #' field contains a ref number.
+
+    Uses 'text contains' constraint to handle prefixed/suffixed refs
+    (e.g. searching '2025-22' matches 'RBC-IRE-WG#2025-22').
+    Results are cached per ref number.
+    """
+    cache_key = f"agenda_items_ref:{ref_number}"
+    if cache_key in _agenda_items_cache:
+        return _agenda_items_cache[cache_key]
+    if not ref_number or not str(ref_number).strip():
+        return []
+    try:
+        client = _client()
+        constraints: list[dict] = [
+            {"key": "BA Ref #", "constraint_type": "text contains", "value": ref_number},
+        ]
+        out = client.search(TYPE_AGENDA_ITEM, constraints=constraints, limit=limit)
+        results = out.get("results", []) or []
+        _agenda_items_cache[cache_key] = results
+        return results
+    except BubbleAPIError as e:
+        log.warning("search_agenda_items_by_ref(%r) API error: %s", ref_number, e)
+        return []
+    except Exception as e:
+        log.warning("search_agenda_items_by_ref(%r) failed: %s", ref_number, e)
+        return []
+
+
+def search_agenda_items_by_title(
+    keyword: str,
+    limit: int = 20,
+) -> list[dict]:
+    """
+    Search Agenda Items whose 'BA title' field contains the given keyword.
+
+    Uses 'text contains' constraint for substring matching.
+    Results are cached per keyword.
+    """
+    cache_key = f"agenda_items_title:{keyword}"
+    if cache_key in _agenda_items_cache:
+        return _agenda_items_cache[cache_key]
+    if not keyword or not str(keyword).strip():
+        return []
+    try:
+        client = _client()
+        constraints: list[dict] = [
+            {"key": "BA title", "constraint_type": "text contains", "value": keyword},
+        ]
+        out = client.search(TYPE_AGENDA_ITEM, constraints=constraints, limit=limit)
+        results = out.get("results", []) or []
+        _agenda_items_cache[cache_key] = results
+        return results
+    except BubbleAPIError as e:
+        log.warning("search_agenda_items_by_title(%r) API error: %s", keyword, e)
+        return []
+    except Exception as e:
+        log.warning("search_agenda_items_by_title(%r) failed: %s", keyword, e)
+        return []
+
+
+def search_agenda_items_by_resource(
+    resource_id: str,
+    limit: int = 10,
+) -> list[dict]:
+    """
+    Search Agenda Items whose 'Resources' field contains the given resource ID.
+
+    This is the bidirectional lookup: instead of asking "which agenda items belong
+    to this group?", we ask "which agenda items link to this resource?".
+    Solves retrieval gaps where Discussed at list is empty.
+    """
+    cache_key = f"agenda_items_resource:{resource_id}"
+    if cache_key in _agenda_items_cache:
+        return _agenda_items_cache[cache_key]
+    if not resource_id or not str(resource_id).strip():
+        return []
+    try:
+        client = _client()
+        constraints: list[dict] = [
+            {"key": "Resources", "constraint_type": "contains", "value": resource_id},
+        ]
+        out = client.search(TYPE_AGENDA_ITEM, constraints=constraints, limit=limit)
+        results = out.get("results", []) or []
+        _agenda_items_cache[cache_key] = results
+        return results
+    except BubbleAPIError as e:
+        log.warning("search_agenda_items_by_resource(%r) API error: %s", resource_id, e)
+        return []
+    except Exception as e:
+        log.warning("search_agenda_items_by_resource(%r) failed: %s", resource_id, e)
+        return []
+
+
+def get_agenda_item(item_id: str) -> dict | None:
+    """Fetch a single Agenda Item by ID."""
+    if not item_id or not str(item_id).strip():
+        return None
+    try:
+        client = _client()
+        return client.get(TYPE_AGENDA_ITEM, item_id)
+    except BubbleAPIError:
+        return None
+    except Exception as e:
+        log.warning("get_agenda_item(%r) failed: %s", item_id, e)
+        return None
+
+
 def find_resources_by_url(url: str) -> list[dict]:
     """
     Find all Resource things whose URL equals the given url (for dedupe / matching).
@@ -379,7 +537,8 @@ def find_resources_by_url(url: str) -> list[dict]:
 
 
 def clear_lookups_cache() -> None:
-    """Clear in-module caches for trees and tree nodes (e.g. between runs or after writes)."""
-    global _tree_cache, _tree_nodes_cache
+    """Clear in-module caches for trees, tree nodes, and agenda items."""
+    global _tree_cache, _tree_nodes_cache, _agenda_items_cache
     _tree_cache.clear()
     _tree_nodes_cache.clear()
+    _agenda_items_cache.clear()

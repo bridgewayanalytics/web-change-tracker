@@ -129,6 +129,64 @@ def apply_pdf_meeting_metadata(
             log.warning("Failed to write pdf_meeting_meta.json: %s", e)
 
 
+def apply_pdf_agenda_signals(
+    resources: list[dict],
+    *,
+    artifact_output_dir: str | None = None,
+) -> None:
+    """
+    For PDF resources, download bytes and extract agenda signals (ref numbers,
+    numbered items, group hint, structure type). Stores results as
+    ``__pdf_agenda_signals`` debug key on each resource (stripped before Bubble
+    payload by ``strip_debug_keys``). Mutates resources in place.
+    """
+    if not resources:
+        return
+    try:
+        from scrape.pdf_agenda_signals import extract_agenda_signals_from_bytes, signals_to_dict
+    except ImportError:
+        log.warning("PDF agenda signals: scrape.pdf_agenda_signals not available, skipping")
+        return
+
+    artifact_entries: list[dict] = []
+    extracted_count = 0
+    for r in resources:
+        url = (r.get("URL") or "").strip()
+        vs_type = (r.get("VS Content Type") or "").strip() if isinstance(r.get("VS Content Type"), str) else ""
+        is_pdf = (vs_type and vs_type.upper() == "PDF") or (url.lower().endswith(".pdf") if url else False)
+        if not is_pdf or not url:
+            continue
+        pdf_bytes = _fetch_url_bytes(url, timeout=15)
+        if not pdf_bytes:
+            continue
+        signals = extract_agenda_signals_from_bytes(pdf_bytes)
+        if signals is None:
+            continue
+        signals_dict = signals_to_dict(signals)
+        r["__pdf_agenda_signals"] = signals_dict
+        extracted_count += 1
+        artifact_entries.append({
+            "url": url,
+            "Name": r.get("Name"),
+            "signals": signals_dict,
+        })
+        log.debug(
+            "PDF agenda signals: %s -> %d refs, %d items, structure=%s",
+            url[:60], len(signals.ref_numbers), len(signals.numbered_items), signals.structure_type,
+        )
+
+    log.info("PDF agenda signals: extracted from %d/%d resources", extracted_count, len(resources))
+
+    if artifact_entries and artifact_output_dir:
+        out_path = Path(artifact_output_dir) / "pdf_agenda_signals.json"
+        try:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(json.dumps(artifact_entries, indent=2, ensure_ascii=False), encoding="utf-8")
+            log.info("Wrote PDF agenda signals artifact: %s (%d entries)", out_path, len(artifact_entries))
+        except Exception as e:
+            log.warning("Failed to write pdf_agenda_signals.json: %s", e)
+
+
 def validate_payload(schema_fields: list[str], obj: dict) -> dict:
     """
     Ensure NO extra keys and all schema keys are present.

@@ -1788,6 +1788,15 @@ def _build_bubble_payloads(
         bubble_snapshot=bubble_snapshot,
     )
 
+    # PDF agenda signals: download PDFs and extract ref numbers, numbered items,
+    # group hints, and structure type. Stores as __pdf_agenda_signals debug key
+    # for use by enrich_refs agenda item matching.
+    try:
+        from bubble.payload import apply_pdf_agenda_signals
+        apply_pdf_agenda_signals(resources, artifact_output_dir=None)
+    except Exception as e:
+        log.warning("PDF agenda signal extraction failed (non-fatal): %s", e)
+
     if bubble_enrich:
         from bubble.enrich_refs import enrich_refs
         use_ai = (

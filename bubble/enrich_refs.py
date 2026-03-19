@@ -730,16 +730,28 @@ def _resolve_topic_suggestion_ai(
         from bubble.openai_client import chat_json as _chat_fn
 
     # Build deduplicated candidate list (clean names, case-preserved)
+    # Strip BBCode and "The " prefix duplicates — prefer the canonical (shorter) name
     seen_lower: set[str] = set()
     candidate_names: list[str] = []
     for k in sorted(topic_candidates.keys()):
-        if k.lower() in seen_lower or k != k.strip():
+        if k != k.strip():
             continue
-        if k.lower() == k and k in topic_candidates:
-            pass
-        if k.lower() not in seen_lower:
-            seen_lower.add(k.lower())
-            candidate_names.append(k)
+        low = k.lower()
+        if low in seen_lower:
+            continue
+        # Skip BBCode-wrapped variants (the clean name is already in the list)
+        cleaned = strip_bbcode(k).strip()
+        if cleaned != k and cleaned.lower() in seen_lower:
+            continue
+        # Skip "The X" if "X" is already in the list
+        no_the = re.sub(r"^The\s+", "", k, flags=re.IGNORECASE)
+        if no_the != k and no_the.lower() in seen_lower:
+            continue
+        seen_lower.add(low)
+        # Also register without "The" so later "The X" variants are skipped
+        if no_the != k:
+            seen_lower.add(no_the.lower())
+        candidate_names.append(k)
 
     title = (resource.get("Name") or "").strip()
     url = (resource.get("URL") or "").strip()
@@ -760,16 +772,65 @@ def _resolve_topic_suggestion_ai(
         "- topic_name MUST be an exact string from the candidate list, or null.\n"
         "- Do NOT output Bubble IDs.\n"
         "- Do NOT invent topic names.\n"
+        "- NEVER select placeholder topics like 'Calendar Events with no Topic' "
+        "or 'No Topic' — these are not real topics.\n"
+        "- The organization path tells you which regulatory body/committee this "
+        "resource belongs to. Use it for context, but do NOT just match the "
+        "organization name as a topic.\n\n"
+        "## Decision framework\n\n"
+        "1. MEETING AGENDAS: If the document is a meeting agenda for a committee, "
+        "the topic is the committee's primary focus area, NOT a generic 'landscape' topic.\n"
+        "   Example: 'International Insurance Relations Committee Agenda' → "
+        "'International Association of Insurance Supervisors (IAIS)' "
+        "(the committee focuses on IAIS matters), NOT 'The International Landscape'.\n"
+        "   Example: 'Climate and Resiliency Task Force Agenda' → "
+        "'NAIC Climate Initiatives' (the task force's focus).\n\n"
+        "2. SUBJECT-MATTER vs ORGANIZATION topics:\n"
+        "   * If the document is ABOUT a specific regulatory subject (private equity, "
+        "solvency, mortgages, stress testing), pick the subject-matter topic.\n"
+        "     Example: 'Supervision of PE Insurers in Bermuda' → 'Private Equity "
+        "Owned Insurers' not 'The Bermuda Monetary Authority (BMA)'.\n"
+        "     Example: 'BoE Financial Systemwide Stress Exercise' → 'U.K. Solvency' "
+        "not 'U.K. Bank of England (BoE)' (stress testing = solvency regulation).\n"
+        "     Example: 'Fit-For-55 Climate Scenario Analysis' by EIOPA → "
+        "'European Insurance and Occupational Pensions Authority (EIOPA) Climate "
+        "Initiatives' not a generic ESA/JC topic.\n"
+        "   * If the document is a general publication BY an organization "
+        "(annual report, market report, progress update, policy statement), "
+        "pick the organization topic.\n"
+        "     Example: 'FSB Progress Report on Climate Disclosures' → "
+        "'Financial Stability Board (FSB)' not a climate topic.\n"
+        "     Example: 'GIMAR' → 'International Association of Insurance "
+        "Supervisors (IAIS)' not a market topic.\n\n"
+        "3. SPECIFICITY: When multiple topics seem relevant, prefer the MORE "
+        "SPECIFIC topic over a generic one.\n"
+        "   Example: Prefer 'EIOPA Climate Initiatives' over 'Joint Committee (JC) "
+        "of the European Supervisory Authorities (ESAs)' for EIOPA climate docs.\n\n"
+        "4. REGULATORY vs INSTRUMENT topics: When a document describes how "
+        "insurers HOLD or REPORT certain investments (regulatory/accounting "
+        "perspective), prefer the regulatory/accounting topic over the "
+        "instrument-type topic.\n"
+        "   Example: 'U.S. Insurer Investments in CMBS' from Capital Markets "
+        "Bureau → prefer the Schedule BA/accounting topic over 'CMBS & RMBS'.\n"
+        "   Example: NAIC reports on insurer mortgage fund holdings → 'Residential "
+        "Mortgage Funds Under Schedule BA' not 'CMBS & RMBS'.\n\n"
+        "5. U.K. REGULATORS: Documents from the Bank of England (BoE) or "
+        "Prudential Regulation Authority (PRA) about solvency, capital, stress "
+        "testing, or insurance regulation → 'U.K. Solvency' (the regulatory "
+        "substance), NOT 'U.K. Bank of England (BoE)' (the organization).\n\n"
+        "6. Use the organization path to disambiguate when two topics are close.\n"
         "- confidence is your certainty from 0 to 1."
     )
     user_msg = (
         "## Resource\n"
         f"- Title: {title}\n"
         f"- URL: {url[:120]}\n"
-        f"- Notes: {notes[:300]}\n"
-        f"- Parent: {parent}\n"
-        f"- Section label: {label}\n"
-        f"- Organization path: {org_str}\n\n"
+    )
+    if notes:
+        user_msg += f"- Notes: {notes[:300]}\n"
+    user_msg += (
+        f"- Organization path: {org_str}\n"
+        f"- Section label: {label}\n\n"
         "## Candidate topic names (select exactly one or null)\n"
     )
     for name in candidate_names:
@@ -782,7 +843,7 @@ def _resolve_topic_suggestion_ai(
         data = _chat_fn([
             {"role": "system", "content": system_msg},
             {"role": "user", "content": user_msg},
-        ], reasoning_effort="low")
+        ], reasoning_effort="medium")
     except Exception:
         log.warning("topic suggestion: AI call failed for resource %s", title[:60], exc_info=True)
         return result
@@ -812,13 +873,24 @@ def _resolve_topic_suggestion_ai(
         result["status"] = "low_confidence"
         return result
 
-    # Resolve: exact match, then case-insensitive, then BBCode-stripped
+    # Resolve: exact match, then case-insensitive, then BBCode-stripped, then "The" stripped
     node_id = topic_candidates.get(raw_name)
     if not node_id:
         node_id = topic_candidates.get(raw_name.lower())
     if not node_id:
         cleaned = strip_bbcode(raw_name)
         node_id = topic_candidates.get(cleaned) or topic_candidates.get(cleaned.lower())
+    if not node_id:
+        # Strip leading "The " and try again
+        no_the = re.sub(r"^The\s+", "", raw_name, flags=re.IGNORECASE)
+        if no_the != raw_name:
+            node_id = (
+                topic_candidates.get(no_the)
+                or topic_candidates.get(no_the.lower())
+            )
+            if node_id:
+                # Update the reported name to match the canonical form
+                result["topic_name"] = no_the
 
     if node_id:
         result["node_id"] = node_id
@@ -829,6 +901,988 @@ def _resolve_topic_suggestion_ai(
             raw_name, confidence, len(candidate_names),
         )
         result["status"] = "not_in_candidates"
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Agenda item matching helpers
+# ---------------------------------------------------------------------------
+
+# Ref number extraction from resource Name — e.g. "SAPWG#2024-04" or "#2024-16"
+_RE_REF_IN_NAME = re.compile(
+    r"(?:(?:SAPWG|VOSTF|LATF|BWG|LRBCWG|RBC[-\s]?IRE|CATF|RAWG|SSWG)#?\s*"
+    r"(?:Ref\s*#?\s*)?(\d{4}[-\u2013]\d{1,3}))"
+    r"|(?:(?:Ref|Reference|Item)\s*#?\s*(\d{4}[-\u2013]\d{1,3}))"
+    r"|(?:#(\d{4}[-\u2013]\d{1,3}))",
+    re.IGNORECASE,
+)
+
+# Score thresholds for agenda item matching
+AGENDA_ITEM_MATCH_THRESHOLD = float(os.environ.get("AGENDA_ITEM_MATCH_THRESHOLD", "1.5"))
+AGENDA_ITEM_AI_CONFIDENCE_THRESHOLD = float(os.environ.get("AGENDA_ITEM_AI_CONFIDENCE_THRESHOLD", "0.7"))
+
+
+def _extract_ref_numbers_from_name(name: str) -> list[str]:
+    """Extract reference numbers from a resource Name string."""
+    refs: list[str] = []
+    for m in _RE_REF_IN_NAME.finditer(name or ""):
+        ref = m.group(1) or m.group(2) or m.group(3)
+        if ref:
+            ref = ref.replace("\u2013", "-")
+            if ref not in refs:
+                refs.append(ref)
+    return refs
+
+
+def _normalize_ref(ref: str) -> str:
+    """Normalize a ref number for comparison: strip group prefix, normalize separators."""
+    ref = (ref or "").strip()
+    ref = ref.replace("\u2013", "-")
+    # Strip group prefix: "SAPWG#2024-04" -> "2024-04"
+    m = re.search(r"(\d{4}[-]\d{1,3})", ref)
+    return m.group(1) if m else ref.lower()
+
+
+def _extract_all_normalized_refs(ref_field: str) -> list[str]:
+    """Extract ALL YYYY-NN ref numbers from a (possibly multi-ref) Bubble field.
+
+    Handles: "RBC-IRE-WG#2025-22", "Proposal 2025-22-IRE",
+             "SAPWG#2019-21 and LRBCWG#2024-L8", "2025-22-IRE MOD"
+    """
+    ref_field = (ref_field or "").replace("\u2013", "-")
+    return list(dict.fromkeys(m.group(0) for m in re.finditer(r"\d{4}-\d{1,3}", ref_field)))
+
+
+# Stopwords for keyword extraction from resource names
+_TITLE_STOPWORDS = frozenset({
+    "a", "an", "the", "of", "on", "in", "to", "for", "and", "or", "by", "at",
+    "its", "is", "be", "are", "was", "were", "with", "from", "as", "has", "had",
+    "that", "this", "it", "not", "but", "all", "no", "do", "if", "so",
+    # NAIC/meeting context noise words
+    "meeting", "agenda", "committee", "task", "force", "working", "group",
+    "november", "december", "january", "february", "march", "april", "may",
+    "june", "july", "august", "september", "october",
+    "2024", "2025", "2023", "2022", "2026",
+    "naic", "national", "pm", "am", "et",
+    "attachment", "updated",
+})
+
+
+def _extract_title_search_keywords(resource_name: str) -> list[str]:
+    """Extract 2-3 distinctive keyword phrases from a resource name for title-based search.
+
+    Strategy:
+    1. Remove parenthetical codes (e.g., "(E)", "(EX)", "(A)")
+    2. Remove common stopwords and context noise
+    3. Return the 2-3 longest remaining words as individual search terms
+
+    These are used as "text contains" queries against the BA title field.
+    """
+    name = (resource_name or "").strip()
+    if not name:
+        return []
+    # Remove parenthetical codes like (E), (EX), (A), (G)
+    name = re.sub(r"\([A-Z]{1,3}\)", "", name)
+    # Remove ref patterns like #2024-16, SAPWG#2024-16
+    name = re.sub(r"[A-Z]*#?\d{4}[-–]\d{1,3}", "", name)
+    # Remove dates like "November 18, 2024" or "12/2024"
+    name = re.sub(r"\b\d{1,2}/\d{2,4}\b", "", name)
+    name = re.sub(r",?\s*\d{1,2}:\d{2}\s*(?:PM|AM|ET)\b", "", name, flags=re.IGNORECASE)
+    # Split on non-alpha
+    tokens = re.findall(r"[A-Za-z]+(?:[-][A-Za-z]+)*", name)
+    # Filter stopwords and short tokens
+    meaningful = [t for t in tokens if t.lower() not in _TITLE_STOPWORDS and len(t) >= 3]
+    if not meaningful:
+        return []
+    # Return longest 3 tokens (most distinctive)
+    meaningful.sort(key=lambda t: len(t), reverse=True)
+    return meaningful[:3]
+
+
+def _get_agenda_item_candidates(
+    naic_group_node_id: str,
+    bubble_snapshot: dict | None = None,
+    *,
+    fallback_ref_numbers: list[str] | None = None,
+    resource_name: str = "",
+    resource_id: str = "",
+) -> tuple[list[dict], str]:
+    """
+    Fetch candidate Agenda Items, with multi-tier retrieval for incomplete linkage.
+
+    Tier 0 (bidirectional): Agenda items whose Resources field links to this resource.
+    Tier 1 (group-scoped): Agenda items where Discussed at (list) matches NAIC group.
+    Tier 2 (ref fallback): Search by ref number if group didn't cover them.
+    Tier 3 (title fallback): Search by BA title keywords from resource name.
+
+    Returns (candidates_list, retrieval_source) where retrieval_source is
+    "resource_linked" | "group_scoped" | "ref_fallback" | "title_fallback" | "none".
+    """
+    # --- Tier 0: Bidirectional lookup (highest priority) ---
+    # Agenda items that directly link to this resource via their Resources field.
+    # These are the strongest signal — they were explicitly linked in Bubble.
+    resource_linked: list[dict] = []
+    if resource_id and not bubble_snapshot:
+        resource_linked = lookups.search_agenda_items_by_resource(resource_id)
+        if resource_linked:
+            for item in resource_linked:
+                item["__retrieval_source"] = "resource_linked"
+            log.info(
+                "agenda item bidirectional: %d item(s) directly link to resource %s",
+                len(resource_linked), resource_id[:20],
+            )
+
+    # --- Tier 1: group-scoped retrieval ---
+    group_candidates: list[dict] = []
+    if naic_group_node_id:
+        if bubble_snapshot:
+            all_items = bubble_snapshot.get("agenda_items") or []
+            for item in all_items:
+                discussed = item.get("Discussed at list") or item.get("Discussed at")
+                if discussed == naic_group_node_id:
+                    group_candidates.append(item)
+                elif isinstance(discussed, list) and naic_group_node_id in discussed:
+                    group_candidates.append(item)
+        else:
+            group_candidates = lookups.search_agenda_items_by_naic_group(naic_group_node_id)
+
+    # Check if group candidates have any ref overlap with the requested refs
+    # (if so, the primary retrieval is sufficient — skip ref fallback)
+    group_has_ref_overlap = False
+    if group_candidates and fallback_ref_numbers:
+        ref_norms_wanted = set(fallback_ref_numbers)
+        for item in group_candidates:
+            item_refs = set(_extract_all_normalized_refs(_agenda_item_ref(item)))
+            if item_refs & ref_norms_wanted:
+                group_has_ref_overlap = True
+                break
+
+    # --- Collect supplemental candidates from fallback strategies ---
+    seen_ids: set[str] = {str(_obj_id(c)) for c in group_candidates if _obj_id(c)}
+    supplemental: list[dict] = []
+    retrieval_tag = "group_scoped"
+
+    # Fallback 1: ref-based retrieval (only if group didn't cover the refs)
+    if fallback_ref_numbers and not group_has_ref_overlap:
+        ref_candidates: list[dict] = []
+        if bubble_snapshot:
+            all_items = bubble_snapshot.get("agenda_items") or []
+            for item in all_items:
+                iid = str(_obj_id(item) or "")
+                if iid in seen_ids:
+                    continue
+                item_refs = set(_extract_all_normalized_refs(_agenda_item_ref(item)))
+                if item_refs & set(fallback_ref_numbers):
+                    ref_candidates.append(item)
+                    seen_ids.add(iid)
+        else:
+            for ref_num in fallback_ref_numbers[:5]:  # bounded: max 5 ref queries
+                results = lookups.search_agenda_items_by_ref(ref_num)
+                for item in results:
+                    iid = str(_obj_id(item) or "")
+                    if iid not in seen_ids:
+                        ref_candidates.append(item)
+                        seen_ids.add(iid)
+
+        if ref_candidates:
+            log.info(
+                "agenda item fallback: %d candidate(s) found via ref search "
+                "(refs: %s), supplementing %d group-scoped candidate(s)",
+                len(ref_candidates), ", ".join(fallback_ref_numbers[:5]),
+                len(group_candidates),
+            )
+            for item in ref_candidates:
+                item["__retrieval_source"] = "ref_fallback"
+            supplemental.extend(ref_candidates)
+            retrieval_tag = "ref_fallback"
+
+    # Fallback 2: title-based retrieval
+    # Always runs to find sparse items (no Discussed at, no numeric refs) that
+    # share keyword overlap with the resource name.
+    title_keywords = _extract_title_search_keywords(resource_name) if resource_name else []
+    if title_keywords:
+        title_candidates: list[dict] = []
+        if bubble_snapshot:
+            all_items = bubble_snapshot.get("agenda_items") or []
+            for item in all_items:
+                iid = str(_obj_id(item) or "")
+                if iid in seen_ids:
+                    continue
+                ba_title = (_agenda_item_title(item) or "").lower()
+                if any(kw.lower() in ba_title for kw in title_keywords):
+                    title_candidates.append(item)
+                    seen_ids.add(iid)
+        else:
+            for kw in title_keywords:
+                results = lookups.search_agenda_items_by_title(kw)
+                for item in results:
+                    iid = str(_obj_id(item) or "")
+                    if iid not in seen_ids:
+                        title_candidates.append(item)
+                        seen_ids.add(iid)
+
+        if title_candidates:
+            log.info(
+                "agenda item fallback: %d candidate(s) found via title search "
+                "(keywords: %s), supplementing %d existing candidate(s)",
+                len(title_candidates), ", ".join(title_keywords),
+                len(group_candidates) + len(supplemental),
+            )
+            for item in title_candidates:
+                item["__retrieval_source"] = "title_fallback"
+            supplemental.extend(title_candidates)
+            if retrieval_tag == "group_scoped":
+                retrieval_tag = "title_fallback"
+
+    # Combine and return
+    # Resource-linked items are prepended (highest priority) and deduplicated
+    all_candidates: list[dict] = []
+    final_seen: set[str] = set()
+
+    # Tier 0 first (resource-linked)
+    if resource_linked:
+        for item in resource_linked:
+            iid = str(_obj_id(item) or "")
+            if iid and iid not in final_seen:
+                all_candidates.append(item)
+                final_seen.add(iid)
+
+    # Then group-scoped
+    for item in group_candidates:
+        iid = str(_obj_id(item) or "")
+        if iid and iid not in final_seen:
+            item.setdefault("__retrieval_source", "group_scoped")
+            all_candidates.append(item)
+            final_seen.add(iid)
+
+    # Then supplemental (ref + title fallbacks)
+    for item in supplemental:
+        iid = str(_obj_id(item) or "")
+        if iid and iid not in final_seen:
+            all_candidates.append(item)
+            final_seen.add(iid)
+
+    if resource_linked:
+        return all_candidates, "resource_linked"
+    if supplemental:
+        return all_candidates, retrieval_tag
+    if group_candidates:
+        return all_candidates, "group_scoped"
+    return [], "none"
+
+
+# Known ref prefix → keywords that should appear in the NAIC group name.
+# Used to detect cross-group ref matches in fallback retrieval.
+_REF_PREFIX_GROUP_KEYWORDS: dict[str, list[str]] = {
+    "sapwg": ["statutory", "accounting"],
+    "rbc-ire-wg": ["risk-based", "capital", "investment", "risk"],
+    "rbc-ire": ["risk-based", "capital", "investment", "risk"],
+    "bwg": ["blanks"],
+    "lrbcwg": ["life", "risk-based", "capital"],
+    "vostf": ["valuation", "securities"],
+    "latf": ["life", "actuarial"],
+    "catf": ["capital", "adequacy"],
+    "rawg": ["risk", "assessment"],
+    "sswg": ["structured", "securities"],
+}
+
+# Regex to extract group prefix from a ref field: "RBC-IRE-WG#2025-22" -> "RBC-IRE-WG"
+_RE_REF_PREFIX = re.compile(
+    r"^([A-Z][A-Z0-9]*(?:-[A-Z][A-Z0-9]*)*(?:#|-WG#?))",
+    re.IGNORECASE,
+)
+
+
+def _extract_ref_prefix(ref_field: str) -> str:
+    """Extract group abbreviation prefix from a ref string.
+
+    "RBC-IRE-WG#2025-22" -> "rbc-ire-wg"
+    "SAPWG#2025-22"      -> "sapwg"
+    "2025-22"            -> ""
+    """
+    ref_field = (ref_field or "").strip()
+    m = _RE_REF_PREFIX.match(ref_field)
+    if not m:
+        return ""
+    prefix = m.group(1).rstrip("#").lower()
+    return prefix
+
+
+def _ref_prefix_matches_group(ref_prefix: str, naic_group_name: str) -> bool:
+    """Check if a ref prefix is compatible with the resolved NAIC group name."""
+    if not ref_prefix or not naic_group_name:
+        return True  # no prefix to check — assume compatible
+    prefix_lower = ref_prefix.lower().rstrip("#")
+    group_lower = naic_group_name.lower()
+
+    # Direct substring check: "sapwg" in group name, or group abbreviation tokens
+    if prefix_lower in group_lower:
+        return True
+
+    # Check known prefix → keyword mapping
+    keywords = _REF_PREFIX_GROUP_KEYWORDS.get(prefix_lower, [])
+    if keywords:
+        return any(kw in group_lower for kw in keywords)
+
+    # Heuristic: tokenize the prefix and check overlap with group name tokens
+    prefix_tokens = {t for t in re.split(r"[-_\s]+", prefix_lower) if len(t) >= 2}
+    group_tokens = {t for t in re.split(r"[-_\s()\[\]]+", group_lower) if len(t) >= 2}
+    if prefix_tokens and prefix_tokens & group_tokens:
+        return True
+
+    return False
+
+
+# Penalty applied to cross-group ref matches from fallback retrieval
+_CROSS_GROUP_REF_PENALTY = 2.5
+
+
+def _agenda_item_ref(item: dict) -> str:
+    """Extract the canonical ref number from an Agenda Item."""
+    ref = (item.get("BA Ref #") or item.get("Ref #") or "").strip()
+    return ref
+
+
+def _agenda_item_title(item: dict) -> str:
+    """Extract the best title from an Agenda Item."""
+    return (item.get("BA title") or item.get("NAIC Title") or "").strip()
+
+
+def _tokenize_for_matching(text: str) -> set[str]:
+    """Tokenize a string for overlap scoring. Lowercase, >=2 chars."""
+    return {t.lower() for t in re.split(r"[^\w]+", text) if t and len(t) >= 2}
+
+
+def _score_agenda_item_match(
+    item: dict,
+    resource_name: str,
+    pdf_signals: dict | None,
+    naic_group_name: str = "",
+) -> tuple[float, dict[str, Any]]:
+    """
+    Deterministic ref-based scoring for agenda item matching (Tier 1).
+
+    Only scores based on unambiguous ref number matches:
+    - Ref # match from resource Name: +3.0
+    - Ref # match from PDF text: +3.0
+    - Cross-group penalty for ref_fallback items with wrong prefix: -2.5
+
+    Title/content matching is handled by the LLM tier (Tier 2).
+
+    Returns (score, evidence_dict).
+    """
+    evidence: dict[str, Any] = {
+        "agenda_item_id": _obj_id(item),
+        "ba_title": _agenda_item_title(item)[:80],
+        "ref": _agenda_item_ref(item),
+    }
+    score = 0.0
+    item_ref = _agenda_item_ref(item)
+    # Extract ALL normalized refs from the Bubble field (handles multi-ref fields,
+    # suffixed refs like "2025-22-IRE", group prefixes like "RBC-IRE-WG#2025-22")
+    item_ref_norms = set(_extract_all_normalized_refs(item_ref)) if item_ref else set()
+
+    # 1. Ref # match from resource Name
+    name_refs = _extract_ref_numbers_from_name(resource_name)
+    if item_ref_norms and name_refs:
+        name_ref_norms = {_normalize_ref(r) for r in name_refs}
+        matched_refs = item_ref_norms & name_ref_norms
+        if matched_refs:
+            score += 3.0
+            evidence["ref_match_source"] = "resource_name"
+            evidence["ref_matched"] = sorted(matched_refs)[0]
+
+    # 2. Ref # match from PDF signals
+    if item_ref_norms and pdf_signals:
+        pdf_refs = pdf_signals.get("ref_numbers") or []
+        pdf_ref_norms = {_normalize_ref(r) for r in pdf_refs}
+        matched_refs = item_ref_norms & pdf_ref_norms
+        if matched_refs and evidence.get("ref_match_source") != "resource_name":
+            score += 3.0
+            evidence["ref_match_source"] = "pdf_text"
+            evidence["ref_matched"] = sorted(matched_refs)[0]
+
+    # 3. Cross-group penalty: if item came from ref_fallback and its ref prefix
+    # doesn't match the resolved NAIC group, apply a heavy penalty
+    is_fallback = item.get("__retrieval_source") == "ref_fallback"
+    if is_fallback and score > 0 and naic_group_name and item_ref:
+        ref_prefix = _extract_ref_prefix(item_ref)
+        if ref_prefix and not _ref_prefix_matches_group(ref_prefix, naic_group_name):
+            score -= _CROSS_GROUP_REF_PENALTY
+            evidence["cross_group_penalty"] = _CROSS_GROUP_REF_PENALTY
+            evidence["ref_prefix"] = ref_prefix
+            evidence["group_match"] = False
+        else:
+            evidence["group_match"] = True
+
+    evidence["total_score"] = round(score, 2)
+    return (score, evidence)
+
+
+def _collect_inherited_topics(items: list[dict]) -> list[str]:
+    """Extract unique topic IDs from a list of matched Agenda Items."""
+    inherited: list[str] = []
+    for item in items:
+        topics = item.get("Topics") or []
+        if isinstance(topics, list):
+            for t in topics:
+                tid = t if isinstance(t, str) else (t.get("_id") or t.get("id") if isinstance(t, dict) else None)
+                if tid and tid not in inherited:
+                    inherited.append(tid)
+    return inherited
+
+
+def _resolve_agenda_items_for_resource(
+    resource: dict,
+    context: dict,
+    naic_group_node_id: str | None,
+    bubble_snapshot: dict | None,
+    *,
+    use_ai: bool = False,
+    _chat_fn=None,
+) -> dict[str, Any]:
+    """
+    Two-tier agenda item matching:
+
+    Tier 1 (deterministic): Match by ref number. Unambiguous — if the PDF
+    contains ref #2025-22 and a candidate has RBC-IRE-WG#2025-22, that's a
+    match. Cross-group refs are penalized.
+
+    Tier 2 (LLM): For remaining group-scoped candidates not matched by ref,
+    ask the LLM to decide which (if any) relate to this resource. The LLM
+    sees the full context: resource name, PDF numbered items, candidate titles.
+
+    Returns dict:
+        matched_ids: list[str]       - IDs of matched Agenda Items
+        candidates: list[dict]       - all scored candidates with evidence
+        retrieval_source: str
+        method: str                  - "ref_match" | "ref_match+ai" | "ai" | "none"
+        ai_used: bool
+        inherited_topic_ids: list[str]
+    """
+    empty_result: dict[str, Any] = {
+        "matched_ids": [],
+        "candidates": [],
+        "retrieval_source": "none",
+        "method": "none",
+        "ai_used": False,
+        "inherited_topic_ids": [],
+    }
+
+    resource_id = str(resource.get("_id") or resource.get("id") or "").strip()
+    resource_name = (resource.get("Name") or "").strip()
+
+    if not naic_group_node_id and not resource_id:
+        return empty_result
+
+    pdf_signals = resource.get("__pdf_agenda_signals") if isinstance(resource.get("__pdf_agenda_signals"), dict) else None
+
+    # Collect all known ref numbers for fallback retrieval
+    all_ref_numbers: list[str] = []
+    name_refs = _extract_ref_numbers_from_name(resource_name)
+    all_ref_numbers.extend(_normalize_ref(r) for r in name_refs)
+    if pdf_signals:
+        for r in (pdf_signals.get("ref_numbers") or []):
+            nr = _normalize_ref(r)
+            if nr and nr not in all_ref_numbers:
+                all_ref_numbers.append(nr)
+
+    # Fetch candidate agenda items (bidirectional + group-scoped + fallbacks)
+    raw_candidates, retrieval_source = _get_agenda_item_candidates(
+        naic_group_node_id or "", bubble_snapshot,
+        fallback_ref_numbers=all_ref_numbers or None,
+        resource_name=resource_name,
+        resource_id=resource_id,
+    )
+    if not raw_candidates:
+        return empty_result
+
+    # Resolve NAIC group name for cross-group detection
+    naic_group_name = (context.get("label") or "").strip()
+    if not naic_group_name and pdf_signals:
+        naic_group_name = (pdf_signals.get("group_name_hint") or "").strip()
+
+    # --- Tier 1: Deterministic ref matching ---
+    scored: list[tuple[dict, float, dict]] = []
+    for item in raw_candidates:
+        score, evidence = _score_agenda_item_match(
+            item, resource_name, pdf_signals, naic_group_name=naic_group_name,
+        )
+        evidence["retrieval_source"] = item.get("__retrieval_source", "group_scoped")
+        scored.append((item, score, evidence))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+
+    # Build candidates detail for debug
+    candidates_detail = [
+        {
+            "id": _obj_id(item) or "",
+            "ba_title": _agenda_item_title(item)[:80],
+            "ref": _agenda_item_ref(item),
+            "score": round(score, 2),
+            "retrieval_source": evidence.get("retrieval_source", "group_scoped"),
+            "evidence": evidence,
+        }
+        for item, score, evidence in scored
+    ]
+
+    result = dict(empty_result)
+    result["candidates"] = candidates_detail
+    result["retrieval_source"] = retrieval_source
+
+    # --- Tier 0: Resource-linked items are automatic matches ---
+    # These items explicitly link to this resource in Bubble — highest confidence.
+    resource_linked_matched: list[dict] = []
+    resource_linked_ids: set[str] = set()
+    for item in raw_candidates:
+        if item.get("__retrieval_source") == "resource_linked":
+            iid = str(_obj_id(item) or "")
+            if iid:
+                resource_linked_matched.append(item)
+                resource_linked_ids.add(iid)
+
+    # --- Tier 1: Deterministic ref matching ---
+    ref_matched: list[dict] = []
+    ref_matched_ids: set[str] = set()
+    for item, score, ev in scored:
+        iid = str(_obj_id(item) or "")
+        if score >= AGENDA_ITEM_MATCH_THRESHOLD and iid not in resource_linked_ids:
+            if iid:
+                ref_matched.append(item)
+                ref_matched_ids.add(iid)
+
+    already_matched_ids = resource_linked_ids | ref_matched_ids
+
+    # --- Multi-ref dampening ---
+    # If ref matching produced 10+ results, this is likely an omnibus document.
+    # Don't trust ref matches for topic inheritance — too noisy.
+    is_omnibus = len(ref_matched) >= 10
+    if is_omnibus:
+        log.info(
+            "agenda item multi-ref dampening: %d ref matches detected for '%s' "
+            "— treating as omnibus document, skipping ref-based topic inheritance",
+            len(ref_matched), resource_name[:60],
+        )
+
+    # --- Tier 2: LLM for remaining candidates (group-scoped + title fallback) ---
+    ai_matched: list[dict] = []
+    ai_evidence: dict = {}
+    _AI_ELIGIBLE_SOURCES = {"group_scoped", "title_fallback"}
+    remaining_for_ai = [
+        item for item in raw_candidates
+        if str(_obj_id(item) or "") not in already_matched_ids
+        and item.get("__retrieval_source", "group_scoped") in _AI_ELIGIBLE_SOURCES
+    ]
+
+    if use_ai and remaining_for_ai:
+        ai_result = _resolve_agenda_items_ai(
+            resource, context, remaining_for_ai, pdf_signals, _chat_fn
+        )
+        ai_evidence = ai_result.get("evidence", {})
+        if ai_result.get("matched_ids"):
+            ai_matched_ids_by_id = {str(_obj_id(item)): item for item in remaining_for_ai if _obj_id(item)}
+            for mid in ai_result["matched_ids"]:
+                item = ai_matched_ids_by_id.get(mid)
+                if item:
+                    ai_matched.append(item)
+
+    # Combine results — resource-linked first (highest priority)
+    # For omnibus docs, only use resource-linked + AI matches for topic inheritance
+    # (ref matches are too noisy for topic but still valid as agenda matches)
+    all_matched = resource_linked_matched + ref_matched + ai_matched
+
+    if is_omnibus:
+        # For topic inheritance, only use resource-linked + AI matches (not noisy ref matches)
+        topic_source_items = resource_linked_matched + ai_matched
+    else:
+        topic_source_items = all_matched
+
+    if all_matched:
+        result["matched_ids"] = [str(_obj_id(item)) for item in all_matched if _obj_id(item)]
+        result["inherited_topic_ids"] = _collect_inherited_topics(topic_source_items) if topic_source_items else []
+        result["ai_used"] = bool(ai_matched)
+        if ai_evidence:
+            result["ai_evidence"] = ai_evidence
+
+        if resource_linked_matched:
+            result["method"] = "resource_linked"
+        elif ref_matched and ai_matched:
+            result["method"] = "ref_match+ai"
+        elif ref_matched:
+            result["method"] = "ref_match"
+        else:
+            result["method"] = "ai"
+
+    return result
+
+
+def _resolve_agenda_items_ai(
+    resource: dict,
+    context: dict,
+    candidates: list[dict],
+    pdf_signals: dict | None,
+    _chat_fn=None,
+) -> dict[str, Any]:
+    """
+    Ask AI to rank Agenda Item candidates for a resource.
+
+    Returns dict with:
+        matched_ids: list[str]
+        evidence: dict
+    """
+    result: dict[str, Any] = {"matched_ids": [], "evidence": {}}
+
+    if _chat_fn is None:
+        try:
+            from bubble.openai_client import chat_json
+            _chat_fn = chat_json
+        except ImportError:
+            log.warning("agenda item AI: openai_client not available")
+            return result
+
+    title = (resource.get("Name") or "").strip()
+    url = (resource.get("URL") or "").strip()
+    notes = (resource.get("notes") or "").strip()
+    parent = (resource.get("parent") or "").strip()
+
+    # Build candidate descriptions
+    candidate_lines: list[str] = []
+    id_map: dict[str, str] = {}
+    for i, item in enumerate(candidates[:20]):
+        aid = _obj_id(item) or ""
+        ref = _agenda_item_ref(item)
+        ba_title = _agenda_item_title(item)
+        desc = (item.get("Description") or "")[:200]
+        label = f"[{i+1}]"
+        id_map[label] = str(aid)
+        id_map[str(i + 1)] = str(aid)
+        candidate_lines.append(f"{label} Ref: {ref} | Title: {ba_title} | Desc: {desc}")
+
+    pdf_context = ""
+    if pdf_signals:
+        refs = pdf_signals.get("ref_numbers") or []
+        items = (pdf_signals.get("numbered_items") or [])[:15]
+        struct = pdf_signals.get("structure_type") or ""
+        if refs:
+            pdf_context += f"\nPDF ref numbers found: {', '.join(refs)}"
+        if items:
+            pdf_context += f"\nPDF numbered agenda items extracted from document:"
+            for i, itm in enumerate(items, 1):
+                pdf_context += f"\n  {i}. {itm}"
+        if struct:
+            pdf_context += f"\nPDF structure type: {struct}"
+
+    group_name = (context.get("label") or "").strip()
+    org_path = context.get("org_path") or []
+    org_str = " › ".join(str(s) for s in org_path) if org_path else ""
+    system_msg = (
+        "You are matching a regulatory/insurance document to agenda items.\n"
+        "The document belongs to the organization/committee shown below.\n"
+        "You will see the document's title, URL, organization path, and any "
+        "extracted PDF content (numbered agenda items).\n\n"
+        "Some agenda items may have already been matched by reference number. "
+        "You are evaluating the REMAINING candidates that could not be matched "
+        "by ref number alone.\n\n"
+        "Match based on:\n"
+        "- STRONG title similarity between the resource and the agenda item's "
+        "BA title (keywords or acronyms in common)\n"
+        "- Clear topical alignment (the document directly discusses the agenda "
+        "item's specific subject matter)\n"
+        "- Organization context (prefer items from the same group/committee)\n\n"
+        "BE STRICT: Only match when there is CLEAR, DIRECT topical or title "
+        "alignment. Do NOT match based on vague thematic similarity.\n"
+        "- A document about 'Prudent Person Principle' matches 'BMA Request "
+        "for Comment on Prudent Person Principle' (direct topic match).\n"
+        "- A 'Federal Advisory Committee on Insurance Agenda' matches an "
+        "agenda item about 'FACI' or 'FIO' (same committee), NOT an unrelated "
+        "IAIS item even if international topics appear on the agenda.\n"
+        "- 'SAPWG Adoptions' should match agenda items about SAPWG statutory "
+        "accounting, NOT unrelated items that happen to be in the same group.\n\n"
+        "Respond with ONLY a JSON object:\n"
+        '{"matches": [<number>], "confidence": <0.0-1.0>}\n'
+        "where matches is a list of candidate numbers (e.g. [1] or [1, 3]),\n"
+        'or {"matches": [], "confidence": 0} if none fit.'
+    )
+    user_msg = (
+        f"## Organization\n"
+        f"- Group: {group_name}\n"
+        f"- Path: {org_str}\n\n"
+        f"## Resource (document)\n"
+        f"- Title: {title}\n"
+        f"- URL: {url[:120]}\n"
+    )
+    if notes:
+        user_msg += f"- Notes: {notes[:300]}\n"
+    user_msg += f"{pdf_context}\n\n"
+    user_msg += f"## Remaining Agenda Item Candidates\n"
+    for line in candidate_lines:
+        user_msg += f"{line}\n"
+
+    try:
+        data = _chat_fn([
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": user_msg},
+        ], reasoning_effort="medium")
+    except Exception:
+        log.warning("agenda item AI: call failed for resource %s", title[:60], exc_info=True)
+        return result
+
+    if not isinstance(data, dict):
+        return result
+
+    matches = data.get("matches") or []
+    confidence = 0.0
+    try:
+        confidence = float(data.get("confidence", 0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+
+    result["evidence"] = {
+        "ai_matches": matches,
+        "ai_confidence": confidence,
+        "candidates_sent": len(candidates[:20]),
+    }
+
+    if confidence < AGENDA_ITEM_AI_CONFIDENCE_THRESHOLD:
+        return result
+
+    matched_ids: list[str] = []
+    for match_ref in matches:
+        ref_str = str(match_ref)
+        aid = id_map.get(ref_str) or id_map.get(f"[{ref_str}]")
+        if aid and aid not in matched_ids:
+            matched_ids.append(aid)
+    result["matched_ids"] = matched_ids
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Enhanced topic suggestion helpers
+# ---------------------------------------------------------------------------
+
+
+def _parse_calendar_title_topics(title: str) -> list[str]:
+    """
+    Parse topic names from a calendar item title.
+
+    Calendar titles follow: "NAIC {GROUP} | Topic1; Topic2; Topic3"
+    Returns list of topic name strings (the semicolon-separated part after |).
+    """
+    if not title or "|" not in title:
+        return []
+    # Take everything after the first "|"
+    _, _, topic_part = title.partition("|")
+    topic_part = topic_part.strip()
+    if not topic_part:
+        return []
+    topics = [t.strip() for t in topic_part.split(";") if t.strip()]
+    return topics
+
+
+def _fuzzy_match_topic_to_candidates(
+    parsed_topics: list[str],
+    topic_candidates: dict[str, str],
+) -> list[tuple[str, str]]:
+    """
+    Match parsed topic strings against Chronicles tree candidate names.
+
+    Returns list of (topic_name, node_id) for matches found.
+    Uses case-insensitive substring matching and token overlap.
+    """
+    if not parsed_topics or not topic_candidates:
+        return []
+
+    # Build lowercase → (original_name, node_id) lookup
+    candidates_lower: dict[str, tuple[str, str]] = {}
+    for name, nid in topic_candidates.items():
+        nl = name.lower()
+        if nl not in candidates_lower:
+            candidates_lower[nl] = (name, nid)
+
+    matches: list[tuple[str, str]] = []
+    seen_ids: set[str] = set()
+
+    for parsed in parsed_topics:
+        parsed_lower = parsed.lower().strip()
+        if not parsed_lower:
+            continue
+
+        # Exact match (case-insensitive)
+        if parsed_lower in candidates_lower:
+            name, nid = candidates_lower[parsed_lower]
+            if nid not in seen_ids:
+                matches.append((name, nid))
+                seen_ids.add(nid)
+            continue
+
+        # Substring match: parsed topic contained in candidate name or vice versa
+        best_match: tuple[str, str] | None = None
+        best_overlap = 0
+        parsed_tokens = _tokenize_for_matching(parsed)
+        for cand_lower, (name, nid) in candidates_lower.items():
+            if nid in seen_ids:
+                continue
+            # Substring check
+            if parsed_lower in cand_lower or cand_lower in parsed_lower:
+                if nid not in seen_ids:
+                    matches.append((name, nid))
+                    seen_ids.add(nid)
+                    best_match = None  # already matched
+                    break
+            # Token overlap
+            cand_tokens = _tokenize_for_matching(name)
+            overlap = len(parsed_tokens & cand_tokens)
+            if overlap > best_overlap and overlap >= 2:
+                best_overlap = overlap
+                best_match = (name, nid)
+
+        if best_match and best_match[1] not in seen_ids:
+            matches.append(best_match)
+            seen_ids.add(best_match[1])
+
+    return matches
+
+
+# Placeholder / meta topics that should not count as real content topics
+_PLACEHOLDER_TOPIC_PATTERNS = re.compile(
+    r"^calendar\s+events?\s+with\s+no\s+topic$"
+    r"|^no\s+topic$"
+    r"|^unassigned$"
+    r"|^placeholder$"
+    r"|^other$"
+    r"|agenda\s+not\s+yet\s+posted"
+    r"|not\s+covered\s+in\s+.*chronicles",
+    re.IGNORECASE,
+)
+
+
+def _is_placeholder_topic(name: str) -> bool:
+    """Return True if the topic name is a placeholder/meta entry, not real content."""
+    return bool(_PLACEHOLDER_TOPIC_PATTERNS.search((name or "").strip()))
+
+
+def _resolve_topic_enhanced(
+    resource: dict,
+    context: dict,
+    topic_candidates: dict[str, str],
+    *,
+    matched_agenda_items_result: dict | None = None,
+    calendar_payload: list[dict] | None = None,
+    calendar_context: list[dict] | None = None,
+    linked_calendar_ids: list[str] | None = None,
+    use_ai: bool = False,
+    _chat_fn=None,
+) -> dict[str, Any]:
+    """
+    Enhanced topic suggestion that uses multiple signal sources:
+
+    1. Inherit from matched agenda items (highest priority)
+    2. Parse calendar item title topics (secondary)
+    3. AI classification (existing fallback)
+
+    Returns dict:
+        topic_id: str | None
+        topic_name: str | None
+        source: str  - "agenda_item_inheritance" | "calendar_title_parse" | "ai_classification" | "unresolved"
+        inherited_topic_ids: list[str]
+        calendar_title_topics: list[str]
+        ai_result: dict | None
+    """
+    result: dict[str, Any] = {
+        "topic_id": None,
+        "topic_name": None,
+        "source": "unresolved",
+        "inherited_topic_ids": [],
+        "calendar_title_topics": [],
+        "ai_result": None,
+    }
+
+    # Path A: Inherit from matched agenda items
+    if matched_agenda_items_result:
+        inherited_ids = matched_agenda_items_result.get("inherited_topic_ids") or []
+        # Filter out placeholder topics
+        real_inherited_ids: list[str] = []
+        for tid in inherited_ids:
+            # Look up the name to check if it's a placeholder
+            tname = None
+            for name, nid in topic_candidates.items():
+                if nid == tid and name == name.strip():
+                    tname = name
+                    break
+            if tname and _is_placeholder_topic(tname):
+                continue
+            real_inherited_ids.append(tid)
+
+        if real_inherited_ids:
+            result["inherited_topic_ids"] = real_inherited_ids
+            if len(real_inherited_ids) == 1:
+                chosen_id = real_inherited_ids[0]
+            elif use_ai and len(real_inherited_ids) > 1:
+                # Multiple inherited topics — use AI to disambiguate
+                ai_result = _resolve_topic_suggestion_ai(resource, context, topic_candidates, _chat_fn)
+                if ai_result.get("node_id") and ai_result["node_id"] in real_inherited_ids:
+                    chosen_id = ai_result["node_id"]
+                else:
+                    chosen_id = real_inherited_ids[0]
+            else:
+                chosen_id = real_inherited_ids[0]
+
+            # Find the topic name from candidates
+            for name, nid in topic_candidates.items():
+                if nid == chosen_id and name == name.strip():
+                    result["topic_id"] = chosen_id
+                    result["topic_name"] = name
+                    result["source"] = "agenda_item_inheritance"
+                    return result
+            # ID found but name not in candidates — still use the ID
+            result["topic_id"] = chosen_id
+            result["source"] = "agenda_item_inheritance"
+            return result
+
+    # Path B: Parse calendar item title topics
+    if linked_calendar_ids and calendar_payload:
+        for cal in calendar_payload:
+            cal_id = cal.get("_id") or cal.get("id")
+            if cal_id and str(cal_id) in [str(x) for x in linked_calendar_ids]:
+                cal_title = (cal.get("title") or "").strip()
+                parsed_topics = _parse_calendar_title_topics(cal_title)
+                if parsed_topics:
+                    result["calendar_title_topics"] = parsed_topics
+                    matched = _fuzzy_match_topic_to_candidates(parsed_topics, topic_candidates)
+                    # Filter out placeholder/meta topics that aren't real content topics
+                    real_matches = [
+                        (n, i) for n, i in matched
+                        if not _is_placeholder_topic(n)
+                    ]
+                    if len(real_matches) == 1:
+                        name, nid = real_matches[0]
+                        result["topic_id"] = nid
+                        result["topic_name"] = name
+                        result["source"] = "calendar_title_parse"
+                        return result
+                    elif len(real_matches) > 1:
+                        # Multiple real matches — ambiguous, don't auto-assign
+                        result["calendar_title_matched"] = [(n, i) for n, i in real_matches]
+                    elif not real_matches and matched:
+                        # Only placeholder topics matched — still ambiguous
+                        result["calendar_title_matched"] = [(n, i) for n, i in matched]
+                break  # only check the first linked calendar item
+
+    # Path C: AI classification (existing logic)
+    if use_ai and topic_candidates:
+        ai_result = _resolve_topic_suggestion_ai(resource, context, topic_candidates, _chat_fn)
+        result["ai_result"] = ai_result
+        if ai_result.get("node_id"):
+            ai_topic_name = ai_result.get("topic_name") or ""
+            # Reject placeholder topics from AI
+            if _is_placeholder_topic(ai_topic_name):
+                log.info("topic AI returned placeholder '%s' — rejecting", ai_topic_name)
+            else:
+                result["topic_id"] = ai_result["node_id"]
+                result["topic_name"] = ai_topic_name
+                result["source"] = "ai_classification"
+                return result
 
     return result
 
@@ -1385,59 +2439,8 @@ def enrich_refs(
             )
     log.info("Type1 summary: resolved=%d  unresolved=%d", type1_resolved_count, type1_unresolved_count)
 
-    # --- topic suggestion resolution (AI from Chronicles tree) ---
-    topic_candidates = _build_topic_candidates(topic_tree_name, bubble_snapshot)
-    topic_resolved_count = 0
-    topic_unresolved_count = 0
-    if use_ai and topic_candidates:
-        for i, r in enumerate(updated_resources):
-            ctx = resource_context[i] if i < len(resource_context) else {}
-            ai_result = _resolve_topic_suggestion_ai(r, ctx, topic_candidates)
-            topic_name = ai_result.get("topic_name")
-            topic_id = ai_result.get("node_id")
-            confidence = ai_result.get("confidence", 0.0)
-            status = ai_result.get("status", "unresolved")
-
-            evidence = {
-                "method": "ai",
-                "topic_name": topic_name,
-                "confidence": confidence,
-                "status": status,
-                "candidates_sent": ai_result.get("candidates_sent", []),
-            }
-            if topic_id:
-                r["topic suggestion"] = topic_id
-                topic_resolved_count += 1
-                log.info("topic suggestion: '%s' (conf=%.2f) -> node_id=%s",
-                         topic_name, confidence, topic_id)
-                record_resolution(
-                    "topic_suggestion", "topic suggestion",
-                    chosen_ids=[topic_id],
-                    candidates=ai_result.get("candidates_sent", []),
-                    status="resolved",
-                    evidence=evidence,
-                    target="Resource", index=i,
-                )
-            else:
-                topic_unresolved_count += 1
-                record_resolution(
-                    "topic_suggestion", "topic suggestion",
-                    chosen_ids=[],
-                    candidates=ai_result.get("candidates_sent", []),
-                    status=status,
-                    evidence=evidence,
-                    target="Resource", index=i,
-                )
-    elif not topic_candidates:
-        log.warning("topic suggestion: no candidates loaded from tree '%s'; skipping.", topic_tree_name)
-        topic_unresolved_count = len(updated_resources)
-    else:
-        log.info("topic suggestion: AI disabled; skipping topic resolution.")
-        topic_unresolved_count = len(updated_resources)
-    log.info("topic suggestion summary: resolved=%d  unresolved=%d", topic_resolved_count, topic_unresolved_count)
-
-    # Related calendar items: primary strategy uses NAIC group tree node from context,
-    # fallback to old title/date matching if group resolution fails.
+    # --- Related calendar items: primary strategy uses NAIC group tree node ---
+    # (moved before topic suggestion so calendar IDs are available for topic parsing)
     for i, r in enumerate(updated_resources):
         ctx = resource_context[i] if i < len(resource_context) else {}
         title = (r.get("Name") or "").strip()
@@ -1508,5 +2511,149 @@ def enrich_refs(
             target="Resource",
             index=i,
         )
+
+    # --- Agenda Item matching (deterministic + AI fallback) ---
+    agenda_match_resolved = 0
+    agenda_match_unresolved = 0
+    # Cache of NAIC group node ID per resource (reuse from calendar linking)
+    for i, r in enumerate(updated_resources):
+        ctx = resource_context[i] if i < len(resource_context) else {}
+
+        # Resolve NAIC group for this resource (same logic as calendar linking)
+        org_path = ctx.get("org_path") or []
+        label = (ctx.get("label") or "").strip()
+        path = infer_naic_group_path(org_path)
+        if label:
+            path = path + [label]
+        naic_group_node_id = None
+        if path:
+            naic_group_node_id, _ = _resolve_naic_group_node(naic_group_tree_name, path, bubble_snapshot)
+
+        agenda_result = _resolve_agenda_items_for_resource(
+            r, ctx, naic_group_node_id, bubble_snapshot,
+            use_ai=use_ai,
+        )
+
+        # Store debug artifact on resource
+        r["__agenda_match"] = {
+            "matched_ids": agenda_result["matched_ids"],
+            "method": agenda_result["method"],
+            "ai_used": agenda_result["ai_used"],
+            "inherited_topic_ids": agenda_result["inherited_topic_ids"],
+            "candidates": agenda_result["candidates"][:10],
+        }
+
+        if agenda_result["matched_ids"]:
+            agenda_match_resolved += 1
+            record_resolution(
+                "agenda_item_matching",
+                "agenda_items",
+                chosen_ids=agenda_result["matched_ids"],
+                candidates=[c["id"] for c in agenda_result["candidates"] if c.get("id")],
+                status="resolved",
+                evidence={
+                    "method": agenda_result["method"],
+                    "ai_used": agenda_result["ai_used"],
+                    "inherited_topic_ids": agenda_result["inherited_topic_ids"],
+                },
+                target="Resource", index=i,
+            )
+        else:
+            agenda_match_unresolved += 1
+            record_resolution(
+                "agenda_item_matching",
+                "agenda_items",
+                chosen_ids=[],
+                candidates=[c["id"] for c in agenda_result["candidates"] if c.get("id")],
+                status="no_match",
+                evidence={
+                    "method": agenda_result["method"],
+                    "naic_group_node_id": naic_group_node_id,
+                },
+                target="Resource", index=i,
+            )
+    log.info("Agenda item matching summary: resolved=%d  unresolved=%d",
+             agenda_match_resolved, agenda_match_unresolved)
+
+    # --- Enhanced topic suggestion (agenda item inheritance > calendar title > AI) ---
+    topic_candidates = _build_topic_candidates(topic_tree_name, bubble_snapshot)
+    topic_resolved_count = 0
+    topic_unresolved_count = 0
+
+    if topic_candidates:
+        # Build a combined calendar payload + snapshot calendar items for title parsing
+        all_calendar = list(updated_calendar)
+        if bubble_snapshot:
+            for sc in (bubble_snapshot.get("calendar_items") or []):
+                sc_id = sc.get("_id") or sc.get("id")
+                if sc_id and sc_id not in {(c.get("_id") or c.get("id")) for c in all_calendar}:
+                    all_calendar.append(sc)
+
+        for i, r in enumerate(updated_resources):
+            ctx = resource_context[i] if i < len(resource_context) else {}
+            agenda_match = r.get("__agenda_match") if isinstance(r.get("__agenda_match"), dict) else None
+            linked_cal_ids = r.get("Related calendar items") or []
+
+            topic_result = _resolve_topic_enhanced(
+                r, ctx, topic_candidates,
+                matched_agenda_items_result=agenda_match,
+                calendar_payload=all_calendar,
+                calendar_context=calendar_context,
+                linked_calendar_ids=linked_cal_ids,
+                use_ai=use_ai,
+            )
+
+            topic_id = topic_result.get("topic_id")
+            topic_name = topic_result.get("topic_name")
+            source = topic_result.get("source", "unresolved")
+
+            # Store debug artifact
+            r["__topic_suggestion"] = {
+                "source": source,
+                "topic_id": topic_id,
+                "topic_name": topic_name,
+                "inherited_topic_ids": topic_result.get("inherited_topic_ids", []),
+                "calendar_title_topics": topic_result.get("calendar_title_topics", []),
+                "ai_result": {
+                    "topic_name": (topic_result.get("ai_result") or {}).get("topic_name"),
+                    "confidence": (topic_result.get("ai_result") or {}).get("confidence"),
+                    "status": (topic_result.get("ai_result") or {}).get("status"),
+                } if topic_result.get("ai_result") else None,
+            }
+
+            evidence = {
+                "method": source,
+                "topic_name": topic_name,
+                "inherited_topic_ids": topic_result.get("inherited_topic_ids", []),
+                "calendar_title_topics": topic_result.get("calendar_title_topics", []),
+            }
+
+            if topic_id:
+                r["topic suggestion"] = topic_id
+                topic_resolved_count += 1
+                log.info("topic suggestion: '%s' via %s -> node_id=%s",
+                         topic_name or "?", source, topic_id)
+                record_resolution(
+                    "topic_suggestion", "topic suggestion",
+                    chosen_ids=[topic_id],
+                    candidates=list(topic_candidates.keys())[:10],
+                    status="resolved",
+                    evidence=evidence,
+                    target="Resource", index=i,
+                )
+            else:
+                topic_unresolved_count += 1
+                record_resolution(
+                    "topic_suggestion", "topic suggestion",
+                    chosen_ids=[],
+                    candidates=list(topic_candidates.keys())[:10],
+                    status=source if source != "unresolved" else "no_match",
+                    evidence=evidence,
+                    target="Resource", index=i,
+                )
+    else:
+        log.warning("topic suggestion: no candidates loaded from tree '%s'; skipping.", topic_tree_name)
+        topic_unresolved_count = len(updated_resources)
+    log.info("topic suggestion summary: resolved=%d  unresolved=%d", topic_resolved_count, topic_unresolved_count)
 
     return (updated_resources, updated_calendar)
