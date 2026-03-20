@@ -1,108 +1,97 @@
 # Historical Evaluation Summary
 
-**Total resources evaluated:** 100
+**Total resources evaluated:** 5
 
-## Topic Suggestion
+## Topic Suggestion (Single Pick)
 
 | Metric | Value |
 |--------|-------|
-| Resources with actual topic | 100 |
-| Resources where system predicted a topic | 96 |
-| Correct predictions | 86 |
-| Accuracy (correct / has_actual) | 86.0% |
-| Coverage (predicted / has_actual) | 96.0% |
+| Resources with actual topic | 5 |
+| Resources where system predicted a topic | 5 |
+| Exact match | 4 |
+| Accuracy (exact match / has_actual) | 80.0% |
+| Coverage (predicted / has_actual) | 100.0% |
+
+## Topic Suggestion (Multi-Topic Set)
+
+*Does the actual topic appear anywhere in the full set of inherited + AI-suggested topics?*
+
+| Metric | Value |
+|--------|-------|
+| Resources with actual topic | 5 |
+| Actual topic found in multi-topic set | 5 |
+| Recall | 100.0% |
+
+## Topic Coverage (Extended — All Agenda Item Topics)
+
+*For resources with actual agenda items: what % of the agenda items' topics did we predict?*
+
+| Metric | Value |
+|--------|-------|
+| Resources with extended topic ground truth | 3 |
+| Average recall (actual topics covered) | 100.0% |
+| Average precision (predicted topics that are correct) | 83.3% |
 
 ### Topic source breakdown
 
 | Source | Count |
 |--------|-------|
-| agenda_item_inheritance | 66 |
-| ai_classification | 30 |
-| unresolved | 4 |
+| ai_classification | 3 |
+| agenda_item_inheritance | 2 |
 
 ## Agenda Item Matching
 
 | Metric | Value |
 |--------|-------|
-| Resources with actual agenda item link | 55 |
-| Resources where system predicted agenda items | 68 |
-| Correct matches (overlap with actual) | 55 |
-| Match rate | 100.0% |
+| Resources with actual agenda item links | 3 |
+| Resources where system predicted agenda items | 2 |
+| Resources with at least one correct match | 2 |
+| Resource-level match rate | 66.7% |
+
+### Item-Level Metrics
+
+| Metric | Value |
+|--------|-------|
+| Total actual agenda item links | 5 |
+| Correctly predicted | 2 |
+| False positives (noise/over-assignment) | 8 |
+| False negatives (missed) | 3 |
+| Item recall (correct / total actual) | 40.0% |
+| Item precision (correct / (correct + FP)) | 20.0% |
+| Average per-resource recall | 44.4% |
+| Average per-resource precision | 55.6% |
 
 ## Sample Results
 
-### Correct topic predictions
+### Correct topic predictions (single pick)
 
 - **Climate and Resiliency (EX) Task Force - November 19, 2024 - Meeting Agenda**
   - Actual: [b]NAIC Climate Initiatives[/b]
   - Predicted: NAIC Climate Initiatives (via ai_classification)
-- **The Capital Adequacy (E) Task Force November 18, 2024, 3:00 PM ET Meeting Agenda**
-  - Actual: [b]Collateral Loans[/b]
-  - Predicted: Collateral Loans (via agenda_item_inheritance)
 - **International Insurance Relations (G) Committee November 17, 2024, Agenda**
   - Actual: [b]International Association of Insurance Supervisors (IAIS)[/b]
-  - Predicted: International Association of Insurance Supervisors (IAIS) (via agenda_item_inheritance)
+  - Predicted: International Association of Insurance Supervisors (IAIS) (via ai_classification)
 - **Meeting of Executive (EX) Committee November 19, 2024, Agenda**
   - Actual: [b]The NAIC Investment Oversight Framework[/b]
   - Predicted: The NAIC Investment Oversight Framework (via agenda_item_inheritance)
 - **Achieving Consistent and Comparable Climate-related Disclosures: 2024 Progress**
   - Actual: [b][color=rgb(34, 34, 34)]Financial Stability Board (FSB)[/color][/b]
   - Predicted: Financial Stability Board (FSB) (via ai_classification)
-- **ISSA 5000 General Requirements for Sustainability Assurance Engagements - Final **
-  - Actual: [b]International Standard on Sustainability Assurance (ISSA-5000)[/b]
-  - Predicted: International Standard on Sustainability Assurance (ISSA-5000) (via ai_classification)
-- **ISSA 5000 General Requirements for Sustainability Assurance Engagements - Basis **
-  - Actual: [b]International Standard on Sustainability Assurance (ISSA-5000)[/b]
-  - Predicted: International Standard on Sustainability Assurance (ISSA-5000) (via ai_classification)
-- **FAQ on the Planned Adoption and Implementation of the ICS and Conclusion of the **
-  - Actual: [b]International Association of Insurance Supervisors (IAIS)[/b]
-  - Predicted: International Association of Insurance Supervisors (IAIS) (via agenda_item_inheritance)
-- **Report on Aggregation Method Comparability Assessment**
-  - Actual: [b]International Association of Insurance Supervisors (IAIS)[/b]
-  - Predicted: International Association of Insurance Supervisors (IAIS) (via agenda_item_inheritance)
-- **Report on Aggregation Method Comparability Assessment**
-  - Actual: [b]International Association of Insurance Supervisors (IAIS)[/b]
-  - Predicted: International Association of Insurance Supervisors (IAIS) (via agenda_item_inheritance)
 
-### Incorrect topic predictions
+### Wrong single pick but actual IS in multi-topic set
 
-- **Achieving Consistent and Comparable Climate-related Disclosures: 2024 Progress**
-  - Actual: [b]International Accounting Standards Board (IASB)[/b]
-  - Predicted: Financial Stability Board (FSB) (via ai_classification)
-- **U.S. Insurer Investments in Private-Label Commercial Mortgage-Backed Securities **
-  - Actual: [b]Residential Mortgage Funds Under Schedule BA[/b]
-  - Predicted: CMBS & RMBS (via ai_classification)
-- **Evolution of Asset Intensive Insurance Report**
-  - Actual: [b]Credit for Reinsurance[/b]
-  - Predicted: The Bermuda Monetary Authority (BMA) (via ai_classification)
-- **Agenda & Materials RBC-IRE-WG - February 11, 2024**
-  - Actual: [b]Collateralized Loan Obligations (CLOs) and Asset-Backed Securities (ABS)[/b]
-  - Predicted: Exchange Traded Funds (ETFs) on the SVO-Identified Bond List (via agenda_item_inheritance)
-- **The ACLI RBC Principles for Bond Funds Presentation**
-  - Actual: [b]Funds Under Schedule BA[/b]
-  - Predicted: Exchange Traded Funds (ETFs) on the SVO-Identified Bond List (via agenda_item_inheritance)
-- **SAPWG Meeting Agenda & Materials - February 25, 2025**
-  - Actual: ALM Derivatives & Derivative Investments
-  - Predicted: Tax Credit Structures (via agenda_item_inheritance)
-- **Accounting Practices & Procedures Manual - March 2025**
-  - Actual: [b]Principles-Based Bond Definition and Reporting[/b]
-  - Predicted: Tax Credit Structures (via agenda_item_inheritance)
-- **LATF Meeting Agenda & Materials - March 22 & 23, 2025**
-  - Actual: [b]Credit for Reinsurance[/b]
-  - Predicted: Generator of Economic Scenarios (GOES) (via agenda_item_inheritance)
-- **AMI-WG Meeting Agenda - March 25, 2025**
-  - Actual: [b]Group Capital Calculations[/b]
-  - Predicted: International Association of Insurance Supervisors (IAIS) (via ai_classification)
-- **Life Insurers’ Role in the Intermediation Chain of Public and Private Credit to **
-  - Actual: [b]Collateralized Loan Obligations (CLOs) and Asset-Backed Securities (ABS)[/b]
-  - Predicted: The Federal Reserve Board (FRB) (via ai_classification)
+- **The Capital Adequacy (E) Task Force November 18, 2024, 3:00 PM ET Meeting Agenda**
+  - Actual: [b]Collateral Loans[/b]
+  - Single pick: Tax Credit Structures (via agenda_item_inheritance)
+  - All predicted topics: [b]Tax Credit Structures[/b], [b]Principles-Based Bond Definition and Reporting[/b], [b]Collateral Loans[/b], SSAP Rejection of Current Expected Credit Loss (CECL) Model, ALM Derivatives & Derivative Investments, [b]NAIC Designations and Use of Agency Ratings[/b]
 
-### Unresolved (4 resources with actual topic but no prediction)
+## Agenda Item Details
 
-- **SAPWG Adoptions (updated 11/17/2024)** (actual: [b]Principles-Based Bond Definition and Reporting[/b])
-- **NAIC 2025 Spring National Meeting Tentative Agenda** (actual: Calendar Events with no Topic)
-- **RBC-MG-TF Meeting Agenda & Materials - March 25, 2025** (actual: [b]The NAIC Investment Oversight Framework[/b])
-- **Insurers Cited in 777-Related Scheme** (actual: [b]Principles-Based Bond Definition and Reporting[/b])
+| Resource | Actual | Predicted | Overlap | FP | FN | Recall |
+|----------|--------|-----------|---------|----|----|--------|
+| The Capital Adequacy (E) Task Force November 18, 2 | 3 | 9 | 1 | 8 | 2 | 33% |
+| International Insurance Relations (G) Committee No | 1 | 0 | 0 | 0 | 1 | 0% |
+| Meeting of Executive (EX) Committee November 19, 2 | 1 | 1 | 1 | 0 | 0 | 100% |
 
 ---
 

@@ -129,6 +129,20 @@
   },
 
   {
+    "id": "naic.e.receivership_insolvency_tf",
+    "label": "Receivership & Insolvency Task Force",
+    "org_id": "naic",
+    "org_path": ["NAIC", "E", "Task Forces"],
+    "group": "task_force",
+    "tags": ["committee:E", "tf"],
+    "url": "https://content.naic.org/committees/e/receivership-insolvency-tf",
+    "extract": [
+      { "type": "docs", "extractor": "link_collector_v1", "params": { "extensions": [".pdf"] } },
+      { "type": "event_links", "extractor": "keyword_links_v1", "params": { "keywords": ["meeting", "agenda", "materials", "call"] } }
+    ]
+  },
+
+  {
     "id": "naic.e.financial_stability_tf",
     "label": "Financial Stability Task Force",
     "org_id": "naic",

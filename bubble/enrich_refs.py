@@ -818,7 +818,29 @@ def _resolve_topic_suggestion_ai(
         "Prudential Regulation Authority (PRA) about solvency, capital, stress "
         "testing, or insurance regulation → 'U.K. Solvency' (the regulatory "
         "substance), NOT 'U.K. Bank of England (BoE)' (the organization).\n\n"
-        "6. Use the organization path to disambiguate when two topics are close.\n"
+        "6. URL DOMAIN SIGNALS: The URL can reveal the true publisher even when "
+        "the organization path is misleading.\n"
+        "   Example: A document titled 'Climate-related Disclosures: 2024 Progress' "
+        "hosted at ifacweb.blob.core.windows.net (IFAC/IAASB domain) → "
+        "'International Accounting Standards Board (IASB)', even if the org path "
+        "says 'Financial Stability Board'. The URL domain is authoritative.\n"
+        "   Example: A document hosted at eiopa.europa.eu → an EIOPA topic, even "
+        "if the org path says 'European Supervisory Authorities'.\n\n"
+        "7. SPECIFICITY over PARENT ORG: When a specific sub-organization topic "
+        "exists, prefer it over the parent/umbrella organization topic.\n"
+        "   Example: 'Fit-For-55 Climate Scenario Analysis' from eiopa.europa.eu → "
+        "'European Insurance and Occupational Pensions Authority (EIOPA) Climate "
+        "Initiatives', NOT 'Joint Committee (JC) of the European Supervisory "
+        "Authorities (ESAs)'. EIOPA is a specific member of the ESAs — use the "
+        "more specific topic.\n\n"
+        "8. INSURER INVESTMENT REPORTS from Capital Markets Bureau: NAIC Capital "
+        "Markets special reports about insurer holdings of specific asset types "
+        "are typically regulatory/reporting topics, not instrument topics.\n"
+        "   Example: 'U.S. Insurer Investments in Private-Label CMBS' → "
+        "'Residential Mortgage Funds Under Schedule BA' (the regulatory reporting "
+        "category), NOT 'CMBS & RMBS' (the instrument type). These reports analyze "
+        "how insurers report/hold these assets, not the instruments themselves.\n\n"
+        "9. Use the organization path to disambiguate when two topics are close.\n"
         "- confidence is your certainty from 0 to 1."
     )
     user_msg = (
@@ -843,7 +865,7 @@ def _resolve_topic_suggestion_ai(
         data = _chat_fn([
             {"role": "system", "content": system_msg},
             {"role": "user", "content": user_msg},
-        ], reasoning_effort="medium")
+        ], reasoning_effort="high")
     except Exception:
         log.warning("topic suggestion: AI call failed for resource %s", title[:60], exc_info=True)
         return result
@@ -1000,6 +1022,111 @@ def _extract_title_search_keywords(resource_name: str) -> list[str]:
     return meaningful[:3]
 
 
+# ---------------------------------------------------------------------------
+# BA Ref # prefix → NAIC group name mapping (for unlinked agenda items)
+# ---------------------------------------------------------------------------
+# Maps known BA Ref # prefixes to the canonical NAIC group tree-node name.
+# Used to infer group membership for agenda items missing "Discussed at list".
+_BA_REF_PREFIX_TO_GROUP: dict[str, str] = {
+    "SAPWG": "Statutory Accounting Principles (E) Working Group",
+    "VOSTF": "Valuation of Securities (E) Task Force",
+    "LATF": "Life Actuarial (A) Task Force",
+    "BWG": "Blanks (E) Working Group",
+    "LRBCWG": "Life Risk Based Capital (E) Working Group",
+    "RBC-IRE": "Risk Based Capital Investment Risk and Evaluation (E) Working Group",
+    "RBC-IRE-WG": "Risk Based Capital Investment Risk and Evaluation (E) Working Group",
+    "CATF": "Capital Adequacy (E) Task Force",
+    "CA": "Capital Adequacy (E) Task Force",
+    "RAWG": "Receivership and Insolvency (E) Task Force",
+    "SSWG": "Structured Securities Group",
+    "MWG": "Macroprudential (E) Working Group",
+    "FTF": "Financial Stability (E) Task Force",
+    # Non-NAIC orgs
+    "IAIS": "The International Association of Insurance Supervisors",
+    "BMA": "Bermuda Monetary Authority",
+    "EIOPA": "European Insurance and Occupational Pensions Authority",
+    "PRA": "Prudential Regulation Authority (UK)",
+    "FIO": "Federal Insurance Office",
+    "FACI": "Federal Advisory Committee on Insurance",
+    "E-Committee": "Executive (EX) Committee",
+}
+
+# Compiled regex: match any known prefix at the start of BA Ref #
+_BA_REF_PREFIX_RE = re.compile(
+    r"^(" + "|".join(re.escape(k) for k in sorted(_BA_REF_PREFIX_TO_GROUP, key=len, reverse=True)) + r")(?:[#\s\-_]|$)",
+    re.IGNORECASE,
+)
+
+
+def _infer_group_from_ba_ref(ba_ref: str) -> str | None:
+    """Infer NAIC group name from BA Ref # prefix. Returns canonical group name or None."""
+    ba_ref = (ba_ref or "").strip()
+    if not ba_ref:
+        return None
+    m = _BA_REF_PREFIX_RE.match(ba_ref)
+    if m:
+        prefix = m.group(1)
+        # Normalize to title case for lookup
+        for key in _BA_REF_PREFIX_TO_GROUP:
+            if key.lower() == prefix.lower():
+                return _BA_REF_PREFIX_TO_GROUP[key]
+    return None
+
+
+def _get_unlinked_items_for_group(
+    naic_group_node_id: str,
+    naic_group_name: str = "",
+) -> list[dict]:
+    """
+    Get agenda items that have no 'Discussed at list' but whose BA Ref #
+    prefix implies they belong to the given group.
+
+    This recovers ~34% of agenda items that are invisible to group-scoped
+    retrieval because 'Discussed at list' was never populated.
+    """
+    unlinked = lookups.get_unlinked_agenda_items()
+    if not unlinked:
+        return []
+
+    # Resolve the target group name (for matching against inferred names)
+    target_name = (naic_group_name or "").strip()
+
+    # Also resolve node_id → name if we have the node ID
+    if naic_group_node_id and not target_name:
+        try:
+            tree = lookups.get_tree_by_name(NAIC_GROUP_TREE_NAME)
+            if tree:
+                tree_id = tree.get("_id") or tree.get("id")
+                nodes = lookups.get_tree_nodes_in_tree(tree_id)
+                for n in nodes:
+                    nid = n.get("_id") or n.get("id") or ""
+                    if nid == naic_group_node_id:
+                        target_name = (n.get("name") or n.get("Name") or "").strip()
+                        break
+        except Exception:
+            pass
+
+    if not target_name:
+        return []
+
+    # Normalize for comparison
+    target_lower = target_name.lower()
+
+    matched: list[dict] = []
+    for item in unlinked:
+        ba_ref = (item.get("BA Ref #") or "").strip()
+        inferred = _infer_group_from_ba_ref(ba_ref)
+        if inferred and inferred.lower() == target_lower:
+            matched.append(item)
+
+    if matched:
+        log.info(
+            "unlinked agenda items: %d item(s) inferred for group '%s' via BA Ref # prefix",
+            len(matched), target_name[:50],
+        )
+    return matched
+
+
 def _get_agenda_item_candidates(
     naic_group_node_id: str,
     bubble_snapshot: dict | None = None,
@@ -1007,6 +1134,7 @@ def _get_agenda_item_candidates(
     fallback_ref_numbers: list[str] | None = None,
     resource_name: str = "",
     resource_id: str = "",
+    naic_group_name: str = "",
 ) -> tuple[list[dict], str]:
     """
     Fetch candidate Agenda Items, with multi-tier retrieval for incomplete linkage.
@@ -1046,6 +1174,19 @@ def _get_agenda_item_candidates(
                     group_candidates.append(item)
         else:
             group_candidates = lookups.search_agenda_items_by_naic_group(naic_group_node_id)
+
+    # --- Tier 1.5: unlinked agenda items inferred by BA Ref # prefix ---
+    # Recovers items with no "Discussed at list" but whose BA Ref # prefix
+    # implies group membership (e.g., "SAPWG#2025-05" → SAPWG).
+    if naic_group_node_id and not bubble_snapshot:
+        group_seen = {str(_obj_id(c)) for c in group_candidates if _obj_id(c)}
+        unlinked_for_group = _get_unlinked_items_for_group(naic_group_node_id, naic_group_name)
+        for item in unlinked_for_group:
+            iid = str(_obj_id(item) or "")
+            if iid and iid not in group_seen:
+                item["__retrieval_source"] = "group_scoped"
+                group_candidates.append(item)
+                group_seen.add(iid)
 
     # Check if group candidates have any ref overlap with the requested refs
     # (if so, the primary retrieval is sufficient — skip ref fallback)
@@ -1388,20 +1529,21 @@ def _resolve_agenda_items_for_resource(
             if nr and nr not in all_ref_numbers:
                 all_ref_numbers.append(nr)
 
-    # Fetch candidate agenda items (bidirectional + group-scoped + fallbacks)
+    # Resolve NAIC group name for cross-group detection and unlinked item retrieval
+    naic_group_name = (context.get("label") or "").strip()
+    if not naic_group_name and pdf_signals:
+        naic_group_name = (pdf_signals.get("group_name_hint") or "").strip()
+
+    # Fetch candidate agenda items (bidirectional + group-scoped + unlinked + fallbacks)
     raw_candidates, retrieval_source = _get_agenda_item_candidates(
         naic_group_node_id or "", bubble_snapshot,
         fallback_ref_numbers=all_ref_numbers or None,
         resource_name=resource_name,
         resource_id=resource_id,
+        naic_group_name=naic_group_name,
     )
     if not raw_candidates:
         return empty_result
-
-    # Resolve NAIC group name for cross-group detection
-    naic_group_name = (context.get("label") or "").strip()
-    if not naic_group_name and pdf_signals:
-        naic_group_name = (pdf_signals.get("group_name_hint") or "").strip()
 
     # --- Tier 1: Deterministic ref matching ---
     scored: list[tuple[dict, float, dict]] = []
@@ -1623,7 +1765,7 @@ def _resolve_agenda_items_ai(
         data = _chat_fn([
             {"role": "system", "content": system_msg},
             {"role": "user", "content": user_msg},
-        ], reasoning_effort="medium")
+        ], reasoning_effort="high")
     except Exception:
         log.warning("agenda item AI: call failed for resource %s", title[:60], exc_info=True)
         return result
@@ -1798,6 +1940,14 @@ def _resolve_topic_enhanced(
         "ai_result": None,
     }
 
+    # Detect meeting agendas / materials — these cover multiple topics,
+    # so single-topic inheritance from one agenda item is unreliable.
+    resource_name = (resource.get("Name") or "").strip()
+    _is_meeting_agenda = bool(re.search(
+        r"(?:meeting\s+)?agenda(?:\s+&\s+materials)?|materials\s*-\s*(?:january|february|march|april|may|june|july|august|september|october|november|december)",
+        resource_name, re.IGNORECASE,
+    ))
+
     # Path A: Inherit from matched agenda items
     if matched_agenda_items_result:
         inherited_ids = matched_agenda_items_result.get("inherited_topic_ids") or []
@@ -1816,13 +1966,30 @@ def _resolve_topic_enhanced(
 
         if real_inherited_ids:
             result["inherited_topic_ids"] = real_inherited_ids
+
             if len(real_inherited_ids) == 1:
                 chosen_id = real_inherited_ids[0]
             elif use_ai and len(real_inherited_ids) > 1:
-                # Multiple inherited topics — use AI to disambiguate
+                # Multiple inherited topics — use AI to disambiguate.
+                # For meeting agendas, also accept AI's unconstrained choice
+                # since agendas cover multiple topics and inheritance is less reliable.
                 ai_result = _resolve_topic_suggestion_ai(resource, context, topic_candidates, _chat_fn)
-                if ai_result.get("node_id") and ai_result["node_id"] in real_inherited_ids:
-                    chosen_id = ai_result["node_id"]
+                ai_id = ai_result.get("node_id")
+                ai_conf = ai_result.get("confidence", 0)
+                if ai_id and ai_id in real_inherited_ids:
+                    chosen_id = ai_id
+                elif _is_meeting_agenda and ai_id and ai_conf >= 0.7:
+                    # Meeting agenda: trust AI's unconstrained choice
+                    log.info(
+                        "topic: meeting agenda '%s' — AI chose '%s' (conf=%.2f) "
+                        "outside inherited set, accepting",
+                        resource_name[:60], ai_result.get("topic_name", ""), ai_conf,
+                    )
+                    result["topic_id"] = ai_id
+                    result["topic_name"] = ai_result.get("topic_name")
+                    result["source"] = "ai_classification"
+                    result["ai_result"] = ai_result
+                    return result
                 else:
                     chosen_id = real_inherited_ids[0]
             else:

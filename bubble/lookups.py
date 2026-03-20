@@ -494,6 +494,33 @@ def search_agenda_items_by_resource(
         return []
 
 
+def get_unlinked_agenda_items() -> list[dict]:
+    """
+    Fetch all Agenda Items that have NO 'Discussed at list' populated.
+
+    These items are invisible to group-scoped retrieval but may still belong
+    to a specific group (inferable from BA Ref # prefix).  Cached for the
+    duration of the process.
+    """
+    cache_key = "agenda_items:__unlinked__"
+    if cache_key in _agenda_items_cache:
+        return _agenda_items_cache[cache_key]
+    try:
+        client = _client()
+        # Fetch all agenda items and filter locally — Bubble doesn't support
+        # "is_empty" constraint on list fields reliably.
+        all_items: list[dict] = []
+        for item in client.list_all(TYPE_AGENDA_ITEM, page_size=100):
+            all_items.append(item)
+        unlinked = [a for a in all_items if not a.get("Discussed at list")]
+        log.info("get_unlinked_agenda_items: %d total, %d unlinked", len(all_items), len(unlinked))
+        _agenda_items_cache[cache_key] = unlinked
+        return unlinked
+    except Exception as e:
+        log.warning("get_unlinked_agenda_items failed: %s", e)
+        return []
+
+
 def get_agenda_item(item_id: str) -> dict | None:
     """Fetch a single Agenda Item by ID."""
     if not item_id or not str(item_id).strip():
