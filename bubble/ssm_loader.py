@@ -1,6 +1,6 @@
 """
-Load OpenAI settings from AWS SSM Parameter Store in AWS/prod mode.
-Only fetches parameters not already set in env. Never logs API keys.
+Load settings from AWS SSM Parameter Store in AWS/prod mode.
+Only fetches parameters not already set in env. Never logs secrets.
 """
 
 import logging
@@ -103,4 +103,67 @@ def load_openai_env_from_ssm() -> None:
                 env_key,
                 param_name,
                 e,
+            )
+
+
+# ---------------------------------------------------------------------------
+# Database credentials
+# ---------------------------------------------------------------------------
+
+_DB_SSM_PARAMS = [
+    # (env_var, ssm_param_path, is_secret)
+    ("DATABASE_IP",                "/web-change-tracker/prod/database_ip",                False),
+    ("DATABASE_NAME",              "/web-change-tracker/prod/database_name",              False),
+    ("DATABASE_PORT",              "/web-change-tracker/prod/database_port",              False),
+    ("DATABASE_USERNAME_CHATKIT",  "/web-change-tracker/prod/database_username_chatkit",  False),
+    ("DATABASE_PASSWORD_CHATKIT",  "/web-change-tracker/prod/database_password_chatkit",  True),
+]
+
+
+def load_db_env_from_ssm() -> None:
+    """
+    Load pgvector DB connection settings from SSM if not already set in env.
+    Only runs when STATE_BACKEND=aws|dynamodb, ENVIRONMENT=prod, or OPENAI_FETCH_FROM_SSM=true.
+    On failure, logs warning and continues (pgvector tools will be skipped).
+    """
+    if not _should_fetch_from_ssm():
+        return
+
+    needed = [
+        (env_key, param, decrypt)
+        for env_key, param, decrypt in _DB_SSM_PARAMS
+        if not (os.environ.get(env_key) or "").strip()
+    ]
+    if not needed:
+        return
+
+    try:
+        import boto3
+    except ImportError:
+        log.warning("boto3 not installed, skipping SSM load for DB settings")
+        return
+
+    region = (os.environ.get("AWS_REGION") or "us-east-1").strip()
+    try:
+        client = boto3.client("ssm", region_name=region)
+    except Exception as e:
+        log.warning("Could not create SSM client for DB settings: %s", e)
+        return
+
+    for env_key, param_name, with_decrypt in needed:
+        try:
+            kwargs: dict = {"Name": param_name}
+            if with_decrypt:
+                kwargs["WithDecryption"] = True
+            resp = client.get_parameter(**kwargs)
+            value = (resp.get("Parameter") or {}).get("Value") or ""
+            if value and isinstance(value, str):
+                os.environ[env_key] = value.strip()
+                log.debug("Loaded %s from SSM parameter %s", env_key, param_name)
+        except client.exceptions.ParameterNotFound:
+            log.debug("SSM parameter %s not found, skipping %s", param_name, env_key)
+        except Exception as e:
+            log.warning(
+                "Failed to load %s from SSM (%s), continuing without: %s",
+                env_key, param_name, e,
             )

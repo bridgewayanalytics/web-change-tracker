@@ -980,10 +980,19 @@ def save_snapshot(key: str, page_hash: str, extracted: dict[str, list[dict]], sn
     log.info("Snapshot saved to %s", path)
 
 
-def save_state(key: str, page_hash: str, extracted: dict[str, list[dict]], skip: bool = False) -> None:
+def save_state(
+    key: str,
+    page_hash: str,
+    extracted: dict[str, list[dict]],
+    skip: bool = False,
+    content_html: str | None = None,
+) -> None:
     if skip:
         return
-    _save_target_state(key, {"page_hash": page_hash, "extracted": extracted})
+    state: dict = {"page_hash": page_hash, "extracted": extracted}
+    if content_html is not None:
+        state["content_html"] = content_html
+    _save_target_state(key, state)
 
 
 # -----------------------------------------------------------------------------
@@ -1496,6 +1505,8 @@ def process_target(
     inject_fakes: bool = False,
     run_id: str | None = None,
     run_timestamp: int | None = None,
+    org_path: list | None = None,
+    group: str | None = None,
 ) -> dict:
     """Process one target: fetch, extract, diff, save, print."""
     log.info("--- %s ---", label)
@@ -1504,7 +1515,7 @@ def process_target(
     # Archive raw HTML to S3 (non-blocking, skipped if HTML_SNAPSHOT_BUCKET not set)
     if run_id and run_timestamp:
         from storage.html_snapshot_s3 import store_html_snapshot
-        store_html_snapshot(html, url, run_id, run_timestamp)
+        store_html_snapshot(html, url, run_id, run_timestamp, target_id=target_id)
     # dump-html-snapshot and debug-extract stage 1 use this exact html (no modifications)
     if dump_html_snapshot:
         debug_dir = Path("debug")
@@ -1513,6 +1524,9 @@ def process_target(
         html_path.write_text(html, encoding="utf-8")
         log.info("Saved HTML snapshot to %s", html_path)
     page_hash, soup = parse_html(html)
+
+    from scrape.html_content_extractor import strip_to_content
+    content_html: str = strip_to_content(html)
 
     rules = extract_rules if extract_rules else DEFAULT_EXTRACT
     if debug_extract:
@@ -1533,6 +1547,7 @@ def process_target(
 
     from_snapshot = compare_snapshot_dir if compare_snapshot else None
     prev = load_state(target_id, from_snapshot_dir=from_snapshot)
+    prev_content_html: str | None = (prev or {}).get("content_html")
 
     curr_for_diff = extracted
     if inject_fakes:
@@ -1552,7 +1567,43 @@ def process_target(
             })
     change = compute_change(prev, page_hash, curr_for_diff)
 
-    save_state(target_id, page_hash, extracted, skip=compare_snapshot or skip_persist)
+    if run_id and run_timestamp and (change.get("page_changed") or change.get("first_run")):
+        from storage.page_change_s3 import store_page_change
+        store_page_change(
+            target_id=target_id,
+            run_id=run_id,
+            run_timestamp=run_timestamp,
+            label=label,
+            url=url,
+            before_html=prev_content_html or "",
+            after_html=content_html,
+            before_hash=change.get("before_hash"),
+            after_hash=change.get("after_hash"),
+            first_run=bool(change.get("first_run")),
+        )
+
+        try:
+            from scrape.page_chunker import chunk_page
+            from storage.chunk_s3 import store_page_chunks
+            target_context = {
+                "target_id": target_id,
+                "label": label,
+                "url": url,
+                "group": group or target_id,
+                "org_path": org_path or [],
+            }
+            chunks = chunk_page(content_html, target_context, run_timestamp=run_timestamp)
+            store_page_chunks(chunks, target_id=target_id, run_id=run_id, run_timestamp=run_timestamp)
+        except Exception as e:
+            log.warning("Page chunking failed for %s (non-fatal): %s", target_id, e)
+
+    save_state(
+        target_id,
+        page_hash,
+        extracted,
+        skip=compare_snapshot or skip_persist,
+        content_html=content_html,
+    )
     if snapshot_dir:
         save_snapshot(target_id, page_hash, extracted, snapshot_dir)
 
@@ -1575,7 +1626,14 @@ def process_target(
     for rtype, items in sorted(extracted.items()):
         log.info("  %s: %d items", rtype, len(items))
 
-    return {"target_id": target_id, "label": label, "url": url, "change": change}
+    return {
+        "target_id": target_id,
+        "label": label,
+        "url": url,
+        "change": change,
+        "prev_content_html": prev_content_html,
+        "content_html": content_html,
+    }
 
 
 def parse_args() -> argparse.Namespace:
@@ -1769,6 +1827,74 @@ def _build_bubble_payloads(
     )
     from bubble.ai_enrichment import enrich_payloads
 
+    from bubble.page_change_agent import (
+        PAGE_CHANGE_AGENT_ENABLED,
+        agent_output_to_by_type,
+        extract_page_change,
+    )
+
+    # When PAGE_CHANGE_AGENT_ENABLED, run LLM agent on each changed event and
+    # merge agent-extracted by_type data into the change event before payload building.
+    if PAGE_CHANGE_AGENT_ENABLED:
+        for ev in change_events:
+            if "error" in ev:
+                continue
+            change = ev.get("change", {})
+            if not change.get("page_changed") and not change.get("first_run"):
+                continue
+            before_html = ev.get("prev_content_html") or ""
+            after_html = ev.get("content_html") or ""
+            if not after_html:
+                continue
+            target_context = {
+                "label": ev.get("label", ""),
+                "url": ev.get("url", ""),
+                "org_path": ev.get("org_path", []),
+                "group": ev.get("group", ""),
+                "tags": ev.get("tags", []),
+            }
+            agent_output = extract_page_change(before_html, after_html, target_context)
+            if agent_output and agent_output.get("alert_type") != "No Meaningful Change":
+                # Attach agent fields to change event for downstream use
+                ev["__agent_output"] = agent_output
+                # Merge agent-extracted by_type into change (agent takes precedence when present)
+                agent_by_type = agent_output_to_by_type(agent_output)
+                if agent_by_type:
+                    existing = ev["change"].get("by_type") or {}
+                    merged = dict(existing)
+                    merged.update(agent_by_type)
+                    ev["change"] = dict(ev["change"])
+                    ev["change"]["by_type"] = merged
+                # Attach alert metadata for payload builders
+                for field in ("alert_type", "alert_title", "alert_description"):
+                    if agent_output.get(field):
+                        ev[f"__agent_{field}"] = agent_output[field]
+
+    # Run document agent for events where the alert type indicates new/updated materials
+    from bubble.document_agent import should_run_for_alert, extract_document_data as _extract_doc
+    for ev in change_events:
+        agent_output = ev.get("__agent_output") or {}
+        if not agent_output or not should_run_for_alert(agent_output):
+            continue
+        library_items = agent_output.get("library_items") or []
+        doc_results: list[dict] = []
+        for item in library_items:
+            name = item.get("preliminary_title") or item.get("title") or item.get("file_name") or ""
+            url = item.get("url") or ""
+            if not name:
+                continue
+            doc_result = _extract_doc(name, url)
+            if doc_result:
+                doc_results.append({"item": item, "extraction": doc_result})
+                log.info(
+                    "document_agent: %s -> topics=%s agenda=%s",
+                    name[:60],
+                    doc_result.get("topic_ids"),
+                    doc_result.get("agenda_item_ids"),
+                )
+        if doc_results:
+            ev["__doc_extraction"] = doc_results
+
     resources = build_resource_payload(change_events)
     calendar_items = build_calendar_item_payload(change_events)
 
@@ -1914,9 +2040,9 @@ def render_email_report(
     calendar_items: list[dict],
 ) -> str:
     """
-    Email report format: counts, unique source links, then Bubble payload JSON blocks.
-    Only new items (resources/calendar_items are already new-only). Source URLs deduped.
-    Always produced (0 counts and empty arrays when no changes).
+    Email report: per-changed-event agent output (all fields), document extraction results,
+    then summary counts. Replaces raw Bubble payload JSON blocks.
+    Always produced (empty when no changes).
     """
     events_with_changes = [
         e for e in change_events
@@ -1929,23 +2055,93 @@ def render_email_report(
     lines.append("New Calendar Items (Events): %d" % ne)
     lines.append("")
 
-    source_urls = sorted({
-        (e.get("url") or "").strip()
-        for e in events_with_changes
-        if (e.get("url") or "").strip()
-    })
-    lines.append("Source links:")
-    for u in source_urls:
-        lines.append(u)
-    lines.append("")
+    if not events_with_changes:
+        lines.append("No page changes detected.")
+        return "\n".join(lines)
 
-    lines.append("Bubble Resource payload:")
-    lines.append("-" * 40)
-    lines.append(json.dumps(resources, indent=2, ensure_ascii=False))
-    lines.append("")
-    lines.append("Bubble Calendar Item payload:")
-    lines.append("-" * 40)
-    lines.append(json.dumps(calendar_items, indent=2, ensure_ascii=False))
+    for ev in events_with_changes:
+        label = ev.get("label") or ev.get("url") or "Unknown page"
+        url = (ev.get("url") or "").strip()
+        lines.append("=" * 60)
+        lines.append(f"PAGE: {label}")
+        if url:
+            lines.append(f"URL:  {url}")
+        lines.append("")
+
+        agent_output = ev.get("__agent_output") or {}
+        if agent_output:
+            def _val(key: str) -> str:
+                v = agent_output.get(key)
+                return str(v) if v is not None else "(none)"
+
+            lines.append(f"Alert Type:        {_val('alert_type')}")
+            lines.append(f"Alert Title:       {_val('alert_title')}")
+            lines.append(f"Alert Description: {_val('alert_description')}")
+            lines.append(f"Alert URL:         {_val('alert_url')}")
+            lines.append(f"Organization:      {_val('organization')}")
+            lines.append(f"Alert Date/Time:   {_val('alert_date_time')}")
+            lines.append("")
+
+            events_list = agent_output.get("events") or []
+            if events_list:
+                lines.append(f"Events ({len(events_list)}):")
+                for ev_item in events_list:
+                    lines.append(f"  - {ev_item.get('title') or '(no title)'}")
+                    if ev_item.get("start_datetime"):
+                        lines.append(f"    Start:    {ev_item['start_datetime']}")
+                    if ev_item.get("end_datetime"):
+                        lines.append(f"    End:      {ev_item['end_datetime']}")
+                    if ev_item.get("timezone"):
+                        lines.append(f"    Timezone: {ev_item['timezone']}")
+                    if ev_item.get("url"):
+                        lines.append(f"    URL:      {ev_item['url']}")
+                    if ev_item.get("call_in_access_code"):
+                        lines.append(f"    Access:   {ev_item['call_in_access_code']}")
+                lines.append("")
+
+            lib_items = agent_output.get("library_items") or []
+            if lib_items:
+                lines.append(f"Library Items ({len(lib_items)}):")
+                for item in lib_items:
+                    title = item.get("preliminary_title") or item.get("title") or item.get("file_name") or "(no title)"
+                    lines.append(f"  - {title}")
+                    if item.get("url"):
+                        lines.append(f"    URL: {item['url']}")
+                    if item.get("file_name"):
+                        lines.append(f"    File: {item['file_name']}")
+                lines.append("")
+
+            agenda_items = agent_output.get("agenda_items") or []
+            if agenda_items:
+                lines.append(f"Agenda Items ({len(agenda_items)}):")
+                for ag in agenda_items:
+                    title = ag.get("title") or ag.get("official_title") or "(no title)"
+                    lines.append(f"  - {title}")
+                    if ag.get("standardized_id"):
+                        lines.append(f"    ID: {ag['standardized_id']}")
+                    if ag.get("chronicle_topics"):
+                        lines.append(f"    Topics: {', '.join(ag['chronicle_topics'])}")
+                lines.append("")
+        else:
+            lines.append("(no agent output)")
+            lines.append("")
+
+        # Document extraction results
+        doc_extraction = ev.get("__doc_extraction") or []
+        if doc_extraction:
+            lines.append(f"Document Extraction ({len(doc_extraction)} items):")
+            for entry in doc_extraction:
+                item = entry.get("item") or {}
+                extraction = entry.get("extraction") or {}
+                name = item.get("preliminary_title") or item.get("title") or item.get("file_name") or "(unknown)"
+                lines.append(f"  {name}:")
+                if extraction.get("summary"):
+                    lines.append(f"    Summary:       {extraction['summary']}")
+                if extraction.get("topic_ids"):
+                    lines.append(f"    Topic IDs:     {', '.join(str(x) for x in extraction['topic_ids'])}")
+                if extraction.get("agenda_item_ids"):
+                    lines.append(f"    Agenda IDs:    {', '.join(str(x) for x in extraction['agenda_item_ids'])}")
+            lines.append("")
 
     return "\n".join(lines)
 
@@ -2403,10 +2599,11 @@ def main() -> None:
     from bubble.reference_resolution import clear_records
     clear_records()
 
-    # Load OpenAI settings from SSM in AWS/prod mode (before any bubble/ai code)
+    # Load OpenAI and DB settings from SSM in AWS/prod mode (before any bubble/ai code)
     try:
-        from bubble.ssm_loader import load_openai_env_from_ssm
+        from bubble.ssm_loader import load_openai_env_from_ssm, load_db_env_from_ssm
         load_openai_env_from_ssm()
+        load_db_env_from_ssm()
     except Exception as e:
         log.debug("SSM loader skipped or failed: %s", e)
 
@@ -2493,6 +2690,8 @@ def main() -> None:
                 debug_extract=args.debug_extract,
                 run_id=run_id,
                 run_timestamp=run_timestamp,
+                org_path=t.get("org_path"),
+                group=t.get("group"),
             )
             # Include org grouping and report options for reporting
             for k in ("org_id", "org_path", "group", "tags", "include_hash_changes"):
@@ -2624,6 +2823,13 @@ def main() -> None:
     # when BUBBLE_ARTIFACT_BUCKET is set. This is read-only: no Bubble writes are performed.
     _upload_bubble_report_to_s3(run_timestamp, run_spec, args.targets_file)
 
+    # Write UI-ready alerts output: runs/<date>/<run_id>/alerts.json + per-page agent_output/doc_extractions
+    try:
+        from storage.alert_s3 import store_run_alerts
+        store_run_alerts(change_events, run_id, run_timestamp)
+    except Exception as e:
+        log.warning("Alert S3 write failed (non-fatal): %s", e)
+
     # Only send email when EMAIL_ENABLED=true, there are meaningful changes, and at least one
     # Resource or Calendar Item in the Bubble payload (avoid empty payload emails).
     has_payload = bool(resources or calendar_items)
@@ -2647,7 +2853,9 @@ def main() -> None:
     if os.environ.get("CHANGELOG_BUCKET", "").strip():
         from storage.changelog_s3 import append_change_events as s3_append
 
-        uri = s3_append(run_timestamp, change_events)
+        _HTML_KEYS = {"content_html", "prev_content_html"}
+        changelog_events = [{k: v for k, v in e.items() if k not in _HTML_KEYS} for e in change_events]
+        uri = s3_append(run_timestamp, changelog_events)
         if uri:
             log.info("Change events appended to %s", uri)
 

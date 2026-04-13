@@ -8,20 +8,18 @@ from urllib.parse import urlparse
 
 log = logging.getLogger(__name__)
 
-# Per-run dedup: set of (url, content_hash) already uploaded this process.
-_uploaded: set[tuple[str, str]] = set()
-
 
 def store_html_snapshot(
     html: str,
     url: str,
     run_id: str,
     run_timestamp: int,
+    target_id: str = "",
 ) -> str | None:
     """
     Upload raw HTML to S3 if HTML_SNAPSHOT_BUCKET is set.
 
-    Path: html_snapshots/<domain>/YYYY/MM/DD/<run_id>.html
+    Path: html_snapshots/<target_id>/YYYY/MM/DD/<run_id>.html
     Returns the S3 URI on success, None if skipped, never raises.
     """
     bucket = (os.environ.get("HTML_SNAPSHOT_BUCKET") or "").strip()
@@ -31,16 +29,10 @@ def store_html_snapshot(
     try:
         content_hash = hashlib.sha256(html.encode("utf-8")).hexdigest()
 
-        # Dedup: skip if same URL + hash already uploaded in this run.
-        dedup_key = (url, content_hash)
-        if dedup_key in _uploaded:
-            log.debug("HTML snapshot skipped (duplicate): %s", url)
-            return None
-
-        domain = urlparse(url).netloc or "unknown"
+        slug = target_id.strip() if target_id else (urlparse(url).netloc or "unknown")
         dt = datetime.fromtimestamp(run_timestamp, tz=timezone.utc)
         key = (
-            f"html_snapshots/{domain}"
+            f"html_snapshots/{slug}"
             f"/{dt.year:04d}/{dt.month:02d}/{dt.day:02d}"
             f"/{run_id}.html"
         )
@@ -72,7 +64,6 @@ def store_html_snapshot(
             Metadata=metadata,
         )
 
-        _uploaded.add(dedup_key)
         log.info("HTML snapshot uploaded to s3://%s/%s", bucket, key)
         return f"s3://{bucket}/{key}"
 

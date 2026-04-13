@@ -37,7 +37,11 @@ def load_target_state(target_id: str) -> dict | None:
     except json.JSONDecodeError:
         extracted = {}
 
-    return {"page_hash": page_hash, "extracted": extracted}
+    result: dict = {"page_hash": page_hash, "extracted": extracted}
+    content_html = item.get("content_html", {}).get("S")
+    if content_html is not None:
+        result["content_html"] = content_html
+    return result
 
 
 def save_target_state(target_id: str, state: dict[str, Any]) -> None:
@@ -49,13 +53,15 @@ def save_target_state(target_id: str, state: dict[str, Any]) -> None:
     page_hash = state.get("page_hash", "")
     extracted = state.get("extracted", {})
     extracted_json = json.dumps(extracted)
+    content_html = state.get("content_html")
+
+    item: dict = {
+        "target_id": {"S": target_id},
+        "page_hash": {"S": page_hash},
+        "extracted_json": {"S": extracted_json},
+    }
+    if content_html is not None:
+        item["content_html"] = {"S": content_html}
 
     client = _get_client()
-    client.put_item(
-        TableName=table_name,
-        Item={
-            "target_id": {"S": target_id},
-            "page_hash": {"S": page_hash},
-            "extracted_json": {"S": extracted_json},
-        },
-    )
+    client.put_item(TableName=table_name, Item=item)

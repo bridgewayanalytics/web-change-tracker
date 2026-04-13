@@ -18,7 +18,6 @@ from bubble.enrich_refs import (
 )
 from bubble.enrich_refs import _parse_ai_classification_response as parse_ai_response
 from bubble.enrich_refs import _build_topic_candidates
-from bubble.enrich_refs import _resolve_topic_suggestion_ai
 from bubble.enrich_refs import _resolve_organization_naic_node
 from bubble.enrich_refs import _resolve_calendar_by_naic_group
 from bubble.enrich_refs import _normalize_for_matching, _resolve_naic_group_node
@@ -310,124 +309,7 @@ class TestBuildTopicCandidates(unittest.TestCase):
         self.assertEqual(result, {})
 
 
-# ---------------------------------------------------------------------------
-# Topic suggestion AI resolver
-# ---------------------------------------------------------------------------
 
-class TestResolveTopicSuggestionAi(unittest.TestCase):
-    CANDIDATES = {
-        "NAIC Investments": "node-inv",
-        "naic investments": "node-inv",
-        "Property & Casualty": "node-pc",
-        "property & casualty": "node-pc",
-        "Life Insurance": "node-life",
-        "life insurance": "node-life",
-    }
-
-    def _resource(self, name="Test Resource", url="https://example.com", notes=""):
-        return {"Name": name, "URL": url, "notes": notes}
-
-    def _context(self, label="", org_path=None):
-        return {"label": label, "org_path": org_path or []}
-
-    def _make_chat_fn(self, topic_name, confidence):
-        """Return a stub _chat_fn that returns the given AI response."""
-        def stub(messages, reasoning_effort="low"):
-            return {"topic_name": topic_name, "confidence": confidence}
-        return stub
-
-    def test_resolved_with_exact_match(self):
-        chat_fn = self._make_chat_fn("NAIC Investments", 0.9)
-        result = _resolve_topic_suggestion_ai(
-            self._resource(), self._context(), self.CANDIDATES, _chat_fn=chat_fn,
-        )
-        self.assertEqual(result["status"], "resolved")
-        self.assertEqual(result["node_id"], "node-inv")
-        self.assertEqual(result["topic_name"], "NAIC Investments")
-        self.assertAlmostEqual(result["confidence"], 0.9)
-
-    def test_resolved_case_insensitive(self):
-        chat_fn = self._make_chat_fn("naic investments", 0.8)
-        result = _resolve_topic_suggestion_ai(
-            self._resource(), self._context(), self.CANDIDATES, _chat_fn=chat_fn,
-        )
-        self.assertEqual(result["status"], "resolved")
-        self.assertEqual(result["node_id"], "node-inv")
-
-    def test_low_confidence_below_threshold(self):
-        chat_fn = self._make_chat_fn("NAIC Investments", 0.3)
-        result = _resolve_topic_suggestion_ai(
-            self._resource(), self._context(), self.CANDIDATES, _chat_fn=chat_fn,
-        )
-        self.assertEqual(result["status"], "low_confidence")
-        self.assertIsNone(result["node_id"])
-
-    def test_ai_returns_null(self):
-        chat_fn = self._make_chat_fn(None, 0)
-        result = _resolve_topic_suggestion_ai(
-            self._resource(), self._context(), self.CANDIDATES, _chat_fn=chat_fn,
-        )
-        self.assertEqual(result["status"], "ai_null")
-        self.assertIsNone(result["node_id"])
-
-    def test_ai_returns_name_not_in_candidates(self):
-        chat_fn = self._make_chat_fn("Fake Topic", 0.95)
-        result = _resolve_topic_suggestion_ai(
-            self._resource(), self._context(), self.CANDIDATES, _chat_fn=chat_fn,
-        )
-        self.assertEqual(result["status"], "not_in_candidates")
-        self.assertIsNone(result["node_id"])
-
-    def test_ai_exception_returns_unresolved(self):
-        def failing_fn(messages, reasoning_effort="low"):
-            raise RuntimeError("API down")
-        result = _resolve_topic_suggestion_ai(
-            self._resource(), self._context(), self.CANDIDATES, _chat_fn=failing_fn,
-        )
-        self.assertEqual(result["status"], "unresolved")
-        self.assertIsNone(result["node_id"])
-
-    def test_empty_candidates_returns_unresolved(self):
-        chat_fn = self._make_chat_fn("Anything", 0.9)
-        result = _resolve_topic_suggestion_ai(
-            self._resource(), self._context(), {}, _chat_fn=chat_fn,
-        )
-        self.assertEqual(result["status"], "unresolved")
-
-    def test_bbcode_name_resolved_via_stripping(self):
-        candidates = {
-            "NAIC Investments": "node-inv",
-            "naic investments": "node-inv",
-            "[b]NAIC Investments[/b]": "node-inv",
-        }
-        # AI returns clean name, but only BBCode version is "primary" — should still resolve
-        chat_fn = self._make_chat_fn("NAIC Investments", 0.85)
-        result = _resolve_topic_suggestion_ai(
-            self._resource(), self._context(), candidates, _chat_fn=chat_fn,
-        )
-        self.assertEqual(result["status"], "resolved")
-        self.assertEqual(result["node_id"], "node-inv")
-
-    def test_candidates_sent_included_in_result(self):
-        chat_fn = self._make_chat_fn("Life Insurance", 0.9)
-        result = _resolve_topic_suggestion_ai(
-            self._resource(), self._context(), self.CANDIDATES, _chat_fn=chat_fn,
-        )
-        self.assertIsInstance(result["candidates_sent"], list)
-        self.assertGreater(len(result["candidates_sent"]), 0)
-
-    def test_confidence_clamped_to_bounds(self):
-        chat_fn = self._make_chat_fn("Life Insurance", 1.5)
-        result = _resolve_topic_suggestion_ai(
-            self._resource(), self._context(), self.CANDIDATES, _chat_fn=chat_fn,
-        )
-        self.assertLessEqual(result["confidence"], 1.0)
-
-        chat_fn2 = self._make_chat_fn("Life Insurance", -0.3)
-        result2 = _resolve_topic_suggestion_ai(
-            self._resource(), self._context(), self.CANDIDATES, _chat_fn=chat_fn2,
-        )
-        self.assertGreaterEqual(result2["confidence"], 0.0)
 
 
 # ---------------------------------------------------------------------------

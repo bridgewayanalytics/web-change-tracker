@@ -33,6 +33,22 @@ locals {
     "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.openai_effort_param}",
   ]
 
+  # DB credential SSM parameter names (loaded at runtime by ssm_loader.load_db_env_from_ssm)
+  # Populate these values in SSM before enabling PGVECTOR_ENABLED=true
+  db_ip_param       = "/web-change-tracker/prod/database_ip"
+  db_name_param     = "/web-change-tracker/prod/database_name"
+  db_port_param     = "/web-change-tracker/prod/database_port"
+  db_user_param     = "/web-change-tracker/prod/database_username_chatkit"
+  db_password_param = "/web-change-tracker/prod/database_password_chatkit"
+
+  db_ssm_param_arns = [
+    "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.db_ip_param}",
+    "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.db_name_param}",
+    "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.db_port_param}",
+    "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.db_user_param}",
+    "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.db_password_param}",
+  ]
+
   # Bubble API: injected via ECS secrets (valueFrom); execution role needs SSM + KMS
   bubble_api_url_param = "/web-change-tracker/prod/bubble_api_url"
   bubble_api_key_param = "/web-change-tracker/prod/bubble_api_key"
@@ -159,7 +175,7 @@ resource "aws_iam_role_policy_attachment" "execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-# Execution role: read Bubble credentials from SSM (injected as env via ECS secrets valueFrom)
+# Execution role: read Bubble credentials from SSM and DB credentials from Secrets Manager
 resource "aws_iam_role_policy" "execution_ssm_bubble" {
   name = "${local.name}-execution-ssm-bubble"
   role = aws_iam_role.execution.id
@@ -178,6 +194,12 @@ resource "aws_iam_role_policy" "execution_ssm_bubble" {
         Effect   = "Allow"
         Action   = ["kms:Decrypt"]
         Resource = "arn:aws:kms:${var.region}:${data.aws_caller_identity.current.account_id}:alias/aws/ssm"
+      },
+      {
+        Sid      = "SecretsManagerGetDB"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:bridgeway/database-*"
       }
     ]
   })
@@ -222,6 +244,12 @@ resource "aws_iam_role_policy" "task" {
         Resource = aws_dynamodb_table.state.arn
       },
       {
+        Sid      = "DynamoDBChatConfig"
+        Effect   = "Allow"
+        Action   = ["dynamodb:GetItem"]
+        Resource = "arn:aws:dynamodb:us-east-1:815039343351:table/chatkit_production_config"
+      },
+      {
         Sid      = "S3ReadTargets"
         Effect   = "Allow"
         Action   = ["s3:GetObject"]
@@ -250,6 +278,12 @@ resource "aws_iam_role_policy" "task" {
         Effect   = "Allow"
         Action   = ["ssm:GetParameter"]
         Resource = local.openai_ssm_param_arns
+      },
+      {
+        Sid      = "SSMGetDBParams"
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter"]
+        Resource = local.db_ssm_param_arns
       },
       {
         Sid      = "KMSDecryptOpenAI"
@@ -321,6 +355,9 @@ resource "aws_ecs_task_definition" "app" {
       # RunSpec prod observe: bubble enrich on, refs blocked, debug artifacts, dry-run Bubble (validated at startup)
       { name = "PROD_OBSERVE_MODE", value = "true" },
       { name = "AI_ENRICHMENT_ENABLED", value = "true" },
+      # Page change agent: enabled; pgvector off until DB credentials are added to SSM
+      { name = "PAGE_CHANGE_AGENT_ENABLED", value = "true" },
+      { name = "PGVECTOR_ENABLED", value = "true" },
       { name = "ARTIFACT_OUTPUT_DIR", value = "debug" },
       { name = "AI_REFERENCE_FIELDS_BLOCKED", value = "true" },
       { name = "RUN_SPEC_VALIDATION_FAIL_FAST", value = "false" },
@@ -334,10 +371,14 @@ resource "aws_ecs_task_definition" "app" {
       { name = "BUBBLE_ALERTS_ENABLED", value = "true" }
     ]
 
-    # Bubble credentials from SSM (valueFrom); never in plaintext env. Create params via CLI (see README).
+    # Bubble credentials from SSM; DB credentials from Secrets Manager — never in plaintext env.
     secrets = [
-      { name = "BUBBLE_API_URL", valueFrom = local.bubble_ssm_param_arns[0] },
-      { name = "BUBBLE_API_KEY", valueFrom = local.bubble_ssm_param_arns[1] }
+      { name = "BUBBLE_API_URL",         valueFrom = local.bubble_ssm_param_arns[0] },
+      { name = "BUBBLE_API_KEY",         valueFrom = local.bubble_ssm_param_arns[1] },
+      { name = "DATABASE_IP",            valueFrom = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:bridgeway/database-KubYXW:DATABASE_IP::" },
+      { name = "DATABASE_NAME",          valueFrom = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:bridgeway/database-KubYXW:DATABASE_NAME::" },
+      { name = "DATABASE_USERNAME",      valueFrom = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:bridgeway/database-KubYXW:DATABASE_USERNAME::" },
+      { name = "DATABASE_PASSWORD",      valueFrom = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:bridgeway/database-KubYXW:DATABASE_PASSWORD::" }
     ]
 
     essential = true
