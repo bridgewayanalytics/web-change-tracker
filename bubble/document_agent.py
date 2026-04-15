@@ -91,8 +91,13 @@ def _get_pgvector_namespaces() -> list[str]:
 def _pgvector_enabled() -> bool:
     if os.environ.get("PGVECTOR_ENABLED", "").strip().lower() not in ("1", "true", "yes"):
         return False
-    required = ("DATABASE_IP", "DATABASE_NAME", "DATABASE_PASSWORD_CHATKIT")
-    return all(os.environ.get(k, "").strip() for k in required)
+    required = ("DATABASE_IP", "DATABASE_NAME")
+    if not all(os.environ.get(k, "").strip() for k in required):
+        return False
+    return bool(
+        os.environ.get("DATABASE_PASSWORD_CHATKIT", "").strip()
+        or os.environ.get("DATABASE_PASSWORD", "").strip()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -228,5 +233,5 @@ def extract_document_data(
         return result if isinstance(result, dict) else {}
 
     except Exception as e:
-        log.warning("document_agent failed (non-fatal): %s", e)
+        log.warning("document_agent failed (non-fatal): %r", e, exc_info=True)
         return {}
