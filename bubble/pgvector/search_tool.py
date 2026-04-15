@@ -71,6 +71,7 @@ _DATE_IN_QUERY_PATTERN = re.compile(
 _SQL_HYBRID_ALL = """
 WITH semantic AS (
     SELECT dc.id, dc.content, dc.content_type,
+           d.external_id,
            d.metadata->>'title' AS title, d.metadata->>'date' AS date,
            d.source_uri, dc.metadata AS chunk_meta, dc.chunk_index,
            ROW_NUMBER() OVER (ORDER BY dc.embedding <=> $1::halfvec) AS rank_sem
@@ -80,6 +81,7 @@ WITH semantic AS (
 ),
 lexical AS (
     SELECT dc.id, dc.content, dc.content_type,
+           d.external_id,
            d.metadata->>'title' AS title, d.metadata->>'date' AS date,
            d.source_uri, dc.metadata AS chunk_meta, dc.chunk_index,
            ROW_NUMBER() OVER (ORDER BY ts_rank_cd(dc.search_tsv, q) DESC) AS rank_lex
@@ -91,6 +93,7 @@ lexical AS (
 SELECT COALESCE(s.id, l.id) AS id,
        COALESCE(s.content, l.content) AS content,
        COALESCE(s.content_type, l.content_type) AS content_type,
+       COALESCE(s.external_id, l.external_id) AS external_id,
        COALESCE(s.title, l.title) AS title,
        COALESCE(s.date, l.date) AS date,
        COALESCE(s.source_uri, l.source_uri) AS source_uri,
@@ -106,6 +109,7 @@ ORDER BY rrf_score DESC LIMIT $5;
 _SQL_HYBRID_NS = """
 WITH semantic AS (
     SELECT dc.id, dc.content, dc.content_type,
+           d.external_id,
            d.metadata->>'title' AS title, d.metadata->>'date' AS date,
            d.source_uri, dc.metadata AS chunk_meta, dc.chunk_index,
            ROW_NUMBER() OVER (ORDER BY dc.embedding <=> $1::halfvec) AS rank_sem
@@ -116,6 +120,7 @@ WITH semantic AS (
 ),
 lexical AS (
     SELECT dc.id, dc.content, dc.content_type,
+           d.external_id,
            d.metadata->>'title' AS title, d.metadata->>'date' AS date,
            d.source_uri, dc.metadata AS chunk_meta, dc.chunk_index,
            ROW_NUMBER() OVER (ORDER BY ts_rank_cd(dc.search_tsv, q) DESC) AS rank_lex
@@ -128,6 +133,7 @@ lexical AS (
 SELECT COALESCE(s.id, l.id) AS id,
        COALESCE(s.content, l.content) AS content,
        COALESCE(s.content_type, l.content_type) AS content_type,
+       COALESCE(s.external_id, l.external_id) AS external_id,
        COALESCE(s.title, l.title) AS title,
        COALESCE(s.date, l.date) AS date,
        COALESCE(s.source_uri, l.source_uri) AS source_uri,
@@ -146,6 +152,7 @@ _HYBRID_LIMIT = 25
 
 _SQL_ORG_SEMANTIC = """
 SELECT dc.id, dc.content, dc.content_type,
+       d.external_id,
        d.metadata->>'title' AS title, d.metadata->>'date' AS date,
        d.source_uri, dc.metadata AS chunk_meta, dc.chunk_index,
        (dc.embedding <=> $1::halfvec) AS distance
@@ -237,6 +244,7 @@ def _row_to_dict(row) -> dict[str, Any]:
         "content": row["content"],
         "score": float(row["rrf_score"]),
         "content_type": row["content_type"],
+        "external_id": row["external_id"] or "",
         "title": row["title"] or "",
         "date": row["date"] or "",
         "url": row["source_uri"] or "",
@@ -256,6 +264,7 @@ def _org_row_to_dict(row) -> dict[str, Any]:
         "content": row["content"],
         "score": max(0.0, 1.0 - distance),
         "content_type": row["content_type"],
+        "external_id": row["external_id"] or "",
         "title": row["title"] or "",
         "date": row["date"] or "",
         "url": row["source_uri"] or "",

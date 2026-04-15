@@ -19,7 +19,7 @@ import re
 
 log = logging.getLogger(__name__)
 
-_CHAT_ID = "document-data-extraction"
+_CHAT_ID = "web-tracking-document-matching"
 
 # Alert types that indicate new/updated documents and should trigger extraction
 DOCUMENT_ALERT_TYPES = frozenset({
@@ -31,11 +31,19 @@ DOCUMENT_ALERT_TYPES = frozenset({
 })
 
 _FALLBACK_SYSTEM_PROMPT = """\
-You are a document analysis assistant specializing in extracting key values from
-posted materials. Given a document name and URL (and optionally extracted text),
-identify the most relevant Chronicle topics and agenda items.
+You are a document matching assistant. Given a document name and URL, search the
+knowledge base to find related Chronicle topics and agenda items, then return their
+Bubble IDs.
 
-Return a single JSON object:
+Steps:
+1. Call list_available_documents() to understand available content types.
+2. Search for matching Chronicle topics using search_knowledge_base(). Each result
+   includes an "external_id" field — that is the Bubble ID. For chronicles,
+   content_type will be "chronicle".
+3. Search for matching agenda items. For agenda items, content_type will be
+   "bubble_data" with the Bubble ID in the "external_id" field.
+4. Return ONLY a single JSON object:
+
 {
   "topic_ids": [string],
   "agenda_item_ids": [string],
@@ -43,8 +51,9 @@ Return a single JSON object:
 }
 
 Rules:
-- topic_ids: Bubble IDs of matching Chronicle topics (0-2 items typical).
-- agenda_item_ids: Bubble IDs of related agenda items (0-5 items typical).
+- topic_ids: Use the "external_id" values from matching chronicle search results.
+- agenda_item_ids: Use the "external_id" values from matching agenda item results.
+- Only include IDs where the match is clearly relevant (score > 0.01).
 - summary: 1-2 sentence description of the document content.
 - Return ONLY valid JSON. No markdown fences, no commentary outside the JSON.
 """
