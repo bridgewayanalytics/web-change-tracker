@@ -45,6 +45,9 @@ before version, then return a single JSON object with the following schema:
   "alert_title": string,
   "alert_description": string,
   "alert_url": string | null,
+  "organization": string | null,
+  "alert_date_time": string | null,
+  "is_relevant_for_content_creation": boolean,
   "events": [
     {
       "title": string,
@@ -59,7 +62,7 @@ before version, then return a single JSON object with the following schema:
   ],
   "library_items": [
     {
-      "title": string,
+      "preliminary_title": string,
       "url": string | null,
       "file_name": string | null
     }
@@ -67,6 +70,7 @@ before version, then return a single JSON object with the following schema:
   "agenda_items": [
     {
       "title": string,
+      "official_title": string | null,
       "standardized_id": string | null,
       "official_id": string | null,
       "is_existing": boolean,
@@ -75,10 +79,33 @@ before version, then return a single JSON object with the following schema:
   ]
 }
 
+alert_type must be one of:
+- "New Agenda"
+- "New Materials"
+- "New Agenda & Materials"
+- "Updated Agenda"
+- "Updated Materials"
+- "Updated Agenda & Materials"
+- "New Meeting"
+- "Updated Meeting"
+- "New Request for Comment"
+- "Updated Request for Comment"
+- "New Effective Date"
+- "Updated Effective Date"
+- "New or Updated Report or Other Resource"
+- "Alert not relevant - the change was limited to carrousel or reordering of content"
+- "No Meaningful Change"
+- "Other"
+
 Rules:
 - Only include events and library_items that are NEW or CHANGED vs the before version.
 - If nothing meaningful changed, set alert_type to "No Meaningful Change".
+- If the change is only a carousel rotation or reordering with no new content, set alert_type to
+  "Alert not relevant - the change was limited to carrousel or reordering of content".
 - If the before version is empty (first run), extract all relevant items from after.
+- Set is_relevant_for_content_creation to true if the alert contains new substantive content
+  (documents, agenda items, meeting materials) that would be relevant for creating Chronicles,
+  Newsreels, or other analytical content. Set to false otherwise.
 - Return ONLY valid JSON. No markdown fences, no commentary outside the JSON.
 """
 
@@ -250,6 +277,7 @@ def extract_page_change(
             "  \"alert_url\": string | null,\n"
             "  \"organization\": string | null,\n"
             "  \"alert_date_time\": string | null,\n"
+            "  \"is_relevant_for_content_creation\": boolean,\n"
             "  \"events\": [\n"
             "    {\n"
             "      \"title\": string,\n"
@@ -280,6 +308,16 @@ def extract_page_change(
             "    }\n"
             "  ]\n"
             "}\n"
+            "alert_type must be one of: 'New Agenda', 'New Materials', 'New Agenda & Materials', "
+            "'Updated Agenda', 'Updated Materials', 'Updated Agenda & Materials', 'New Meeting', "
+            "'Updated Meeting', 'New Request for Comment', 'Updated Request for Comment', "
+            "'New Effective Date', 'Updated Effective Date', "
+            "'New or Updated Report or Other Resource', "
+            "'Alert not relevant - the change was limited to carrousel or reordering of content', "
+            "'No Meaningful Change', 'Other'.\n"
+            "Set is_relevant_for_content_creation to true if the alert contains new substantive "
+            "content (documents, agenda items, meeting materials) relevant for creating Chronicles "
+            "or analytical content. Set to false otherwise.\n"
             "Return ONLY valid JSON — no markdown fences, no commentary outside the JSON."
         )
 
