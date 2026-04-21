@@ -73,6 +73,7 @@ def fetch_text(client, key: str) -> str:
 def run_backfill(limit: int = 5, dry_run: bool = False):
     # Enable agents and force SSM credential loading (same as prod ECS environment)
     os.environ.setdefault("PAGE_CHANGE_AGENT_ENABLED", "true")
+    os.environ.setdefault("PGVECTOR_ENABLED", "true")
     os.environ.setdefault("OPENAI_FETCH_FROM_SSM", "true")
     os.environ.setdefault("AWS_REGION", "us-east-1")
 

@@ -224,20 +224,15 @@ def extract_document_data(
         )
         user_content = "\n".join(lines)
 
-        if _pgvector_enabled():
-            log.info("document_agent: running with pgvector tools (model=%s)", model)
-            raw = asyncio.run(_run_with_pgvector(
-                system_prompt, user_content, model, reasoning_effort, pgvector_namespaces,
-            ))
-            result = _parse_output(raw)
-        else:
-            log.info("document_agent: running without pgvector (model=%s)", model)
-            from bubble.openai_client import chat_json
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ]
-            result = chat_json(messages, model=model, reasoning_effort=reasoning_effort)
+        if not _pgvector_enabled():
+            log.info("document_agent: pgvector not available, skipping (no knowledge base to search)")
+            return {}
+
+        log.info("document_agent: running with pgvector tools (model=%s)", model)
+        raw = asyncio.run(_run_with_pgvector(
+            system_prompt, user_content, model, reasoning_effort, pgvector_namespaces,
+        ))
+        result = _parse_output(raw)
 
         return result if isinstance(result, dict) else {}
 
