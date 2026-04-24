@@ -47,7 +47,7 @@ before version, then return a single JSON object with the following schema:
   "alert_url": string | null,
   "organization": string | null,
   "alert_date_time": string | null,
-  "is_relevant_for_content_creation": boolean,
+  "is_relevant_for_art_newsreel": boolean,
   "events": [
     {
       "title": string,
@@ -103,9 +103,9 @@ Rules:
 - If the change is only a carousel rotation or reordering with no new content, set alert_type to
   "Alert not relevant - the change was limited to carrousel or reordering of content".
 - If the before version is empty (first run), extract all relevant items from after.
-- Set is_relevant_for_content_creation to true if the alert contains new substantive content
-  (documents, agenda items, meeting materials) that would be relevant for creating Chronicles,
-  Newsreels, or other analytical content. Set to false otherwise.
+- Set is_relevant_for_art_newsreel to true if the alert contains new substantive content
+  (documents, agenda items, meeting materials) that would be relevant for an ART Newsreel article.
+  Set to false otherwise.
 - Return ONLY valid JSON. No markdown fences, no commentary outside the JSON.
 """
 
@@ -134,6 +134,14 @@ def _get_model() -> str | None:
 def _get_reasoning_effort() -> str:
     cfg = _load_dynamo_config()
     return cfg.get("reasoning_effort") or "medium"
+
+
+def get_config_hash() -> str:
+    """MD5 of the current system prompt + model — used to detect config changes."""
+    import hashlib
+    cfg = _load_dynamo_config()
+    key = (cfg.get("instructions") or _FALLBACK_SYSTEM_PROMPT) + "|" + (cfg.get("model") or "")
+    return hashlib.md5(key.encode("utf-8")).hexdigest()
 
 
 def _pgvector_enabled() -> bool:
@@ -277,7 +285,7 @@ def extract_page_change(
             "  \"alert_url\": string | null,\n"
             "  \"organization\": string | null,\n"
             "  \"alert_date_time\": string | null,\n"
-            "  \"is_relevant_for_content_creation\": boolean,\n"
+            "  \"is_relevant_for_art_newsreel\": boolean,\n"
             "  \"events\": [\n"
             "    {\n"
             "      \"title\": string,\n"
@@ -315,9 +323,9 @@ def extract_page_change(
             "'New or Updated Report or Other Resource', "
             "'Alert not relevant - the change was limited to carrousel or reordering of content', "
             "'No Meaningful Change', 'Other'.\n"
-            "Set is_relevant_for_content_creation to true if the alert contains new substantive "
-            "content (documents, agenda items, meeting materials) relevant for creating Chronicles "
-            "or analytical content. Set to false otherwise.\n"
+            "Set is_relevant_for_art_newsreel to true if the alert contains new substantive "
+            "content (documents, agenda items, meeting materials) relevant for an ART Newsreel "
+            "article. Set to false otherwise.\n"
             "Return ONLY valid JSON — no markdown fences, no commentary outside the JSON."
         )
 
