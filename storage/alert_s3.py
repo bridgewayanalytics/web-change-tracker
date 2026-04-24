@@ -67,15 +67,19 @@ def _put_json(client, bucket: str, key: str, obj: object, run_id: str) -> None:
          "application/json", run_id)
 
 
-def _flatten_val(val) -> str | bool:
-    """Coerce agent output values to scalar types safe for JSONL / Excel cells."""
+def _flatten_val(val) -> str | bool | None:
+    """
+    Coerce agent output values to scalar types safe for JSONL / Excel cells.
+
+    Preserves the agent's actual output — null stays null, empty string stays
+    empty string — so the dashboard shows exactly what the agent said.
+    Lists are joined with ", " for display (or kept as "" if empty).
+    """
     if isinstance(val, bool):
         return val
     if isinstance(val, list):
         items = [str(x) for x in val if x is not None and x != ""]
-        return ", ".join(items) if items else "N/A"
-    if val is None or val == "":
-        return "N/A"
+        return ", ".join(items) if items else ""
     return val
 
 
@@ -108,10 +112,10 @@ def _build_table_rows(
         "config_hash": config_hash,
     }
 
-    # All top-level agent output fields — coerce null/empty string to "N/A"
+    # All top-level agent output fields — stored verbatim (exact agent output)
     for key, val in agent_output.items():
         if key not in _NESTED:
-            base[key] = _flatten_val(val)
+            base[key] = val
 
     # Full arrays — no data loss (stored as-is for rerun diff view)
     events = agent_output.get("events") or []
@@ -120,7 +124,8 @@ def _build_table_rows(
     base["agenda_items"] = agenda_items
 
     # First-item flattening — backward compatibility with existing rows and rerun diffs.
-    # Coerce null/empty to "N/A" so the dashboard never shows a bare dash.
+    # Values stored verbatim: if the agent output null or "" instead of "N/A" that is
+    # visible on the dashboard as a dash, indicating the agent didn't follow instructions.
     if events:
         for key, val in events[0].items():
             base[f"event_{key}"] = _flatten_val(val)
