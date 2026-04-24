@@ -67,6 +67,15 @@ def _put_json(client, bucket: str, key: str, obj: object, run_id: str) -> None:
          "application/json", run_id)
 
 
+def _flatten_val(val) -> str | bool:
+    """Coerce agent output values to scalar types safe for JSONL / Excel cells."""
+    if isinstance(val, list):
+        return ", ".join(str(x) for x in val if x is not None)
+    if val is None:
+        return ""
+    return val
+
+
 def _build_table_rows(
     agent_output: dict,
     doc_extractions: list[dict],
@@ -74,93 +83,94 @@ def _build_table_rows(
     run_timestamp_iso: str,
     target_id: str,
     source_url: str,
+    config_hash: str = "",
 ) -> list[dict]:
     """
-    Build flat alert_table rows using the field names from the Bubble field inventory
-    Alerts table. One row per library item; if no library items, one row for the alert.
+    Build alert_table rows from web-tracking-agent output.
 
-    Field names follow the ODS inventory exactly:
-      alert_type, alert_title, alert_description, alert_url_title, organization,
-      alert_date_time, event_title, event_start_date_time, event_end_date_time,
-      event_timezone, event_duration, event_is_full_day, event_url,
-      event_call_in_access_code, agenda_item_title, agenda_item_title_official,
-      agenda_item_standardized_id, agenda_item_official_id, chronicle_topics,
-      library_item_preliminary_title, library_item_url, new_library_item_file_name,
-      candidate_chronicles, candidate_agenda_items
+    - One row per library item; if no library items, one row for the alert.
+    - All agent output fields stored verbatim — no data dropped, no modifications.
+    - events and agenda_items: stored as full JSON arrays (no data loss) AND first-item
+      fields are also flattened with event_* / agenda_item_* prefixes for backward
+      compatibility with existing rows and the rerun diff view.
+    - library_items exploded to one row each, fields prefixed with library_item_.
     """
-    # Shared alert-level fields
-    first_event = (agent_output.get("events") or [None])[0] or {}
-    first_agenda = (agent_output.get("agenda_items") or [None])[0] or {}
+    _NESTED = {"events", "library_items", "agenda_items"}
 
     base: dict = {
-        # --- Pipeline metadata ---
         "run_id": run_id,
         "run_timestamp": run_timestamp_iso,
         "target_id": target_id,
         "source_url": source_url,
-        # --- Alert fields (ODS: A. UI Table Columns) ---
-        "alert_type": agent_output.get("alert_type") or "",
-        "alert_title": agent_output.get("alert_title") or "",
-        "alert_description": agent_output.get("alert_description") or "",
-        "alert_url_title": agent_output.get("alert_title") or "",   # title tied to the URL
-        "alert_url": agent_output.get("alert_url") or "",
-        "organization": agent_output.get("organization") or "",
-        "alert_date_time": agent_output.get("alert_date_time") or "",
-        # --- Event fields (first event if present) ---
-        "event_title": first_event.get("title") or "",
-        "event_start_date_time": first_event.get("start_datetime") or "",
-        "event_end_date_time": first_event.get("end_datetime") or "",
-        "event_timezone": first_event.get("timezone") or "",
-        "event_duration": first_event.get("duration") or "",
-        "event_is_full_day": first_event.get("is_full_day") or False,
-        "event_url": first_event.get("url") or "",
-        "event_call_in_access_code": first_event.get("call_in_access_code") or "",
-        # --- Agenda item fields (first agenda item if present) ---
-        "agenda_item_title": first_agenda.get("title") or "",
-        "agenda_item_title_official": first_agenda.get("official_title") or "",
-        "agenda_item_standardized_id": first_agenda.get("standardized_id") or "",
-        "agenda_item_official_id": first_agenda.get("official_id") or "",
-        "chronicle_topics": ", ".join(first_agenda.get("chronicle_topics") or []),
+        "config_hash": config_hash,
     }
 
-    # Build a lookup: library_item url → doc extraction result
-    doc_by_url: dict[str, dict] = {}
-    doc_by_title: dict[str, dict] = {}
-    for entry in doc_extractions:
-        item = entry.get("item") or {}
-        extraction = entry.get("extraction") or {}
-        if item.get("url"):
-            doc_by_url[item["url"]] = extraction
-        title = item.get("preliminary_title") or item.get("title") or ""
-        if title:
-            doc_by_title[title] = extraction
+    # All top-level agent output fields — exact names, no modification
+    for key, val in agent_output.items():
+        if key not in _NESTED:
+            base[key] = val
+
+    # Full arrays — no data loss
+    events = agent_output.get("events") or []
+    agenda_items = agent_output.get("agenda_items") or []
+    base["events"] = events
+    base["agenda_items"] = agenda_items
+
+    # First-item flattening — backward compatibility with existing rows and rerun diffs
+    if events:
+        for key, val in events[0].items():
+            base[f"event_{key}"] = val
+    if agenda_items:
+        for key, val in agenda_items[0].items():
+            base[f"agenda_item_{key}"] = val
 
     library_items = agent_output.get("library_items") or []
     if not library_items:
-        # No library items — emit one row for the alert itself
-        base["library_item_preliminary_title"] = ""
-        base["library_item_url"] = ""
-        base["new_library_item_file_name"] = ""
-        base["candidate_chronicles"] = ""
-        base["candidate_agenda_items"] = ""
         return [base]
 
     rows: list[dict] = []
     for item in library_items:
-        title = item.get("preliminary_title") or item.get("title") or ""
-        url = item.get("url") or ""
-        file_name = item.get("file_name") or ""
-
-        extraction = doc_by_url.get(url) or doc_by_title.get(title) or {}
-        candidate_chronicles = ", ".join(str(x) for x in (extraction.get("topic_ids") or []))
-        candidate_agenda_items = ", ".join(str(x) for x in (extraction.get("agenda_item_ids") or []))
-
         row = dict(base)
-        row["library_item_preliminary_title"] = title
-        row["library_item_url"] = url
-        row["new_library_item_file_name"] = file_name
-        row["candidate_chronicles"] = candidate_chronicles
-        row["candidate_agenda_items"] = candidate_agenda_items
+        for key, val in item.items():
+            row[f"library_item_{key}"] = val
+        rows.append(row)
+
+    return rows
+
+
+def _build_doc_extraction_rows(
+    doc_extractions: list[dict],
+    run_id: str,
+    run_timestamp_iso: str,
+    target_id: str,
+    source_url: str,
+) -> list[dict]:
+    """
+    Build document_extractions_table rows — one per library item processed.
+
+    All fields returned by the document-data-extraction agent are stored verbatim.
+    Pipeline metadata (run_id, target_id, etc.) added as anchoring keys.
+    """
+    rows: list[dict] = []
+    for entry in doc_extractions:
+        item = entry.get("item") or {}
+        extraction = entry.get("extraction") or {}
+        if not extraction:
+            continue
+
+        row: dict = {
+            "run_id": run_id,
+            "run_timestamp": run_timestamp_iso,
+            "target_id": target_id,
+            "source_url": source_url,
+            "library_item_title": item.get("preliminary_title") or item.get("title") or "",
+            "library_item_url": item.get("url") or "",
+            "library_item_file_name": item.get("file_name") or "",
+        }
+        # All document agent output fields verbatim
+        for key, val in extraction.items():
+            row[key] = val
+
         rows.append(row)
 
     return rows
@@ -190,8 +200,17 @@ def store_run_alerts(
     date_prefix = _date_prefix(run_timestamp)
     run_timestamp_iso = datetime.fromtimestamp(run_timestamp, tz=timezone.utc).isoformat()
 
+    # Compute config hash once per run (empty string if agent not importable)
+    config_hash = ""
+    try:
+        from bubble.page_change_agent import get_config_hash
+        config_hash = get_config_hash()
+    except Exception:
+        pass
+
     alert_rows: list[dict] = []
     table_rows: list[dict] = []
+    doc_table_rows: list[dict] = []
 
     try:
         client = _s3_client()
@@ -250,9 +269,16 @@ def store_run_alerts(
             row["detail_s3_key"] = agent_key
         alert_rows.append(row)
 
-        # Flat table rows (alerts_table.jsonl) — one per library item
+        # Alert table rows (alerts_table.jsonl) — one per library item
         table_rows.extend(_build_table_rows(
             agent_output, doc_extractions,
+            run_id, run_timestamp_iso, target_id, source_url,
+            config_hash=config_hash,
+        ))
+
+        # Document extraction table rows (document_extractions_table.jsonl)
+        doc_table_rows.extend(_build_doc_extraction_rows(
+            doc_extractions,
             run_id, run_timestamp_iso, target_id, source_url,
         ))
 
@@ -307,32 +333,97 @@ def store_run_alerts(
         except Exception as e:
             log.warning("alert_s3: failed to update alerts_table.jsonl: %s", e)
 
+    # Append document extraction rows to document_extractions_table.jsonl
+    if doc_table_rows:
+        doc_table_key = "alerts/document_extractions_table.jsonl"
+        try:
+            existing_body = b""
+            try:
+                resp = client.get_object(Bucket=bucket, Key=doc_table_key)
+                existing_body = resp["Body"].read()
+            except client.exceptions.NoSuchKey:
+                pass
+            except Exception:
+                pass
+
+            new_lines = "\n".join(json.dumps(r, ensure_ascii=False) for r in doc_table_rows)
+            if existing_body:
+                combined = existing_body.rstrip(b"\n") + b"\n" + new_lines.encode("utf-8")
+            else:
+                combined = new_lines.encode("utf-8")
+
+            _put(client, bucket, doc_table_key, combined, "application/x-ndjson", run_id)
+            log.info(
+                "alert_s3: appended %d doc extraction row(s) to s3://%s/%s",
+                len(doc_table_rows), bucket, doc_table_key,
+            )
+        except Exception as e:
+            log.warning("alert_s3: failed to update document_extractions_table.jsonl: %s", e)
+
     return uri
 
 
 def _build_xlsx(rows: list[dict]) -> bytes:
-    """Convert a list of alert table row dicts to an Excel workbook (bytes)."""
+    """Convert alert table rows to an Excel workbook (bytes).
+
+    Columns are derived dynamically from the row data so that any new fields
+    added to the agent output schema appear automatically. Known core columns
+    are pinned to the front in a stable order; any extra keys are appended
+    alphabetically after them.
+    """
     import io
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
 
     if not rows:
         rows = []
 
-    COLS = [
+    # Core columns in preferred display order (mirrors current agent output schema).
+    # Any new agent fields not listed here will be appended after these automatically.
+    CORE_COLS = [
         "run_id", "run_timestamp", "target_id", "source_url",
-        "alert_type", "alert_title", "alert_description",
-        "alert_url_title", "alert_url", "organization", "alert_date_time",
-        "event_title", "event_start_date_time", "event_end_date_time",
+        # Top-level alert fields (exact agent output names)
+        "alert_type", "alert_title", "alert_description", "alert_url",
+        "organization", "alert_date_time",
+        # event_* (prefixed from events[0])
+        "event_title", "event_start_datetime", "event_end_datetime",
         "event_timezone", "event_duration", "event_is_full_day",
         "event_url", "event_call_in_access_code",
-        "agenda_item_title", "agenda_item_title_official",
-        "agenda_item_standardized_id", "agenda_item_official_id", "chronicle_topics",
-        "library_item_preliminary_title", "library_item_url", "new_library_item_file_name",
+        # agenda_item_* (prefixed from agenda_items[0])
+        "agenda_item_title", "agenda_item_official_title",
+        "agenda_item_standardized_id", "agenda_item_official_id",
+        "agenda_item_is_existing", "agenda_item_chronicle_topics",
+        # library_item_* (prefixed from library_items[i])
+        "library_item_title", "library_item_preliminary_title",
+        "library_item_url", "library_item_file_name",
+        # doc extraction
         "candidate_chronicles", "candidate_agenda_items",
     ]
 
-    HEADER_LABELS = {c: c.replace("_", " ").title() for c in COLS}
+    # Collect all keys present in the data, append any not in CORE_COLS
+    all_keys: set[str] = set()
+    for row in rows:
+        all_keys.update(row.keys())
+    core_set = set(CORE_COLS)
+    extra_cols = sorted(k for k in all_keys if k not in core_set)
+    COLS = CORE_COLS + extra_cols
+
+    # Per-column widths; unknown columns default to 25
+    COL_WIDTHS = {
+        "run_id": 18, "run_timestamp": 22, "target_id": 22, "source_url": 30,
+        "alert_type": 22, "alert_title": 40, "alert_description": 60,
+        "alert_url": 30, "organization": 30, "alert_date_time": 20,
+        "event_title": 35, "event_start_datetime": 22, "event_end_datetime": 22,
+        "event_timezone": 16, "event_duration": 14, "event_is_full_day": 14,
+        "event_url": 30, "event_call_in_access_code": 22,
+        "agenda_item_title": 35, "agenda_item_official_title": 35,
+        "agenda_item_standardized_id": 22, "agenda_item_official_id": 18,
+        "agenda_item_is_existing": 14, "agenda_item_chronicle_topics": 35,
+        "library_item_title": 35, "library_item_preliminary_title": 35,
+        "library_item_url": 30, "library_item_file_name": 25,
+        "candidate_chronicles": 25, "candidate_agenda_items": 25,
+    }
 
     def thin_border():
         s = Side(style="thin", color="D0D0D0")
@@ -344,7 +435,8 @@ def _build_xlsx(rows: list[dict]) -> bytes:
 
     # Header row
     for ci, col in enumerate(COLS, 1):
-        c = ws.cell(1, ci, HEADER_LABELS[col])
+        label = col.replace("_", " ").title()
+        c = ws.cell(1, ci, label)
         c.font = Font(name="Calibri", bold=True, size=9, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="1E40AF")
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -366,23 +458,8 @@ def _build_xlsx(rows: list[dict]) -> bytes:
             c.border = thin_border()
 
     # Column widths
-    widths = {
-        "run_id": 18, "run_timestamp": 22, "target_id": 22, "source_url": 30,
-        "alert_type": 20, "alert_title": 40, "alert_description": 60,
-        "alert_url_title": 35, "alert_url": 30, "organization": 30, "alert_date_time": 20,
-        "event_title": 35, "event_start_date_time": 20, "event_end_date_time": 20,
-        "event_timezone": 16, "event_duration": 14, "event_is_full_day": 12,
-        "event_url": 30, "event_call_in_access_code": 22,
-        "agenda_item_title": 35, "agenda_item_title_official": 35,
-        "agenda_item_standardized_id": 22, "agenda_item_official_id": 18,
-        "chronicle_topics": 30,
-        "library_item_preliminary_title": 35, "library_item_url": 30,
-        "new_library_item_file_name": 25,
-        "candidate_chronicles": 25, "candidate_agenda_items": 25,
-    }
-    from openpyxl.utils import get_column_letter
     for ci, col in enumerate(COLS, 1):
-        ws.column_dimensions[get_column_letter(ci)].width = widths.get(col, 20)
+        ws.column_dimensions[get_column_letter(ci)].width = COL_WIDTHS.get(col, 25)
 
     ws.freeze_panes = "A2"
 
