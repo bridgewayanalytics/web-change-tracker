@@ -109,6 +109,47 @@ Rules:
 - Return ONLY valid JSON. No markdown fences, no commentary outside the JSON.
 """
 
+# Fallback output schema when DynamoDB output_schema_json is absent.
+# This dict is serialised to JSON and injected into the user message.
+_FALLBACK_OUTPUT_SCHEMA: dict = {
+    "alert_type": "string",
+    "alert_title": "string",
+    "alert_description": "string",
+    "alert_url": "string | null",
+    "organization": "string | null",
+    "alert_date_time": "string | null (ISO 8601 Eastern Time)",
+    "is_relevant_for_art_newsreel": "boolean",
+    "events": [
+        {
+            "title": "string",
+            "start_datetime": "string | null",
+            "end_datetime": "string | null",
+            "timezone": "string | null",
+            "is_full_day": "boolean",
+            "url": "string | null",
+            "call_in_access_code": "string | null",
+            "duration": "string | null",
+        }
+    ],
+    "library_items": [
+        {
+            "preliminary_title": "string",
+            "url": "string | null",
+            "file_name": "string | null",
+        }
+    ],
+    "agenda_items": [
+        {
+            "title": "string",
+            "official_title": "string | null",
+            "standardized_id": "string | null",
+            "official_id": "string | null",
+            "is_existing": "boolean",
+            "chronicle_topics": ["string"],
+        }
+    ],
+}
+
 # Lazily loaded from DynamoDB; None means not yet fetched
 _dynamo_config: dict | None = None
 
@@ -124,6 +165,24 @@ def _load_dynamo_config() -> dict:
 def _get_system_prompt() -> str:
     cfg = _load_dynamo_config()
     return cfg.get("instructions") or _FALLBACK_SYSTEM_PROMPT
+
+
+def _get_output_schema_str() -> str:
+    """
+    Return the JSON output schema string to embed in the user message.
+
+    Source priority:
+      1. output_schema_json attribute in DynamoDB (content team controls field names)
+      2. _FALLBACK_OUTPUT_SCHEMA (hardcoded dict, serialised to JSON)
+
+    Storing output_schema_json in DynamoDB lets the content team rename or add
+    fields without any code changes — the agent automatically uses the new names.
+    """
+    cfg = _load_dynamo_config()
+    schema_json = cfg.get("output_schema_json")
+    if schema_json and isinstance(schema_json, str):
+        return schema_json
+    return json.dumps(_FALLBACK_OUTPUT_SCHEMA, indent=2)
 
 
 def _get_model() -> str | None:
@@ -273,49 +332,13 @@ def extract_page_change(
             f"Tags: {', '.join(tags) if isinstance(tags, list) else tags}"
         )
 
+        output_schema = _get_output_schema_str()
         user_content = (
             f"=== TARGET CONTEXT ===\n{context_block}\n\n"
             f"=== BEFORE (previous version) ===\n{before_html or '(empty — first run)'}\n\n"
             f"=== AFTER (current version) ===\n{after_html}\n\n"
-            "Return your analysis as a single JSON object with exactly these keys:\n"
-            "{\n"
-            "  \"alert_type\": string,\n"
-            "  \"alert_title\": string,\n"
-            "  \"alert_description\": string,\n"
-            "  \"alert_url\": string | null,\n"
-            "  \"organization\": string | null,\n"
-            "  \"alert_date_time\": string | null,\n"
-            "  \"is_relevant_for_art_newsreel\": boolean,\n"
-            "  \"events\": [\n"
-            "    {\n"
-            "      \"title\": string,\n"
-            "      \"start_datetime\": string | null,\n"
-            "      \"end_datetime\": string | null,\n"
-            "      \"timezone\": string | null,\n"
-            "      \"is_full_day\": boolean,\n"
-            "      \"url\": string | null,\n"
-            "      \"call_in_access_code\": string | null,\n"
-            "      \"duration\": string | null\n"
-            "    }\n"
-            "  ],\n"
-            "  \"library_items\": [\n"
-            "    {\n"
-            "      \"preliminary_title\": string,\n"
-            "      \"url\": string | null,\n"
-            "      \"file_name\": string | null\n"
-            "    }\n"
-            "  ],\n"
-            "  \"agenda_items\": [\n"
-            "    {\n"
-            "      \"title\": string,\n"
-            "      \"official_title\": string | null,\n"
-            "      \"standardized_id\": string | null,\n"
-            "      \"official_id\": string | null,\n"
-            "      \"is_existing\": boolean,\n"
-            "      \"chronicle_topics\": [string]\n"
-            "    }\n"
-            "  ]\n"
-            "}\n"
+            f"Return your analysis as a single JSON object with exactly this schema:\n"
+            f"{output_schema}\n"
             "alert_type must be one of: 'New Agenda', 'New Materials', 'New Agenda & Materials', "
             "'Updated Agenda', 'Updated Materials', 'Updated Agenda & Materials', 'New Meeting', "
             "'Updated Meeting', 'New Request for Comment', 'Updated Request for Comment', "
@@ -323,9 +346,6 @@ def extract_page_change(
             "'New or Updated Report or Other Resource', "
             "'Alert not relevant - the change was limited to carrousel or reordering of content', "
             "'No Meaningful Change', 'Other'.\n"
-            "Set is_relevant_for_art_newsreel to true if the alert contains new substantive "
-            "content (documents, agenda items, meeting materials) relevant for an ART Newsreel "
-            "article. Set to false otherwise.\n"
             "Return ONLY valid JSON — no markdown fences, no commentary outside the JSON."
         )
 
