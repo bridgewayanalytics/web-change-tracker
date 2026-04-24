@@ -1,6 +1,6 @@
 # web-change-tracker
 
-A reusable website change-tracking system that monitors multiple web pages on a schedule, detects meaningful changes (new meetings, new PDFs/resources, updated content), persists "last seen" state, and produces human-readable change summaries via email.
+A website change-tracking and intelligence pipeline that monitors NAIC web pages on a 6-hour schedule, detects meaningful changes, and uses RAG-based LLM agents to extract structured alerts from before/after HTML snapshots. Alerts feed a downstream dashboard.
 
 **Infrastructure:** AWS · **Language:** Python
 
@@ -8,111 +8,165 @@ A reusable website change-tracking system that monitors multiple web pages on a 
 
 ## Overview
 
-The system takes a configured list of target URLs, fetches each page (including JavaScript-rendered sites), extracts normalized signals, computes fingerprints for change detection, and compares against stored state. When changes are found, it records change events, optionally downloads new/changed documents, and sends an email summary.
-
----
-
-## Requirements
-
-### Functional
-
-| Requirement | Description |
-|-------------|-------------|
-| **Configure targets** | URLs, optional CSS/XPath selectors, labels, per-target schedule |
-| **Detect changes robustly** | Minimal false positives via fingerprinting and diff logic |
-| **Track assets** | New/changed downloadable assets (e.g., PDFs) |
-| **Email summary** | Concise change report: who/what/when/link |
-| **Persist state** | Last-seen fingerprints and change history |
-
-### Non-Functional
-
-| Requirement | Description |
-|-------------|-------------|
-| **Idempotency** | Do not re-notify for the same change |
-| **Observability** | Logs, metrics, basic alerting |
-| **Rate limiting** | Polite scraping; respect crawl delays |
-| **Resilience** | Retries, timeouts, graceful degradation |
-| **Extensibility** | Pluggable extractors for new website patterns |
+The system monitors a configured list of target URLs, detects content changes via SHA256 fingerprinting, saves before/after HTML snapshots to S3, and passes them to LLM agents for structured extraction. Two agents run in sequence: one classifies the change and extracts events/documents/agenda items, the second matches detected documents to Chronicle topics and agenda items in the knowledge base. Results are stored as structured JSON + Excel in S3 and consumed by the alerts dashboard.
 
 ---
 
 ## Architecture
 
-### Components
+### Pipeline
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│  Scheduler  │────▶│   Runner    │────▶│   Scraper   │────▶│  Normalizer │
-│ EventBridge │     │ Lambda/ECS  │     │ Playwright  │     │  Extractors │
-└─────────────┘     └─────────────┘     └─────────────┘     └──────┬──────┘
-                                                                   │
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐            │
-│  Notifier   │◀────│Persist State│◀────│ Diff Engine │◀───────────┘
-│  SES/Email  │     │  DynamoDB   │     │  Fingerprint│
-└─────────────┘     └─────────────┘     └─────────────┘
-                          │
-                          ▼
-                   ┌─────────────┐
-                   │     S3      │  (PDFs, versioned artifacts)
-                   └─────────────┘
+EventBridge (6h cron)
+        ↓
+  ECS Fargate — spike.py
+        ↓
+  Load targets.json
+        ↓
+  For each target URL:
+  ┌──────────────────────────────────────────────────┐
+  │ 1. Fetch page (Playwright / requests)            │
+  │ 2. SHA256 hash + pluggable extractors            │
+  │    (docs, event_links, meetings, events)         │
+  │ 3. Diff against DynamoDB state                   │
+  │ 4. Save state to DynamoDB                        │
+  │ 5. Store before/after stripped HTML → S3         │
+  └──────────────────────────────────────────────────┘
+        ↓  (if PAGE_CHANGE_AGENT_ENABLED)
+  page_change_agent
+  — compares before/after HTML
+  — outputs: alert_type, events, library_items, agenda_items
+        ↓  (if materials-type alert)
+  document_agent (per library item)
+  — pgvector search over knowledge base
+  — outputs: topic_ids, agenda_item_ids
+        ↓
+  store_run_alerts → S3
+  — alerts_table.jsonl (append)
+  — alerts_table.xlsx (regenerated)
+  — per-run alerts.json
+        ↓
+  Email summary → SES
 ```
-
-| Component | Responsibility |
-|-----------|----------------|
-| **Scheduler** | EventBridge cron triggers run at configured intervals (e.g., every 6 hours) |
-| **Runner** | Lambda or ECS Fargate invokes the change-detection pipeline |
-| **Scraper** | Fetches pages via Playwright (JS-rendered) or requests + BeautifulSoup (simple pages) |
-| **Normalizer** | Extracts signals (meetings, docs, text) using pluggable extractors |
-| **Diff Engine** | Computes fingerprints (SHA256), compares to stored state, detects changes |
-| **Persist State** | `storage/` module: local (`state.json`) for dev; DynamoDB for production. Select via `STATE_BACKEND=local|dynamodb`. |
-| **Notifier** | SES sends email summary of changes |
 
 ### AWS Resources
 
 | Resource | Purpose |
 |----------|---------|
-| **EventBridge** | Cron schedule (e.g., `rate(6 hours)`) |
-| **Lambda** or **ECS Fargate** | Compute for scraping + diff pipeline |
-| **DynamoDB** | Last-seen state, change history |
-| **S3** | Downloaded PDFs, versioned page snapshots |
+| **EventBridge** | 6-hour cron schedule |
+| **ECS Fargate** | Compute (Playwright requires container) |
+| **DynamoDB** | Per-target page state; agent configs (`chatkit_production_config`) |
+| **S3** | Before/after HTML snapshots, alerts JSONL/xlsx, changelogs |
+| **PostgreSQL + pgvector** | Knowledge base for RAG agents (Chronicles, NAIC proceedings, guidelines) |
 | **SES** | Email delivery for change summaries |
-| **CloudWatch** | Logs, metrics, alarms |
+| **CloudWatch** | Logs, metrics |
 
-> **Note:** ECS Fargate is recommended if Playwright packaging size or Chromium dependencies make Lambda unwieldy.
+---
 
-### Data Flow
+## RAG Agents
 
-1. **EventBridge** fires on schedule → invokes **Lambda** or **ECS** task.
-2. Runner loads target config (URLs, selectors, labels).
-3. For each target: **Scraper** fetches page; **Normalizer** extracts signals; **Diff Engine** hashes content and compares to DynamoDB.
-4. On change: write to DynamoDB, optionally download PDFs to S3, queue email via SES.
-5. **Notifier** sends consolidated email with change summary.
+Both agents are configured via DynamoDB (`chatkit_production_config` table, key format `chat:{id}`) and can be updated without redeployment. When `PGVECTOR_ENABLED=true`, agents use the OpenAI Agents SDK with `search_knowledge_base` + `list_available_documents` tools; otherwise they fall back to direct Responses API calls.
+
+### page_change_agent (`chat:web-tracking-agent`)
+
+Receives before/after stripped HTML plus target context (label, URL, org_path, tags). Outputs:
+
+```json
+{
+  "alert_type": "New Agenda & Materials",
+  "alert_title": "...",
+  "alert_description": "...",
+  "alert_url": "https://...",
+  "organization": "...",
+  "alert_date_time": "2026-04-21T00:00:00-04:00",
+  "is_relevant_for_content_creation": true,
+  "events": [{"title", "start_datetime", "end_datetime", "timezone", "duration", "is_full_day", "url", "call_in_access_code"}],
+  "library_items": [{"preliminary_title", "url", "file_name"}],
+  "agenda_items": [{"title", "official_title", "standardized_id", "official_id", "is_existing", "chronicle_topics"}]
+}
+```
+
+### document_agent (`chat:document-data-extraction`)
+
+Runs per library item detected by the page_change_agent. Fetches the actual PDF from the document URL, extracts plain text (pypdf + pdfminer.six fallback), and passes up to 12,000 chars to the agent along with the document title and URL. The agent also has access to pgvector search tools for cross-referencing the knowledge base (Chronicles, NAIC proceedings, guidelines, etc.).
+
+Output schema is **fully dynamic** — whatever fields the DynamoDB `instructions` config tells the model to return are stored verbatim. No hardcoded output schema in code. As of April 2026, the instructions ask the agent to extract agenda items, organization, document type, Chronicle topics, standardized IDs, etc.
+
+Results are stored in a **separate S3 table:** `alerts/document_extractions_table.jsonl` (never mixed into `alerts_table.jsonl`).
+
+Triggers for:
+- Alert types: `New Materials`, `New Agenda & Materials`, `Updated Materials`, `Updated Agenda & Materials`, `New or Updated Report or Other Resource`
+- Any alert that has `library_items` in the agent output
+
+**Important:** Returns `{}` (skip) if pgvector is unavailable. Without search tools, the model hallucinates IDs. Only run with `PGVECTOR_ENABLED=true` and valid DB credentials.
+
+**Important:** A `## Output Format` JSON suffix is automatically appended to the DynamoDB `instructions` at runtime — the content team's instructions describe what to extract but don't specify JSON format. This suffix tells the model to return a single JSON object. Do not add a JSON format requirement to the DynamoDB config itself.
+
+**Important:** The JSON output schema (field names and types) for `page_change_agent` is hardcoded in `page_change_agent.py` in the `user_content` prompt — **not** in the DynamoDB `instructions`. The DynamoDB `instructions` guide extraction behaviour and can be updated freely by the content team without redeployment. Adding new output fields requires a code change to the hardcoded schema.
+
+### pgvector search
+
+Hybrid RRF fusion of semantic (cosine via `halfvec`) + lexical (`ts_rank_cd`) search over the `document_chunks` / `documents` tables, followed by reranking. Scoped per agent by `pgvector_namespaces` from DynamoDB config (e.g., `bubble-data`, `art-chronicles`, `naic-proceedings`).
+
+---
+
+## Alert Tables
+
+### `alerts/alerts_table.jsonl` — page_change_agent output
+
+Append-only, one row per library item (or one row per alert if no library items). Consumed by the alerts dashboard.
+
+**Schema is fully dynamic** — columns are derived directly from the agent output. Adding a field to the `web-tracking-agent` DynamoDB config automatically adds a column on the next run. No code changes required.
+
+Flattening rules:
+- Top-level agent fields (`alert_type`, `alert_title`, etc.) → exact field name, unchanged
+- `events` → stored as a full JSON array (no truncation to first item)
+- `agenda_items` → stored as a full JSON array (no truncation to first item)
+- `library_items[i]` fields → prefixed `library_item_*`, one row per item
+- `config_hash` → MD5 of `system_prompt + model` at time of run (used by re-evaluate feature)
+
+**No data is dropped.** Full arrays are always stored. The dashboard is responsible for rendering them.
+
+Current core columns (always appear first):
+
+| Group | Columns |
+|-------|---------|
+| Pipeline | `run_id`, `run_timestamp`, `target_id`, `source_url`, `config_hash` |
+| Alert | `alert_type`, `alert_title`, `alert_description`, `alert_url`, `organization`, `alert_date_time` |
+| Events | `events` (full JSON array) |
+| Agenda items | `agenda_items` (full JSON array) |
+| Library item | `library_item_*` prefixed fields (one row per item) |
+
+Any additional agent output fields are appended alphabetically after the core columns.
+
+### `alerts/document_extractions_table.jsonl` — document_agent output
+
+Separate table written only when document_agent produces results. One row per library item processed.
+
+Columns: pipeline metadata (`run_id`, `run_timestamp`, `target_id`, `source_url`) + library item identity (`library_item_title`, `library_item_url`, `library_item_file_name`) + all fields returned by the document extraction agent verbatim (fully dynamic).
+
+**Never written to during alerts_table.jsonl updates and vice versa. These two tables are always written separately.**
 
 ---
 
 ## Target Configuration
 
-Targets are defined in `targets.json` with a resource-type driven `extract` array:
+Targets are defined in `targets.json`:
 
 ```json
 [
   {
-    "id": "life_rbc_wg",
-    "label": "Life RBC Working Group",
-    "url": "https://example.com",
+    "id": "naic.e.life_rbc_wg",
+    "label": "Life Risk-Based Capital Working Group",
+    "org_id": "naic",
+    "org_path": ["NAIC", "E", "Working Groups"],
+    "group": "working_group",
+    "tags": ["committee:E", "wg", "rbc"],
+    "url": "https://content.naic.org/committees/e/life-risk-based-capital-wg",
     "extract": [
-      {
-        "type": "docs",
-        "extractor": "link_collector_v1",
-        "params": { "extensions": [".pdf"] },
-        "_purpose": "Collect PDF documents linked from the page."
-      },
-      {
-        "type": "event_links",
-        "extractor": "keyword_links_v1",
-        "params": { "keywords": ["meeting", "agenda"] },
-        "_purpose": "Links whose visible text mentions meetings or agendas."
-      }
+      {"type": "docs", "extractor": "link_collector_v1", "params": {"extensions": [".pdf"]}},
+      {"type": "event_links", "extractor": "keyword_links_v1", "params": {"keywords": ["meeting", "agenda", "materials"]}},
+      {"type": "meetings", "extractor": "naic_meetings_v1", "params": {}}
     ]
   }
 ]
@@ -121,228 +175,201 @@ Targets are defined in `targets.json` with a resource-type driven `extract` arra
 | Field | Description |
 |-------|-------------|
 | `id` | Unique identifier for state persistence |
-| `label` | Human-readable label for reports |
-| `url` | Page URL to monitor |
-| `extract` | Array of rules: `{ type, extractor, params }` |
-| `org_id` | Optional. Organization ID for report grouping (e.g. `"naic"`) |
-| `org_path` | Optional. Array of path segments for sub-grouping (e.g. `["committees","e"]`) |
-| `group` | Optional. Group label (e.g. `"working-groups"`) |
-| `tags` | Optional. Array of tags for filtering or categorization |
+| `label` | Human-readable label passed to agents as context |
+| `url` | Page to monitor |
+| `extract` | Array of `{type, extractor, params}` rules |
+| `org_path` | Path segments for organizational context (passed to agents) |
+| `group` | Group type (e.g. `working_group`, `task_force`) |
+| `tags` | Tags for filtering/categorization |
 
-**URL filtering (all link-based extractors):**
-- `allow_domains` — optional list; if set, only URLs from these domains are kept
-- `deny_domains` — optional list; URLs from these domains are excluded
-- Default deny list includes `translate.google.com`, `add-to-calendar-pro.com`, and common social domains
+### Extractors
 
-**keyword_links_v1** additionally supports:
-- `deny_url_patterns` — regex list for path/URL; default excludes social and nav paths (`/facebook`, `/twitter`, `/linkedin`, `/connect`, etc.). Pass `[]` to disable.
-
-**Extractors:**
-- `link_collector_v1` — collects links matching `params.extensions` (e.g. `[".pdf"]`); returns `{title, url}` (title: anchor text, else filename, else host/path)
-- `keyword_links_v1` — collects links whose text contains any `params.keywords`; returns `{title, url}`
-- `naic_meetings_v1` — NAIC meeting blocks (Public Webex Meeting); returns `{title, date_text, time_text, expected_duration, webex_url, agenda_url, materials_url, notes}`
-- `naic_events_v1` — NAIC-specific event extraction; returns `{title, datetime_text, url}`
+| Extractor | Output |
+|-----------|--------|
+| `link_collector_v1` | Links by file extension — `{title, url}` |
+| `keyword_links_v1` | Links whose text matches keywords — `{title, url}` |
+| `naic_meetings_v1` | NAIC Webex meeting blocks — `{title, date_text, time_text, webex_url, agenda_url, materials_url}` |
+| `naic_events_v1` | NAIC event listings — `{title, datetime_text, url}` |
 
 ---
 
-## Change Event Model
+## Storage Layout (S3)
 
-When a change is detected, a **change event** is computed per target and resource type:
-
-| Field | Description |
-|-------|-------------|
-| `first_run` | No previous state; baseline recorded |
-| `page_changed` | Page text hash (SHA256) changed |
-| `by_type` | Per resource type: `{added: [...], removed: [...]}` — stable keys (URL for links, triple for events) |
-| `before_hash` / `after_hash` | Previous and current page fingerprints |
-
-Reports group by target, then by resource type. Output is written to `last_report.txt`.
+| Path | Contents |
+|------|----------|
+| `pages/<target_id>/YYYY/MM/DD/<run_id>/before.html` | Stripped HTML before change |
+| `pages/<target_id>/YYYY/MM/DD/<run_id>/after.html` | Stripped HTML after change |
+| `pages/<target_id>/YYYY/MM/DD/<run_id>/meta.json` | Run metadata (label, url, run_timestamp, first_run) |
+| `pages/<target_id>/YYYY/MM/DD/<run_id>/agent_output.json` | Full page_change_agent output |
+| `pages/<target_id>/YYYY/MM/DD/<run_id>/doc_extractions.json` | document_agent results (per-page) |
+| `runs/YYYY/MM/DD/<run_id>/alerts.json` | Structured alerts for the run |
+| `alerts/alerts_table.jsonl` | Append-only page_change_agent alert table (all runs) |
+| `alerts/alerts_table.xlsx` | Excel version of alerts_table.jsonl, regenerated each run |
+| `alerts/document_extractions_table.jsonl` | Append-only document_agent extraction table (separate from alerts) |
+| `alerts/reruns/<run_id>/<target_id>/result.json` | Re-evaluate result (see Re-evaluate Feature) |
 
 ---
 
-## Bubble Integration
+## Re-evaluate Feature
 
-Change events are mapped to **Bubble** Resource and Calendar Item payloads for import into a Bubble.io app. The pipeline: (1) build payloads from the diff, (2) optional AI enrichment (categorization, candidate IDs when snapshot present), (3) reference enrichment so fields pointing at existing Bubble data (trees, nodes, calendar items) are set to Bubble IDs.
+Allows a stored alert to be re-run through the agents after updating DynamoDB instructions, without re-scraping the page. The before/after HTML is already stored in S3.
 
-### Mapping Rules
+**Full spec:** `docs/rerun-feature.md` — read this before working on any part of this feature.
 
-| Change Type | Bubble Output |
-|-------------|---------------|
-| **docs added** | Resource objects (Name, URL, parent, Organization, Type1, etc.) |
-| **event_links / meeting links** | Resource objects; if link suggests agenda/materials/webex/call, also attached to Calendar Item Agenda |
-| **meetings added** | Calendar Item objects (title, date, Agenda from associated links) |
+### How it works
 
-Meeting links are associated with meetings by date match when possible; otherwise the first upcoming meeting. Schema fields are in `bubble/schemas.py`. **PDF meeting meta** (optional): for PDF resources, the pipeline can extract meeting metadata (date, group, times) from the PDF content; quality gates validate and reject invalid extractions; results are written to `debug/pdf_meeting_meta.json`.
+1. The dashboard sends `{ run_id, target_id }` to `/api/rerun`
+2. The dashboard API calls ECS `RunTask` with environment overrides `RERUN_RUN_ID` and `RERUN_TARGET_ID`
+3. `spike.py` detects these vars at startup and enters rerun mode (skips normal pipeline)
+4. Rerun mode: fetches stored HTML from S3, re-runs `page_change_agent` + `document_agent`, writes result to `alerts/reruns/<run_id>/<target_id>/result.json`
+5. Dashboard polls for task completion, then fetches the result and shows a before/after diff
+6. User clicks Accept (patches `alerts_table.jsonl`) or Discard (deletes rerun result)
 
-### Reference Enrichment (existing Bubble data)
+### Config change detection
 
-When `--bubble-enrich` is on (default on if `AI_ENRICHMENT_ENABLED=true`), **reference fields** are resolved to Bubble IDs using either a **Bubble snapshot** (E2E) or the **Bubble Data API** (read-only):
+Every alert row stores a `config_hash` field (MD5 of `system_prompt + model`). Before triggering a rerun, the dashboard fetches the current config hash and compares it to the stored one. If they match, the user is warned that the config hasn't changed since the original run.
 
-| Field | How it's set |
-|-------|----------------|
-| **Organization** (Resource) | NAIC node under the organization tree (default `Organization`). Uses **normalized name matching** (lowercase, strip `(E)`-style codes, hyphen→space); selects the "NAIC" node. |
-| **NAIC Group (tree node)** (Calendar) | Tree node from target context (`org_path` + `label`). Uses **normalized label matching** (no path-walking): exact normalized, substring containment, or token-overlap (Jaccard ≥ 0.75). |
-| **Type1** (Resource) | Deterministic keyword classification (News, Agenda/Materials, In the weeds) or optional AI override (confidence ≥ 0.7). Tree: `Resources Types`. |
-| **topic suggestion** (Resource) | Optional AI-suggested topic path, resolved to node ID when confidence ≥ 0.7. Tree: `Chronicles`. |
-| **Related calendar items** (Resource) | Existing Bubble calendar items matched by **NAIC Group (tree node)** + date window (±7 days) or no-date fallback (up to 3 upcoming). Constraints JSON recorded in evidence. |
+### Rerun result schema (`alerts/reruns/<run_id>/<target_id>/result.json`)
 
-No Bubble **write** endpoints are called; resolution uses `bubble/lookups.py` (search/list) or snapshot data. Env overrides: `BUBBLE_ORGANIZATION_TREE` (default `Organization`), `BUBBLE_TYPE1_TREE` (default `Resources Types`), `BUBBLE_TOPIC_TREE` (default `Chronicles`).
-
-### Output Files
-
-| File | Description |
-|------|-------------|
-| `last_bubble_resources.json` | Resource payload array (when `--emit-bubble-json`) |
-| `last_bubble_calendar_items.json` | Calendar Item payload array |
-| `last_bubble_report.json` | Combined: `counts`, `web_urls`, `resources`, `calendar_items` |
-| `debug/bubble_snapshot.json` | Snapshot of trees, tree_nodes, calendar_items, resources (when `--e2e-bubble`) |
-| `debug/ai_inputs_resources.jsonl` | AI enrichment inputs (when AI runs with snapshot) |
-| `debug/ai_outputs_resources.jsonl` | AI enrichment outputs for resources |
-| `debug/ai_inputs_calendar_items.jsonl` | AI enrichment inputs for calendar items |
-| `debug/ai_outputs_calendar_items.jsonl` | AI enrichment outputs for calendar items |
-| `debug/reference_resolution_report.json` | Resolution decisions (organization, type1, naic_group, calendar_linking) with evidence |
-| `debug/pdf_meeting_meta.json` | Extracted meeting metadata from PDF resources (date, group, times); valid/invalid counts |
-
-If `BUBBLE_ARTIFACT_BUCKET` is set, `spike.py` will, after each run (even when there are no changes), upload `last_bubble_report.json` to S3 as:
-
-- `s3://$BUBBLE_ARTIFACT_BUCKET/bubble_reports/latest.json`
-- `s3://$BUBBLE_ARTIFACT_BUCKET/bubble_reports/runs/<YYYY>/<MM>/<DD>/<run_id>.json`
-
-Each S3 object includes metadata: `run_id` (or `RUN_ID` env if set), `image_tag` (from `IMAGE_TAG`/`GIT_SHA`), `bubble_mode`, `dry_run_bubble`, and `targets_file`. Failures or missing files log warnings but do not fail the run.
-
-### CLI Flags
-
-| Flag | Description |
-|------|-------------|
-| `--emit-bubble-json` | Write `last_bubble_resources.json`, `last_bubble_calendar_items.json`, and `last_bubble_report.json` |
-| `--bubble-report` | Use Bubble JSON format for report and email (summary + Calendar Items + Resources) |
-| `--bubble-enrich` | Run reference enrichment (resolve Organization, NAIC Group, Type1, topic suggestion, Related calendar items). Default on if `AI_ENRICHMENT_ENABLED=true`. |
-| `--no-ai` | Disable AI in reference enrichment even when `AI_ENRICHMENT_ENABLED` is set |
-| `--ai-enrich` | Force OpenAI payload enrichment (categorization, schema fill); requires `OPENAI_API_KEY` |
-| `--e2e-bubble` | E2E Bubble: build snapshot, pass into payload + AI; write debug artifacts; no write endpoints |
-| `--e2e-bubble-verify` | After enrichment, verify all reference IDs against snapshot; exit non-zero if invalid (use with `--e2e-bubble`) |
-| `--bubble-snapshot-limit` | Max items per type in snapshot (default 200) |
-| `--dry-run-bubble` | Do not call Bubble write endpoints (default True; app has no write calls) |
-| `--no-dry-run-bubble` | Opt out of dry-run (for future write support) |
-| `--print-bubble-schema` | Print Bubble Resource field list and exit |
-| `--smoke-bubble-resolvers` | Run resolver smoke tests against LIVE Bubble (NAIC Group → Calendar); exit 0/1 |
-| `--pdf-meeting-meta` | Extract meeting metadata from PDF resources (date, group, times); default ON when `PROD_OBSERVE_MODE=true` |
-
-### Run spec (production)
-
-Runtime behavior is controlled by a **RunSpec** (single source of truth) derived from CLI args and environment. Precedence: **CLI > env > defaults**. The RunSpec summary is logged at startup and included at the top of every email report.
-
-| Env / behavior | Description |
-|----------------|-------------|
-| `PROD_OBSERVE_MODE` | When `true`: requires `bubble_enrich_enabled`, `ai_reference_fields_blocked`, and debug artifacts; intended for production observe (live Bubble reads, no silent degraded modes). |
-| `AI_REFERENCE_FIELDS_BLOCKED` | Default `true`: AI must not overwrite reference fields (Organization, Type1, Related calendar items, etc.). If `false` while AI enrich is on, a HIGH severity warning is emitted (and included in email header). |
-| `ARTIFACT_OUTPUT_DIR` | Directory for `reference_resolution_report.json` and `verify_report.json` (default `debug`). |
-| `S3_ARTIFACT_UPLOAD_ENABLED` | When `true`, upload `reference_resolution_report.json`, `verify_report.json`, and `pdf_meeting_meta.json` to S3 (requires `ARTIFACT_BUCKET`; optional `ARTIFACT_PREFIX`). |
-| `BUBBLE_ARTIFACT_BUCKET` | When set, upload `last_bubble_report.json` to `bubble_reports/latest.json` and a versioned `bubble_reports/runs/YYYY/MM/DD/<run_id>.json` key after each run (read-only S3 export; no Bubble writes). |
-| `RUN_SPEC_VALIDATION_FAIL_FAST` | When `true`, validation failures (e.g. prod_observe without bubble_enrich) raise and exit instead of only logging warnings. |
-
-**Recommended production (observe, live Bubble, safe):**
-
-```bash
-PROD_OBSERVE_MODE=true ARTIFACT_OUTPUT_DIR=debug EMAIL_ENABLED=true \
-  python spike.py --bubble-enrich --emit-bubble-json --bubble-report
+```json
+{
+  "run_id": "run-1776781376",
+  "target_id": "naic.e.life_rbc_wg",
+  "rerun_timestamp": "2026-04-22T...",
+  "config_hash": "<md5>",
+  "original_rows": [...],
+  "rerun_rows": [...]
+}
 ```
 
-**E2E verify (snapshot, strict):**
+`original_rows` and `rerun_rows` use the same schema as `alerts_table.jsonl` rows.
 
-```bash
-python spike.py --e2e-bubble --e2e-bubble-verify --bubble-enrich --emit-bubble-json
-```
+---
 
-**Minimal scrape-only (explicitly low quality, no Bubble refs):**
+## Dashboard
 
-```bash
-# No --bubble-enrich, no AI; refs unresolved (suitable for local/dev only)
-python spike.py
-```
+The alerts dashboard lives in a separate repo: **`NAICDashboard-`** (Next.js, deployed to ECS Fargate behind an ALB).
 
-### Bubble Doctor CLI
+It reads `alerts/alerts_table.jsonl` from S3, resolves `candidate_chronicles` and `candidate_agenda_items` Bubble IDs to human-readable names via the Bubble Data API, and renders a dynamic table whose columns are derived entirely from the agent output (no hardcoded schema).
 
-Read-only diagnostics (no secrets in output):
+The dashboard also implements the Re-evaluate UI (button → confirmation modal → ECS trigger → diff drawer → Accept/Discard). See `docs/rerun-feature.md` for the full API contract between the two systems.
 
-```bash
-python -m bubble.doctor list-trees
-python -m bubble.doctor dump-tree --tree-name "Organization"
-python -m bubble.doctor find-node --tree-name "Organization" --query "NAIC"
-python -m bubble.doctor find-calendar --title "Life Risk-Based Capital" --date "2026-02-25"
-```
+---
 
-### Resolver Smoke Test
+## Environment Variables
 
-Smoke-test the NAIC Group → Calendar Item resolver against LIVE Bubble:
+### State & Storage
 
-```bash
-python scripts/bubble_resolver_smoke.py "Risk-Based Capital Investment Risk Evaluation Working Group"
-python scripts/bubble_resolver_smoke.py "Life Actuarial Task Force" --date 2026-03-02
-```
+| Var | Description |
+|-----|-------------|
+| `STATE_BACKEND` | `local` (default) or `dynamodb` |
+| `STATE_TABLE` | DynamoDB table for per-target state |
+| `PAGE_CHANGE_SNAPSHOT_BUCKET` | S3 bucket for before/after HTML |
+| `CHANGELOG_BUCKET` | S3 bucket for alerts and changelogs |
+| `CHANGELOG_PREFIX` | S3 prefix (default `changelog/`) |
 
-Requires `BUBBLE_API_URL` and `BUBBLE_API_KEY`. Or run the full resolver smoke suite via `--smoke-bubble-resolvers`.
+### Agents & AI
 
-### AI Enrichment
+| Var | Description |
+|-----|-------------|
+| `PAGE_CHANGE_AGENT_ENABLED` | `true` to enable RAG agents |
+| `PGVECTOR_ENABLED` | `true` to enable pgvector knowledge base |
+| `CHATKIT_CONFIG_TABLE` | DynamoDB table for agent configs (default: `chatkit_production_config`) |
+| `OPENAI_API_KEY` | Required for agents and embeddings |
+| `DATABASE_IP` | pgvector DB host |
+| `DATABASE_NAME` | pgvector DB name |
+| `DATABASE_USERNAME_CHATKIT` | pgvector DB user |
+| `DATABASE_PASSWORD_CHATKIT` | pgvector DB password |
+| `DATABASE_PORT` | pgvector DB port (default `6432`) |
+| `RERUN_RUN_ID` | (Rerun mode) run_id to re-evaluate — set by ECS RunTask override |
+| `RERUN_TARGET_ID` | (Rerun mode) target_id to re-evaluate — set by ECS RunTask override |
 
-Optional OpenAI enrichment fills NAIC categorization (Type, Type1, topic suggestion, NAIC Group, subtopic, etc.). When a **Bubble snapshot** is available (e.g. `--e2e-bubble`), the model receives compact **candidate lists** (organization tree nodes, NAIC group nodes, resource type nodes, recent calendar items) and is instructed to output **Bubble IDs** for reference fields; output is validated (all schema keys present, no extras). Uses the Responses API with `gpt-5` and reasoning effort `medium` by default. On API failure or invalid output, enrichment is skipped and original payloads are used.
+### Email
 
-**SSM Parameter Store:** When `STATE_BACKEND=aws|dynamodb` or `ENVIRONMENT=prod`, OpenAI settings are loaded from SSM if not set in env. Locally, set `OPENAI_FETCH_FROM_SSM=true` to fetch. On SSM failure, logs a warning and continues without AI. Never logs the API key.
+| Var | Description |
+|-----|-------------|
+| `SEND_EMAIL` | `true` to send via SES |
+| `FROM_EMAIL` | Sender address (SES verified) |
+| `TO_EMAILS` | Comma-separated recipient list |
+| `SES_REGION` | AWS region for SES |
+
+### Bubble (legacy)
+
+| Var | Description |
+|-----|-------------|
+| `BUBBLE_API_URL` | Bubble Data API root |
+| `BUBBLE_API_KEY` | Bubble API key |
+| `AI_ENRICHMENT_ENABLED` | Enable Bubble reference enrichment |
+
+### Hardening
 
 | Var | Default | Description |
 |-----|---------|-------------|
-| `OPENAI_API_KEY_SSM_PARAM` | `/web-change-tracker/prod/openai_api_key` | SSM param for API key (SecureString) |
-| `OPENAI_MODEL_SSM_PARAM` | `/web-change-tracker/prod/openai_model` | SSM param for model |
-| `OPENAI_REASONING_EFFORT_SSM_PARAM` | `/web-change-tracker/prod/openai_reasoning_effort` | SSM param for effort |
-| `OPENAI_FETCH_FROM_SSM` | `false` local | If true, fetch from SSM even when not prod |
-| `OPENAI_ENABLED` | `true` in prod, `false` local | Enable when `ENVIRONMENT=production` |
-| `OPENAI_ENRICH_ONLY_IF_CHANGED` | `true` | Skip when no changes detected |
-| `OPENAI_ENRICH_MIN_ITEMS` | `1` | Min resources+events to run |
-| `OPENAI_ENRICH_MAX_RESOURCES` | `25` | Max resources to enrich (first N) |
-| `OPENAI_ENRICH_MAX_EVENTS` | `10` | Max calendar items to enrich (first N) |
-| `OPENAI_MODEL` | `gpt-5` | Model name |
-| `OPENAI_REASONING_EFFORT` | `medium` | Reasoning effort for gpt-5/o-series |
-| `AI_ENRICHMENT_ENABLED` | — | When set, enables `--bubble-enrich` by default and allows AI in reference enrichment |
-
-```bash
-# Force AI payload enrichment:
-OPENAI_API_KEY=sk-... python spike.py --emit-bubble-json --ai-enrich
-
-# With reference enrichment (resolve Bubble IDs):
-python spike.py --emit-bubble-json --bubble-enrich
-
-# E2E: snapshot + mapping context for AI + ref resolution (no Bubble writes):
-python spike.py --emit-bubble-json --e2e-bubble
-```
-
-### Email Report Body
-
-When Bubble output is used, the email body includes:
-
-- **New Library Items (Resources):** *N*
-- **New Calendar Items (Events):** *M*
-- **Source links:** deduplicated list of source URLs that triggered changes
-- **Bubble Resource payload:** JSON block
-- **Bubble Calendar Item payload:** JSON block
-
-Email is sent only when there are meaningful changes at the target level **and** at least one new Bubble Resource or Calendar Item (i.e., `targets_changed > 0` and the payload arrays are non-empty).
+| `MAX_RETRIES` | `3` | Fetch retries per target |
+| `BACKOFF_SECONDS` | `2` | Retry backoff |
+| `DELAY_BETWEEN_PAGES` | `1` | Seconds between target fetches |
 
 ---
 
-## Recommended Libraries & Tools
+## Getting Started
 
-| Purpose | Tool |
-|---------|------|
-| Scraping | **Playwright** (Python) for JS-rendered pages; **requests** + **BeautifulSoup** for simple pages |
-| Parsing | **BeautifulSoup4** / **lxml** |
-| Change detection | **hashlib** (SHA256), **difflib** for human-readable diffs; optionally **simhash** for fuzzy matching |
-| Data modeling | **pydantic** |
-| Storage | DynamoDB (state), S3 (artifacts) |
-| Scheduling | AWS EventBridge (cron) |
-| Compute | Lambda or ECS Fargate |
-| Notifications | Amazon SES (or SNS → email) |
-| Logging/Monitoring | CloudWatch Logs, metrics, alarms |
-| IaC | Terraform or AWS CDK |
+### Local run
+
+```bash
+make install              # create venv, install deps
+make install-playwright   # optional; falls back to requests
+make run                  # run the pipeline
+```
+
+Minimal run without agents (dev/test):
+```bash
+python spike.py
+```
+
+Run with agents (requires OpenAI + DB creds):
+```bash
+PAGE_CHANGE_AGENT_ENABLED=true PGVECTOR_ENABLED=true python spike.py
+```
+
+Single target:
+```bash
+python spike.py --target-ids naic.e.life_rbc_wg
+```
+
+### Backfill alerts from stored snapshots
+
+Re-run agents on previously stored before/after HTML without re-scraping:
+```bash
+python scripts/backfill_alerts.py
+python scripts/backfill_alerts.py --limit 5 --dry-run
+```
+
+Backfill **only** `document_extractions_table.jsonl` from already-stored `agent_output.json` files — **safe, never touches `alerts_table.jsonl`**:
+```bash
+python scripts/backfill_document_extractions.py --limit 5 --dry-run
+python scripts/backfill_document_extractions.py --limit 10
+```
+
+Rebuild `alerts_table.jsonl` from already-stored `agent_output.json` files (no agent re-run, useful for deduplication or schema fixes):
+```bash
+python scripts/rebuild_alerts_table.py
+python scripts/rebuild_alerts_table.py --dry-run
+```
+
+### Deploy (ECS Fargate)
+
+```bash
+./scripts/deploy.sh              # build Docker, push ECR, terraform apply
+./scripts/deploy.sh --run-task   # + trigger one ECS task immediately
+./scripts/deploy.sh --tag v1.2   # use custom image tag
+```
+
+### Docker (local)
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
 
 ---
 
@@ -350,241 +377,71 @@ Email is sent only when there are meaningful changes at the target level **and**
 
 ```
 web-change-tracker/
-├── spike.py                 # Main change-detection pipeline (fetch → extract → diff → report)
-├── storage/
-│   ├── state_store_dynamodb.py  # DynamoDB per-target state
-│   ├── state_store_local.py     # Local state.json (dev)
-│   └── changelog_s3.py          # S3 append-only changelog
-├── bubble/
-│   ├── client.py            # Bubble Data API client (read/write endpoints)
-│   ├── lookups.py           # Read-only lookups: trees, tree nodes, calendar items, resources (cached)
-│   ├── payload.py           # Bubble payload building, link association, context helpers, PDF meeting meta
-│   ├── schemas.py           # Resource & Calendar Item schema field definitions
-│   ├── enrich_refs.py       # Reference enrichment: resolve Organization, NAIC Group, Type1, topic, calendar links
-│   ├── reference_resolution.py  # Report resolution decisions and evidence for debugging
-│   ├── snapshot.py          # Build Bubble snapshot (trees, nodes, calendar, resources) for E2E
-│   ├── mapping_context.py   # Extract candidate tree nodes / calendar items from snapshot for AI
-│   ├── ai_enrichment.py     # OpenAI enrichment for Bubble payloads (with snapshot context)
-│   ├── openai_client.py     # OpenAI Responses API client
-│   ├── ssm_loader.py        # Load OpenAI settings from SSM in prod
-│   ├── doctor.py            # CLI: list-trees, dump-tree, find-node, find-calendar (read-only)
-│   ├── healthcheck.py       # Read-only Bubble API healthcheck (BUBBLE_API_URL/BUBBLE_API_KEY)
-│   └── schema_exports/      # CSV exports for validation & examples
-├── scripts/
-│   ├── bubble_resolver_smoke.py  # Smoke-test NAIC Group → Calendar resolver against LIVE Bubble
-│   ├── deploy.sh                 # Build Docker, push ECR, terraform apply
-│   ├── validate_bubble_api.sh    # Validate Bubble API endpoints (trees, nodes, calendar, resources)
-│   └── run-local.sh
+├── spike.py                        # Main pipeline orchestrator
+├── targets.json                    # Target URL config
 ├── config/
-│   └── run_spec.py         # RunSpec: compute_run_spec, validate_run_spec, render_run_spec_summary
-├── schema_loader.py         # Bubble schema loading from CSV exports
-├── emailer.py               # Optional SES email when changes detected
+│   ├── run_spec.py                 # RunSpec: CLI > env > defaults
+│   └── chatkit_config.py           # DynamoDB agent config loader
+├── storage/
+│   ├── state_store_dynamodb.py     # DynamoDB per-target state
+│   ├── state_store_local.py        # Local state.json (dev)
+│   ├── alert_s3.py                 # Alert storage + Excel export
+│   ├── page_change_s3.py           # Before/after HTML to S3
+│   ├── html_snapshot_s3.py         # Raw HTML snapshots
+│   ├── changelog_s3.py             # Append-only change event log
+│   └── chunk_s3.py                 # Page chunks for vectorization
+├── bubble/
+│   ├── page_change_agent.py        # RAG agent: before/after HTML → alert JSON
+│   ├── document_agent.py           # RAG agent: library item → topic/agenda IDs
+│   ├── pgvector/                   # pgvector connection pool + search tool
+│   ├── calendar_alerts.py          # Calendar-based alert logic
+│   ├── client.py                   # Bubble Data API client (legacy)
+│   ├── lookups.py                  # Bubble read-only lookups (legacy)
+│   ├── payload.py                  # Bubble payload building (legacy)
+│   ├── enrich_refs.py              # Reference enrichment (legacy)
+│   ├── ai_enrichment.py            # OpenAI payload enrichment (legacy)
+│   └── doctor.py                   # CLI: Bubble diagnostics
 ├── scrape/
-│   └── pdf_meeting_meta.py  # Extract meeting metadata from PDFs (date, group, times)
-├── targets.json             # Target config with extract rules
-├── Dockerfile
-├── requirements.txt
-├── state.json               # Local state (gitignored)
-├── last_report.txt          # Latest report output (gitignored)
-├── last_bubble_resources.json
-├── last_bubble_calendar_items.json
-├── last_bubble_report.json  # Combined counts, web_urls, payloads
-├── snapshots/               # Test mode: saved snapshots per target (gitignored)
-├── debug/                   # E2E/AI debug: bubble_snapshot.json, reference_resolution_report.json, pdf_meeting_meta.json, ai_inputs_*.jsonl, ai_outputs_*.jsonl
-├── infra/terraform/         # Terraform: ECS Fargate, EventBridge, DynamoDB, S3, IAM
-├── prompts/                 # Prompt templates for AI enrichment
-└── tests/
-    ├── test_bubble_payload.py
-    ├── test_ai_enrichment_contract.py
-    ├── test_enrich_refs.py
-    ├── test_report.py
-    └── test_ai_review.py
+│   ├── html_content_extractor.py   # Strip HTML to content-only
+│   ├── pdf_meeting_meta.py         # Extract meeting metadata from PDFs
+│   ├── pdf_agenda_signals.py       # Extract agenda signals from PDFs
+│   └── page_chunker.py             # Chunk pages for RAG
+├── scripts/
+│   ├── backfill_alerts.py                # Reprocess stored page changes through agents
+│   ├── backfill_document_extractions.py  # Backfill document_extractions_table.jsonl only (safe, never touches alerts_table.jsonl)
+│   ├── rebuild_alerts_table.py           # Rebuild alerts_table.jsonl from stored agent_output.json (no re-run)
+│   ├── deploy.sh                         # Build Docker, push ECR, terraform apply
+│   └── infer_pdf.py                      # PDF inference/analysis
+├── docs/
+│   └── rerun-feature.md            # Re-evaluate alert feature spec (shared between this repo + dashboard)
+├── analysis/
+│   └── pdf_agenda_detection/       # PDF structure analysis + sample dataset
+├── infra/terraform/                # ECS, EventBridge, DynamoDB, S3, IAM
+├── tests/                          # Unit/integration tests
+├── prompts/                        # Prompt templates
+└── debug/                          # Debug artifacts (gitignored)
 ```
 
 ---
 
 ## Testing
 
-End-to-end testing depends on real site changes, so we rely on layered testing:
-
 | Strategy | Description |
 |----------|-------------|
-| **Snapshot test mode** | `--snapshot-dir` saves content per target; `--compare-snapshot` compares against snapshots. Edit snapshot files to simulate changes without waiting for site updates. Works with `USE_PLAYWRIGHT=0` (requests fallback). Use `--simulate-change` for deterministic diffs. |
-| **Unit tests** | `test_bubble_payload.py` (payload building, link association), `test_ai_enrichment_contract.py` (schema/output checks, mocked), `test_enrich_refs.py` (reference resolution, NAIC group, calendar linking), `test_report.py`, `test_ai_review.py` |
-| **E2E Bubble** | `--e2e-bubble` builds a Bubble snapshot and passes it into payload mapping and AI enrichment; no Bubble write endpoints are called. Debug artifacts written to `debug/`. |
-| **Integration tests** | Against static snapshots; fixtures in `tests/fixtures/` |
-| **Resolver smoke** | `scripts/bubble_resolver_smoke.py` or `--smoke-bubble-resolvers` runs NAIC Group → Calendar resolver against LIVE Bubble |
-| **Manual test plan** | Deploy to dev, add test target, trigger run, verify email and state |
+| **Unit tests** | `pytest tests/` — payload building, enrichment, PDF extraction, calendar alerts |
+| **Simulate change** | `python spike.py --simulate-change --target-ids <id>` — inject fake diff without scraping |
+| **Snapshot mode** | `--snapshot-dir snapshots/` saves state; `--compare-snapshot` compares without updating state |
+| **Backfill** | `scripts/backfill_alerts.py --dry-run` — test agent pipeline on stored HTML without writing |
+| **Bubble diagnostics** | `python -m bubble.doctor list-trees` — read-only Bubble API checks |
 
 ---
 
 ## Security & Legal
 
-- **Respect `robots.txt`** where applicable; honor crawl-delay hints if present
-- **Throttle** requests per host; avoid aggressive parallel scraping
-- **Public pages only**; no authentication or private data
-- Store minimal PII; only URLs, hashes, and change metadata in DynamoDB
-- SES: use verified identities; follow AWS abuse-prevention guidelines
-
----
-
-## Phase 1 Scope (MVP)
-
-**Goal:** Change detection, email summary, and Bubble integration for import into Bubble.io.
-
-**Done (local spike):**
-
-- [x] Target config loaded from `targets.json` (extract array, resource-type driven)
-- [x] Scraper fetches URLs (Playwright + requests fallback)
-- [x] Extractors: link_collector_v1, keyword_links_v1, naic_meetings_v1, naic_events_v1
-- [x] Diff engine compares to stored state; detects changes per resource type
-- [x] Report written to last_report.txt (grouped by target, then resource type)
-- [x] State store abstraction (LocalStateStore, DynamoDB)
-- [x] Email summary via SES (SEND_EMAIL, DRY_RUN); body includes new items counts, source links, Bubble payload JSON
-- [x] Bubble payload generation: Resources, Calendar Items, meeting-link association
-- [x] Bubble reference enrichment: Organization, NAIC Group, Type1, topic suggestion, Related calendar (deterministic + optional AI)
-- [x] Bubble snapshot + E2E mode: `--e2e-bubble`, snapshot passed into mapping/AI; debug artifacts under `debug/`
-- [x] Bubble Doctor CLI: `python -m bubble.doctor` (list-trees, dump-tree, find-node, find-calendar)
-- [x] Resolver smoke script: `scripts/bubble_resolver_smoke.py`; `--smoke-bubble-resolvers` flag
-- [x] `--emit-bubble-json`, `--bubble-report`, `--bubble-enrich`, `--no-ai`, `--ai-enrich`, `--e2e-bubble`, `--print-bubble-schema` CLI flags
-- [x] Optional OpenAI enrichment for Bubble payloads (Type, NAIC Group, topic, etc.); mapping context from snapshot when available
-- [x] PDF meeting meta extraction (date, group, times) with quality gates; `debug/pdf_meeting_meta.json`
-- [x] Reference resolution report (`debug/reference_resolution_report.json`) with evidence
-- [x] Deployment script: `scripts/deploy.sh` (Docker build, ECR push, Terraform apply)
-
-**Remaining (AWS):**
-
-- [ ] EventBridge triggers runs on schedule
-- [ ] CloudWatch logs and metrics
-
----
-
-## Getting Started
-
-**Local run:**
-
-```bash
-make install              # create venv, install deps
-make install-playwright   # optional; falls back to requests if unavailable
-make run                  # run the pipeline
-```
-
-**Docker (Playwright included):**
-
-```bash
-# Build and run with docker-compose (env from .env)
-cp .env.example .env      # optional; edit as needed
-docker compose up --build
-
-# Or run once with docker
-docker build -t web-change-tracker .
-docker run --rm -v $(pwd):/app -e USE_PLAYWRIGHT=1 web-change-tracker
-```
-
-Required env vars for Docker (see `.env.example`):
-- **Targets:** `TARGETS_FILE` (default `targets.json`); `TARGET_IDS` (comma-separated) to restrict to a subset.
-- **State backend:** `STATE_BACKEND=local` (default) for `state.json`; `STATE_BACKEND=dynamodb` + `STATE_TABLE` for production.
-- **Changelog:** `CHANGELOG_BUCKET`, `CHANGELOG_PREFIX` (default `changelog/`) to append events to S3.
-- **Email:** `SEND_EMAIL`, `FROM_EMAIL`, `TO_EMAILS`, `SES_REGION`; `DRY_RUN=true` to test without sending.
-- **Bubble / AI enrichment:** `OPENAI_API_KEY` (required when enrichment runs); `OPENAI_MODEL`, `OPENAI_REASONING_EFFORT` (see AI Enrichment section). For Bubble read lookups and E2E snapshot: `BUBBLE_API_URL`, `BUBBLE_API_KEY` (see `bubble/client.py`). **BUBBLE_API_URL** must be the exact root from Bubble's API settings (Settings → API). Custom domains often use `https://your-domain.com/api/1.1/obj` (no `/live`); bubbleapps.io often uses `https://your-app.bubbleapps.io/live/api/1.1/obj`. No spaces after `=` in `.env`.
-- **AWS:** `AWS_REGION`, credentials when using DynamoDB/S3/SES.
-
-Or use the script:
-
-```bash
-./scripts/run-local.sh
-```
-
-**Deploy (ECS Fargate):**
-
-```bash
-./scripts/deploy.sh              # Build, push ECR, terraform apply
-./scripts/deploy.sh --run-task   # Same + run one ECS task after apply
-./scripts/deploy.sh --tag v1.2   # Use custom image tag
-```
-
-Requires Terraform outputs (region, ECR URL) from `infra/terraform`. See `infra/terraform/README.md` for SSM parameters (Bubble API, OpenAI).
-
-**CI (e.g. GitHub Actions):**
-
-```bash
-make ci                   # install, lint, run
-# or
-./scripts/run-ci.sh
-```
-
-**Bubble output:**
-
-```bash
-# Write Bubble JSON payloads
-python spike.py --emit-bubble-json
-
-# With reference enrichment (resolve Organization, NAIC Group, Type1, etc.)
-python spike.py --emit-bubble-json --bubble-enrich
-
-# E2E: snapshot + mapping context for AI (no Bubble API writes)
-python spike.py --emit-bubble-json --e2e-bubble
-
-# Report and email in Bubble format
-python spike.py --bubble-report
-
-# With AI enrichment (requires OPENAI_API_KEY)
-python spike.py --emit-bubble-json --ai-enrich
-```
-
-**Bubble diagnostics (read-only):**
-
-```bash
-python -m bubble.doctor list-trees
-python -m bubble.doctor dump-tree --tree-name "Organization/Publisher"
-python -m bubble.doctor find-node --tree-name "Organization/Publisher" --query "NAIC"
-python -m bubble.doctor find-calendar --title "Life Risk-Based Capital" --date "2026-02-25"
-```
-
-**Test mode (validate change detection without waiting for site updates):**
-
-```bash
-# 1. Save snapshots (normalized content + extracted lists per target)
-python spike.py --snapshot-dir snapshots/
-
-# 2. Simulate change: edit snapshots/<target_id>.json (e.g. remove a doc URL)
-# 3. Compare current scrape against snapshot (no state.json updated; snapshots not overwritten)
-python spike.py --compare-snapshot
-
-# Or with explicit dir: --snapshot-dir snapshots/ --compare-snapshot
-# Works with requests fallback (no Playwright needed):
-USE_PLAYWRIGHT=0 python spike.py --snapshot-dir snapshots/
-USE_PLAYWRIGHT=0 python spike.py --compare-snapshot
-```
-
-- Edit `targets.json` to add or modify targets and extract rules.
-
-**Target selection:**
-
-```bash
-# Full run (all targets from targets.json)
-python spike.py
-
-# Custom targets file
-python spike.py --targets-file config/my-targets.json
-
-# Subset run (only specified target IDs)
-python spike.py --target-ids life_rbc_wg,naic_events_example
-
-# Via env vars
-TARGETS_FILE=config/targets.json TARGET_IDS=life_rbc_wg python spike.py
-```
-
-- State is persisted per target_id (state.json or DynamoDB); subset runs only read/write state for processed targets.
-- Report output is in `last_report.txt`.
-
-**Production hardening env vars:** `MAX_RETRIES` (default 3), `BACKOFF_SECONDS` (default 2), `DELAY_BETWEEN_PAGES` (default 1). Failures on one target don’t stop the run; errors are collected and included in the final report.
-
-**Production storage:** Set `STATE_BACKEND=dynamodb`, `STATE_TABLE`, `CHANGELOG_BUCKET`, `CHANGELOG_PREFIX` (default `changelog/`), and `AWS_REGION`. Run flow: load each target's state from DynamoDB → scrape → diff → save state to DynamoDB → append change events to S3. See `ARCHITECTURE.md` for schema and IAM policies.
-
-**Optional email (SES):** Set `SEND_EMAIL=true`, `FROM_EMAIL`, `TO_EMAILS` (comma-separated), `SES_REGION`. Email is sent only when changes or errors are detected. Set `DRY_RUN=true` to print the email without sending.
-
-- See `ARCHITECTURE.md` for AWS deployment. Use `infra/` Terraform for a scheduled ECS Fargate MVP.
+- Public pages only; no authentication or private data scraped
+- Throttle requests (`DELAY_BETWEEN_PAGES`); respect crawl delays
+- Minimal state stored: URLs, hashes, change metadata only
+- No Bubble write endpoints called; all Bubble integration is read-only
 
 ---
 
