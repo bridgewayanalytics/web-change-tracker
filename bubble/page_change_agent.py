@@ -115,35 +115,35 @@ _FALLBACK_OUTPUT_SCHEMA: dict = {
     "alert_type": "string",
     "alert_title": "string",
     "alert_description": "string",
-    "alert_url": "string | null",
-    "organization": "string | null",
-    "alert_date_time": "string | null (ISO 8601 Eastern Time)",
+    "alert_url": "string (N/A if not applicable)",
+    "organization": "string (N/A if not applicable)",
+    "alert_date_time": "string ISO 8601 Eastern Time (N/A if not applicable)",
     "is_relevant_for_art_newsreel": "boolean",
     "events": [
         {
             "title": "string",
-            "start_datetime": "string | null",
-            "end_datetime": "string | null",
-            "timezone": "string | null",
+            "start_datetime": "string ISO 8601 Eastern Time (N/A if not applicable)",
+            "end_datetime": "string ISO 8601 Eastern Time (N/A if not applicable)",
+            "timezone": "string (N/A if not applicable)",
             "is_full_day": "boolean",
-            "url": "string | null",
-            "call_in_access_code": "string | null",
-            "duration": "string | null",
+            "url": "string (N/A if not applicable)",
+            "call_in_access_code": "string (N/A if not applicable)",
+            "duration": "string (N/A if not applicable)",
         }
     ],
     "library_items": [
         {
             "preliminary_title": "string",
-            "url": "string | null",
-            "file_name": "string | null",
+            "url": "string (N/A if not applicable)",
+            "file_name": "string (N/A if not applicable)",
         }
     ],
     "agenda_items": [
         {
             "title": "string",
-            "official_title": "string | null",
-            "standardized_id": "string | null",
-            "official_id": "string | null",
+            "official_title": "string (N/A if not applicable)",
+            "standardized_id": "string (N/A if not applicable)",
+            "official_id": "string (N/A if not applicable)",
             "is_existing": "boolean",
             "chronicle_topics": ["string"],
         }

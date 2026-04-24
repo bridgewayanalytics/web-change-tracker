@@ -69,10 +69,13 @@ def _put_json(client, bucket: str, key: str, obj: object, run_id: str) -> None:
 
 def _flatten_val(val) -> str | bool:
     """Coerce agent output values to scalar types safe for JSONL / Excel cells."""
+    if isinstance(val, bool):
+        return val
     if isinstance(val, list):
-        return ", ".join(str(x) for x in val if x is not None)
-    if val is None:
-        return ""
+        items = [str(x) for x in val if x is not None and x != ""]
+        return ", ".join(items) if items else "N/A"
+    if val is None or val == "":
+        return "N/A"
     return val
 
 
@@ -105,24 +108,25 @@ def _build_table_rows(
         "config_hash": config_hash,
     }
 
-    # All top-level agent output fields — exact names, no modification
+    # All top-level agent output fields — coerce null/empty string to "N/A"
     for key, val in agent_output.items():
         if key not in _NESTED:
-            base[key] = val
+            base[key] = _flatten_val(val)
 
-    # Full arrays — no data loss
+    # Full arrays — no data loss (stored as-is for rerun diff view)
     events = agent_output.get("events") or []
     agenda_items = agent_output.get("agenda_items") or []
     base["events"] = events
     base["agenda_items"] = agenda_items
 
-    # First-item flattening — backward compatibility with existing rows and rerun diffs
+    # First-item flattening — backward compatibility with existing rows and rerun diffs.
+    # Coerce null/empty to "N/A" so the dashboard never shows a bare dash.
     if events:
         for key, val in events[0].items():
-            base[f"event_{key}"] = val
+            base[f"event_{key}"] = _flatten_val(val)
     if agenda_items:
         for key, val in agenda_items[0].items():
-            base[f"agenda_item_{key}"] = val
+            base[f"agenda_item_{key}"] = _flatten_val(val)
 
     library_items = agent_output.get("library_items") or []
     if not library_items:
