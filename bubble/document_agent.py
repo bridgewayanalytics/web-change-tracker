@@ -1,14 +1,16 @@
 """
-LLM agent that extracts structured document data (Chronicle topic IDs, agenda item IDs)
-for a detected document, using the DynamoDB `document-data-extraction` chat config.
+LLM agent that extracts structured document data for a detected document,
+using the DynamoDB `chat:document-data-extraction` config.
 
 Enabled via PAGE_CHANGE_AGENT_ENABLED=true (shares the same feature flag as page_change_agent).
 
 When PGVECTOR_ENABLED=true and DB credentials are present, the agent runs via
 the OpenAI Agents SDK with pgvector search tools, giving it access to the full
-knowledge base. Otherwise falls back to a direct OpenAI Responses API call.
+knowledge base.
 
-Replaces chatkit_client.extract_document_data() for in-process document enrichment.
+Output is fully dynamic — whatever fields the DynamoDB config instructs the model
+to return are stored verbatim. No hardcoded output schema.
+Results are stored in a separate S3 table: alerts/document_extractions_table.jsonl
 """
 
 import asyncio
@@ -17,9 +19,12 @@ import logging
 import os
 import re
 
+# Max characters of PDF text to include in the agent prompt
+_PDF_TEXT_LIMIT = 12000
+
 log = logging.getLogger(__name__)
 
-_CHAT_ID = "web-tracking-document-matching"
+_CHAT_ID = "document-data-extraction"
 
 # Alert types that indicate new/updated documents and should trigger extraction
 DOCUMENT_ALERT_TYPES = frozenset({
@@ -31,31 +36,17 @@ DOCUMENT_ALERT_TYPES = frozenset({
 })
 
 _FALLBACK_SYSTEM_PROMPT = """\
-You are a document matching assistant. Given a document name and URL, search the
-knowledge base to find related Chronicle topics and agenda items, then return their
-Bubble IDs.
+You are a document data extraction assistant. Given a document name and URL,
+extract structured data from the document and return it as a single JSON object.
+Return ONLY valid JSON — no markdown fences, no commentary outside the JSON.
+"""
 
-Steps:
-1. Call list_available_documents() to understand available content types.
-2. Search for matching Chronicle topics using search_knowledge_base(). Each result
-   includes an "external_id" field — that is the Bubble ID. For chronicles,
-   content_type will be "chronicle".
-3. Search for matching agenda items. For agenda items, content_type will be
-   "bubble_data" with the Bubble ID in the "external_id" field.
-4. Return ONLY a single JSON object:
+_JSON_OUTPUT_SUFFIX = """
 
-{
-  "topic_ids": [string],
-  "agenda_item_ids": [string],
-  "summary": string
-}
-
-Rules:
-- topic_ids: Use the "external_id" values from matching chronicle search results.
-- agenda_item_ids: Use the "external_id" values from matching agenda item results.
-- Only include IDs where the match is clearly relevant (score > 0.01).
-- summary: 1-2 sentence description of the document content.
-- Return ONLY valid JSON. No markdown fences, no commentary outside the JSON.
+## Output Format
+Return your response as a single JSON object containing all extracted values.
+Use snake_case keys (e.g., agenda_item_title, organization, document_type).
+Return ONLY the JSON object — no markdown fences, no commentary outside the JSON.
 """
 
 # Lazily loaded from DynamoDB; None means not yet fetched
@@ -72,7 +63,10 @@ def _load_dynamo_config() -> dict:
 
 def _get_system_prompt() -> str:
     cfg = _load_dynamo_config()
-    return cfg.get("instructions") or _FALLBACK_SYSTEM_PROMPT
+    base = cfg.get("instructions") or _FALLBACK_SYSTEM_PROMPT
+    # Always append JSON output requirement — the DynamoDB instructions describe
+    # what to extract but don't specify output format.
+    return base + _JSON_OUTPUT_SUFFIX
 
 
 def _get_model() -> str:
@@ -172,6 +166,35 @@ def _parse_output(raw: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# PDF fetch helper
+# ---------------------------------------------------------------------------
+
+def _fetch_pdf_text(url: str) -> str | None:
+    """
+    Fetch a PDF from `url` and extract plain text.
+    Returns None on any failure (network error, not a PDF, parse error, etc.).
+    Only attempts fetch for URLs that look like PDFs.
+    """
+    if not url or not url.lower().endswith(".pdf"):
+        return None
+    try:
+        import requests
+        resp = requests.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+        resp.raise_for_status()
+        content_type = resp.headers.get("Content-Type", "")
+        if "pdf" not in content_type.lower() and not url.lower().endswith(".pdf"):
+            return None
+        from scrape.pdf_meeting_meta import _extract_plain_text
+        text = _extract_plain_text(resp.content)
+        if text and text.strip():
+            log.info("document_agent: fetched PDF text (%d chars) from %s", len(text), url[:80])
+            return text.strip()
+    except Exception as e:
+        log.debug("document_agent: could not fetch PDF text from %s: %s", url[:80], e)
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Public interface
 # ---------------------------------------------------------------------------
 
@@ -190,16 +213,12 @@ def extract_document_data(
     pdf_text: str | None = None,
 ) -> dict:
     """
-    Extract Chronicle topic IDs, agenda item IDs, and a summary for a document.
+    Extract structured data from a document using the document-data-extraction agent.
 
-    Args:
-        document_name: Title or file name of the document.
-        document_url:  URL where the document can be accessed.
-        pdf_text:      Optional extracted text signals (first ~3 000 chars).
+    Output is fully dynamic — fields are whatever the DynamoDB config instructs
+    the model to return. No hardcoded output schema.
 
-    Returns:
-        Dict with keys: topic_ids (list), agenda_item_ids (list), summary (str).
-        Returns {} on any failure (never raises).
+    Returns a dict of extracted fields, or {} on any failure (never raises).
     """
     from bubble.page_change_agent import PAGE_CHANGE_AGENT_ENABLED
     if not PAGE_CHANGE_AGENT_ENABLED:
@@ -211,28 +230,32 @@ def extract_document_data(
         system_prompt = _get_system_prompt()
         pgvector_namespaces = _get_pgvector_namespaces()
 
+        # Auto-fetch PDF text if not provided by caller
+        if not pdf_text and document_url:
+            pdf_text = _fetch_pdf_text(document_url)
+
         lines = [
             f"Document title: {document_name}",
             f"URL: {document_url}",
         ]
         if pdf_text:
-            lines.append(f"\nKey content signals:\n{pdf_text[:3000]}")
-        lines.append(
-            "\nIdentify the most relevant Chronicle topic(s) and related agenda items. "
-            "Return a single JSON object with keys: topic_ids, agenda_item_ids, summary. "
-            "Return ONLY valid JSON — no markdown fences, no commentary."
-        )
+            lines.append(f"\nDocument content:\n{pdf_text[:_PDF_TEXT_LIMIT]}")
         user_content = "\n".join(lines)
 
         if not _pgvector_enabled():
             log.info("document_agent: pgvector not available, skipping (no knowledge base to search)")
             return {}
 
-        log.info("document_agent: running with pgvector tools (model=%s)", model)
+        log.info("document_agent: running (model=%s) for: %s", model, document_name[:80])
         raw = asyncio.run(_run_with_pgvector(
             system_prompt, user_content, model, reasoning_effort, pgvector_namespaces,
         ))
         result = _parse_output(raw)
+
+        if result:
+            log.info("document_agent: extracted %d field(s) for: %s", len(result), document_name[:60])
+        else:
+            log.info("document_agent: no output for: %s", document_name[:60])
 
         return result if isinstance(result, dict) else {}
 
