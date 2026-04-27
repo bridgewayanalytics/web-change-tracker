@@ -79,7 +79,7 @@ Receives before/after stripped HTML plus target context (label, URL, org_path, t
   "alert_url": "https://...",
   "organization": "...",
   "alert_date_time": "2026-04-21T00:00:00-04:00",
-  "is_relevant_for_content_creation": true,
+  "is_relevant_for_art_newsreel": true,
   "events": [{"title", "start_datetime", "end_datetime", "timezone", "duration", "is_full_day", "url", "call_in_access_code"}],
   "library_items": [{"preliminary_title", "url", "file_name"}],
   "agenda_items": [{"title", "official_title", "standardized_id", "official_id", "is_existing", "chronicle_topics"}]
@@ -252,7 +252,7 @@ The alerts dashboard lives in a separate repo: **`NAICDashboard-`** (Next.js, de
 
 It reads `alerts/alerts_table.jsonl` from S3, resolves `candidate_chronicles` and `candidate_agenda_items` Bubble IDs to human-readable names via the Bubble Data API, and renders a dynamic table whose columns are derived entirely from the agent output (no hardcoded schema).
 
-The dashboard also implements the Re-evaluate UI (button → confirmation modal → ECS trigger → diff drawer → Accept/Discard). See `docs/rerun-feature.md` for the full API contract between the two systems.
+The dashboard also implements the Re-evaluate UI (button → confirmation modal → ECS trigger → inline amber result row below the original row → Accept/Discard). Multiple reruns can be pending simultaneously. See `docs/rerun-feature.md` for the full API contract between the two systems.
 
 ---
 
