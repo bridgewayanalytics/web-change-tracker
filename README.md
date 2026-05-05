@@ -35,7 +35,8 @@ EventBridge (6h cron)
         ↓  (if PAGE_CHANGE_AGENT_ENABLED)
   page_change_agent
   — compares before/after HTML
-  — outputs: alert_type, events, library_items, agenda_items
+  — output schema driven by output_json_schema in DynamoDB (OpenAI Structured Outputs)
+  — outputs: 21 flat fields (alert_type, event_*, agenda_item_*, library_item_*, etc.)
         ↓  (if materials-type alert)
   document_agent (per library item)
   — pgvector search over knowledge base
@@ -69,7 +70,9 @@ Both agents are configured via DynamoDB (`chatkit_production_config` table, key 
 
 ### page_change_agent (`chat:web-tracking-agent`)
 
-Receives before/after stripped HTML plus target context (label, URL, org_path, tags). Outputs:
+Receives before/after stripped HTML plus target context (label, URL, org_path, tags). The output schema is **fully dynamic** — driven by `output_json_schema` (a JSON Schema draft-07 object) stored in DynamoDB and written by the Bubble admin sync. Updating it there changes agent output, S3 storage, and dashboard columns with no code deploy.
+
+Current output schema (as of May 2026) — all fields flat, no nested arrays:
 
 ```json
 {
@@ -77,14 +80,29 @@ Receives before/after stripped HTML plus target context (label, URL, org_path, t
   "alert_title": "...",
   "alert_description": "...",
   "alert_url": "https://...",
-  "organization": "...",
+  "organization": ["NAIC"],
   "alert_date_time": "2026-04-21T00:00:00-04:00",
-  "is_relevant_for_art_newsreel": true,
-  "events": [{"title", "start_datetime", "end_datetime", "timezone", "duration", "is_full_day", "url", "call_in_access_code"}],
-  "library_items": [{"preliminary_title", "url", "file_name"}],
-  "agenda_items": [{"title", "official_title", "standardized_id", "official_id", "is_existing", "chronicle_topics"}]
+  "event_title": "N/A",
+  "event_start_date_time": "N/A",
+  "event_end_date_time": "N/A",
+  "event_duration": "N/A",
+  "event_is_full_day": "N/A",
+  "event_url": "N/A",
+  "event_call_in_number_access_code": "N/A",
+  "agenda_item_title_and_chronicle_topics": [{"status": "New", "agenda_item_title": "...", "chronicle_topics": ["..."]}],
+  "agenda_item_title_official": {"status": "N/A", "title_official": "N/A"},
+  "agenda_item_standardized_id": {"status": "New", "standardized_id": "..."},
+  "agenda_item_official_id": {"status": "N/A", "official_id": "N/A"},
+  "library_item_preliminary_title": {"status": "New", "title": "..."},
+  "library_item_url": "https://...",
+  "library_items_file_name": "filename.pdf",
+  "is_alert_relevant_for_art_newsreel": {"status": "Yes", "reference": "..."}
 }
 ```
+
+**Schema compatibility:** `alerts_table.jsonl` contains rows from two schema generations. Pre-May 2026 rows use nested arrays (`events[]`, `library_items[]`, `agenda_items[]`). The dashboard handles both formats.
+
+**Schema sanitization:** `_sanitize_schema_for_openai()` in `page_change_agent.py` strips unsupported JSON Schema keywords before passing to the OpenAI Responses API: removes `$schema`, replaces `oneOf` with `{"type":"string"}`, drops unsupported `format` values (e.g. `"uri"`). The Bubble-generated schema may include these; they are stripped at runtime without modifying the stored schema.
 
 ### document_agent (`chat:document-data-extraction`)
 
@@ -102,7 +120,7 @@ Triggers for:
 
 **Important:** A `## Output Format` JSON suffix is automatically appended to the DynamoDB `instructions` at runtime — the content team's instructions describe what to extract but don't specify JSON format. This suffix tells the model to return a single JSON object. Do not add a JSON format requirement to the DynamoDB config itself.
 
-**Important:** The JSON output schema (field names and types) for `page_change_agent` is hardcoded in `page_change_agent.py` in the `user_content` prompt — **not** in the DynamoDB `instructions`. The DynamoDB `instructions` guide extraction behaviour and can be updated freely by the content team without redeployment. Adding new output fields requires a code change to the hardcoded schema.
+**Output schema source of truth:** The JSON output schema for `page_change_agent` is stored in DynamoDB as `output_json_schema` (a JSON Schema object written by the Bubble admin sync). `output_json_schema.required` is the ordered field list. `output_requested_values` is the parallel list of human-readable labels consumed by the dashboard. The DynamoDB `instructions` guide extraction behaviour and can be updated freely. Adding, renaming, or reordering output fields is done entirely in the Bubble admin UI — no code deploy needed.
 
 ### pgvector search
 
@@ -114,30 +132,24 @@ Hybrid RRF fusion of semantic (cosine via `halfvec`) + lexical (`ts_rank_cd`) se
 
 ### `alerts/alerts_table.jsonl` — page_change_agent output
 
-Append-only, one row per library item (or one row per alert if no library items). Consumed by the alerts dashboard.
+Append-only, one row per alert. Consumed by the alerts dashboard.
 
-**Schema is fully dynamic** — columns are derived directly from the agent output. Adding a field to the `web-tracking-agent` DynamoDB config automatically adds a column on the next run. No code changes required.
+**Schema is fully dynamic** — columns are derived directly from the agent output. Adding a field to the `web-tracking-agent` DynamoDB config (via the Bubble admin UI) automatically adds a column on the next run. No code changes required.
 
-Flattening rules:
-- Top-level agent fields (`alert_type`, `alert_title`, etc.) → exact field name, unchanged
-- `events` → stored as a full JSON array (no truncation to first item)
-- `agenda_items` → stored as a full JSON array (no truncation to first item)
-- `library_items[i]` fields → prefixed `library_item_*`, one row per item
+Storage rules:
+- All agent output fields stored verbatim — no coercion, no N/A substitution
+- Pipeline metadata added to every row: `run_id`, `run_timestamp`, `target_id`, `source_url`, `config_hash`
 - `config_hash` → MD5 of `system_prompt + model` at time of run (used by re-evaluate feature)
+- For backward compatibility: if the agent output contains `events` / `agenda_items` / `library_items` arrays (old schema), they are stored as full JSON arrays AND first-item fields are flattened with `event_*` / `agenda_item_*` prefixes
 
-**No data is dropped.** Full arrays are always stored. The dashboard is responsible for rendering them.
+**Schema generations:**
 
-Current core columns (always appear first):
+| Generation | Period | Structure |
+|------------|--------|-----------|
+| Old schema | pre-May 2026 | Nested arrays: `events[]`, `library_items[]`, `agenda_items[]`; `organization` string; `is_relevant_for_art_newsreel` boolean |
+| New schema | May 2026+ | All flat top-level fields; `organization` string array; complex object fields (`library_item_preliminary_title: {status, title}`, etc.); one row per alert |
 
-| Group | Columns |
-|-------|---------|
-| Pipeline | `run_id`, `run_timestamp`, `target_id`, `source_url`, `config_hash` |
-| Alert | `alert_type`, `alert_title`, `alert_description`, `alert_url`, `organization`, `alert_date_time` |
-| Events | `events` (full JSON array) |
-| Agenda items | `agenda_items` (full JSON array) |
-| Library item | `library_item_*` prefixed fields (one row per item) |
-
-Any additional agent output fields are appended alphabetically after the core columns.
+The dashboard handles both generations gracefully (blank cells for fields the other generation lacks).
 
 ### `alerts/document_extractions_table.jsonl` — document_agent output
 
@@ -250,7 +262,7 @@ Every alert row stores a `config_hash` field (MD5 of `system_prompt + model`). B
 
 The alerts dashboard lives in a separate repo: **`NAICDashboard-`** (Next.js, deployed to ECS Fargate behind an ALB).
 
-It reads `alerts/alerts_table.jsonl` from S3, resolves `candidate_chronicles` and `candidate_agenda_items` Bubble IDs to human-readable names via the Bubble Data API, and renders a dynamic table whose columns are derived entirely from the agent output (no hardcoded schema).
+It reads `alerts/alerts_table.jsonl` from S3 and renders a dynamic table whose columns are derived entirely from `output_json_schema` + `output_requested_values` in DynamoDB (no hardcoded schema). Column headers show human-readable Bubble labels. Field renames between schema generations are handled transparently via `FIELD_ALIASES` in `AlertsTable.tsx` — old rows display under new column headers without data migration.
 
 The dashboard also implements the Re-evaluate UI (button → confirmation modal → ECS trigger → inline amber result row below the original row → Accept/Discard). Multiple reruns can be pending simultaneously. See `docs/rerun-feature.md` for the full API contract between the two systems.
 
@@ -418,7 +430,9 @@ web-change-tracker/
 │   └── pdf_agenda_detection/       # PDF structure analysis + sample dataset
 ├── infra/terraform/                # ECS, EventBridge, DynamoDB, S3, IAM
 ├── tests/                          # Unit/integration tests
-├── prompts/                        # Prompt templates
+├── prompts/
+│   └── org_tree.txt                # Organization hierarchy (dash-depth, 140+ orgs) sourced from Bubble API
+│                                   # Injected into agent context to guide organization field assignment
 └── debug/                          # Debug artifacts (gitignored)
 ```
 

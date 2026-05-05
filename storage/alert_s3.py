@@ -460,6 +460,8 @@ def _build_xlsx(rows: list[dict]) -> bytes:
             val = row.get(col, "")
             if isinstance(val, bool):
                 val = "Yes" if val else ""
+            elif isinstance(val, (list, dict)):
+                val = json.dumps(val, ensure_ascii=False)
             c = ws.cell(ri, ci, val)
             c.font = Font(name="Calibri", size=9)
             c.fill = PatternFill("solid", fgColor=bg)

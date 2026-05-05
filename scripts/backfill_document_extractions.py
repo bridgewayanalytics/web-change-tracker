@@ -140,7 +140,7 @@ def run_backfill(limit: int = 5, dry_run: bool = False):
         for item in library_items:
             name = item.get("preliminary_title") or item.get("title") or item.get("file_name") or ""
             url = item.get("url") or ""
-            if not name:
+            if not name or name.strip().upper() in ("N/A", "N/A.", "-"):
                 log.info("    -> skipping item with no title")
                 continue
             log.info("    -> document agent: %s", name[:80])
@@ -164,7 +164,7 @@ def run_backfill(limit: int = 5, dry_run: bool = False):
     log.info("Total rows to write: %d", len(doc_table_rows))
 
     if dry_run:
-        log.info("[DRY RUN] Would append %d row(s) to alerts/document_extractions_table.jsonl", len(doc_table_rows))
+        log.info("[DRY RUN] Would replace/append %d row(s) to alerts/document_extractions_table.jsonl", len(doc_table_rows))
         for r in doc_table_rows:
             print(json.dumps(r, indent=2, ensure_ascii=False))
         return
@@ -177,24 +177,38 @@ def run_backfill(limit: int = 5, dry_run: bool = False):
     a_client = alert_s3_client()
     doc_table_key = "alerts/document_extractions_table.jsonl"
 
-    existing_body = b""
+    # Build set of (run_id, target_id) pairs being backfilled so we can replace them
+    backfill_keys = {(r["run_id"], r["target_id"]) for r in doc_table_rows}
+
+    existing_rows: list[dict] = []
     try:
         resp = a_client.get_object(Bucket=alert_bucket, Key=doc_table_key)
         existing_body = resp["Body"].read()
         log.info("Existing document_extractions_table.jsonl: %d bytes", len(existing_body))
+        for line in existing_body.decode("utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+                key = (row.get("run_id"), row.get("target_id"))
+                if key not in backfill_keys:
+                    existing_rows.append(row)
+            except Exception:
+                pass
+        log.info("Keeping %d existing rows (removed %d being replaced)", len(existing_rows), len(existing_body.splitlines()) - len(existing_rows))
     except Exception:
         log.info("document_extractions_table.jsonl does not exist yet — will create it.")
 
-    new_lines = "\n".join(json.dumps(r, ensure_ascii=False) for r in doc_table_rows)
-    if existing_body:
-        combined = existing_body.rstrip(b"\n") + b"\n" + new_lines.encode("utf-8")
-    else:
-        combined = new_lines.encode("utf-8")
+    combined_rows = existing_rows + doc_table_rows
+    combined_rows.sort(key=lambda r: str(r.get("run_timestamp") or ""), reverse=True)
+
+    combined = "\n".join(json.dumps(r, ensure_ascii=False) for r in combined_rows).encode("utf-8")
 
     _put(a_client, alert_bucket, doc_table_key, combined, "application/x-ndjson", "backfill-doc-extractions")
     log.info(
-        "Done — appended %d row(s) to s3://%s/%s",
-        len(doc_table_rows), alert_bucket, doc_table_key,
+        "Done — wrote %d total rows to s3://%s/%s (%d new/replaced)",
+        len(combined_rows), alert_bucket, doc_table_key, len(doc_table_rows),
     )
 
 

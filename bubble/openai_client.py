@@ -58,6 +58,9 @@ def chat_json(
     *,
     model: str | None = None,
     reasoning_effort: str = REASONING_EFFORT,
+    json_schema: dict | None = None,
+    json_schema_name: str = "output",
+    json_schema_strict: bool = True,
 ) -> dict:
     """
     Call OpenAI Responses API with JSON-only output. Uses reasoning (moderate).
@@ -66,6 +69,9 @@ def chat_json(
         messages: Chat messages (system + user) with role and content
         model: Override default model
         reasoning_effort: "low" | "medium" | "high" for reasoning models
+        json_schema: Optional JSON Schema dict for structured outputs (preferred over json_object)
+        json_schema_name: Name for the schema (used with json_schema)
+        json_schema_strict: Whether to use strict mode for structured outputs
 
     Returns:
         Parsed JSON object from response content
@@ -78,10 +84,20 @@ def chat_json(
     model = model or OPENAI_MODEL
     input_items = _messages_to_input(messages)
 
+    if json_schema:
+        text_format: dict = {
+            "type": "json_schema",
+            "name": json_schema_name,
+            "schema": json_schema,
+            "strict": json_schema_strict,
+        }
+    else:
+        text_format = {"type": "json_object"}
+
     kwargs: dict = {
         "model": model,
         "input": input_items,
-        "text": {"format": {"type": "json_object"}},
+        "text": {"format": text_format},
     }
     if any(model.startswith(m) or model == m for m in _REASONING_MODELS):
         kwargs["reasoning"] = {"effort": reasoning_effort}

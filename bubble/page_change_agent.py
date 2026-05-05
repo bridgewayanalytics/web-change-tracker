@@ -167,21 +167,33 @@ def _get_system_prompt() -> str:
     return cfg.get("instructions") or _FALLBACK_SYSTEM_PROMPT
 
 
+def _extract_schema_from_instructions(instructions: str) -> str | None:
+    """
+    Extract the JSON schema from the ``## Output JSON Schema`` section of the
+    instructions.  Returns the raw JSON string, or None if not found.
+    """
+    m = re.search(r"```json\s*\n(.*?)```", instructions, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
 def _get_output_schema_str() -> str:
     """
     Return the JSON output schema string to embed in the user message.
 
-    Source priority:
-      1. output_schema_json attribute in DynamoDB (content team controls field names)
-      2. _FALLBACK_OUTPUT_SCHEMA (hardcoded dict, serialised to JSON)
+    The schema is extracted from the ``## Output JSON Schema`` fenced code
+    block inside the DynamoDB instructions.  This makes the instructions the
+    single source of truth — editing the schema there automatically updates
+    the agent output, S3 storage, and dashboard columns.
 
-    Storing output_schema_json in DynamoDB lets the content team rename or add
-    fields without any code changes — the agent automatically uses the new names.
+    Falls back to _FALLBACK_OUTPUT_SCHEMA only if the instructions don't
+    contain a schema block.
     """
-    cfg = _load_dynamo_config()
-    schema_json = cfg.get("output_schema_json")
-    if schema_json and isinstance(schema_json, str):
-        return schema_json
+    instructions = _get_system_prompt()
+    extracted = _extract_schema_from_instructions(instructions)
+    if extracted:
+        return extracted
     return json.dumps(_FALLBACK_OUTPUT_SCHEMA, indent=2)
 
 
@@ -193,6 +205,68 @@ def _get_model() -> str | None:
 def _get_reasoning_effort() -> str:
     cfg = _load_dynamo_config()
     return cfg.get("reasoning_effort") or "medium"
+
+
+_OPENAI_SUPPORTED_FORMATS = frozenset({
+    "date-time", "time", "date", "duration",
+    "email", "hostname", "ipv4", "ipv6", "uuid",
+})
+
+
+def _sanitize_schema_node(node: object) -> object:
+    """Recursively sanitize a JSON Schema node for OpenAI Structured Outputs."""
+    if not isinstance(node, dict):
+        return node
+    result: dict = {}
+    for key, val in node.items():
+        if key == "$schema":
+            continue  # unsupported top-level keyword
+        if key == "oneOf":
+            # Replace with plain string — agent will output strings
+            return {"type": "string"}
+        if key == "format" and val not in _OPENAI_SUPPORTED_FORMATS:
+            continue  # drop unsupported format values (e.g. "uri")
+        if key in ("properties", "items") and isinstance(val, dict):
+            result[key] = {k: _sanitize_schema_node(v) for k, v in val.items()}
+        elif key == "items" and isinstance(val, list):
+            result[key] = [_sanitize_schema_node(i) for i in val]
+        elif isinstance(val, dict):
+            result[key] = _sanitize_schema_node(val)
+        elif isinstance(val, list):
+            result[key] = [_sanitize_schema_node(i) if isinstance(i, dict) else i for i in val]
+        else:
+            result[key] = val
+    return result
+
+
+def _sanitize_schema_for_openai(schema: dict) -> dict:
+    """
+    Strip JSON Schema keywords not supported by OpenAI Structured Outputs strict mode:
+    - `$schema` declaration
+    - `oneOf` at any property level → replaced with `{"type": "string"}`
+    - `format` values not in OpenAI's supported set (e.g. "uri", arbitrary formats)
+    """
+    return _sanitize_schema_node(schema)  # type: ignore[return-value]
+
+
+def _get_output_json_schema() -> dict | None:
+    """Return the structured output schema from DynamoDB, sanitized for OpenAI, or None if not set."""
+    cfg = _load_dynamo_config()
+    schema = cfg.get("output_json_schema")
+    if not isinstance(schema, dict):
+        return None
+    return _sanitize_schema_for_openai(schema)
+
+
+def _get_output_json_schema_name() -> str:
+    cfg = _load_dynamo_config()
+    return cfg.get("output_json_schema_name") or "web_tracking_alert"
+
+
+def _get_output_json_schema_strict() -> bool:
+    cfg = _load_dynamo_config()
+    v = cfg.get("output_json_schema_strict")
+    return bool(v) if v is not None else True
 
 
 def get_config_hash() -> str:
@@ -363,7 +437,17 @@ def extract_page_change(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ]
-            result = chat_json(messages, model=model, reasoning_effort=reasoning_effort)
+            json_schema = _get_output_json_schema()
+            if json_schema:
+                log.info("page_change_agent: using structured outputs schema '%s'", _get_output_json_schema_name())
+            result = chat_json(
+                messages,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                json_schema=json_schema,
+                json_schema_name=_get_output_json_schema_name(),
+                json_schema_strict=_get_output_json_schema_strict(),
+            )
 
         return result if isinstance(result, dict) else {}
 

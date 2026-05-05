@@ -1881,7 +1881,7 @@ def _build_bubble_payloads(
         for item in library_items:
             name = item.get("preliminary_title") or item.get("title") or item.get("file_name") or ""
             url = item.get("url") or ""
-            if not name:
+            if not name or name.strip().upper() in ("N/A", "N/A.", "-"):
                 continue
             doc_result = _extract_doc(name, url)
             if doc_result:
@@ -2427,6 +2427,183 @@ def _run_simulate_change(
     write_reference_resolution_report()
 
 
+def _run_rerun(rerun_run_id: str, rerun_target_id: str) -> None:
+    """
+    Re-evaluate a single stored alert using the current DynamoDB agent config.
+
+    Fetches before/after HTML from S3 at:
+      pages/<target_id>/YYYY/MM/DD/<run_id>/before.html
+      pages/<target_id>/YYYY/MM/DD/<run_id>/after.html
+      pages/<target_id>/YYYY/MM/DD/<run_id>/meta.json
+
+    Writes result to:
+      alerts/reruns/<run_id>/<target_id>/result.json
+
+    Does NOT modify alerts_table.jsonl — the dashboard handles accept/discard.
+    """
+    import boto3
+    from datetime import datetime, timezone
+
+    log.info("rerun: starting for run_id=%s target_id=%s", rerun_run_id, rerun_target_id)
+
+    bucket = (
+        os.environ.get("CHANGELOG_BUCKET", "").strip()
+        or os.environ.get("BUBBLE_ARTIFACT_BUCKET", "").strip()
+        or "web-change-tracker-prod-artifacts-815039343351"
+    )
+    s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+
+    def _fetch(key: str) -> str:
+        try:
+            return s3.get_object(Bucket=bucket, Key=key)["Body"].read().decode("utf-8")
+        except Exception:
+            return ""
+
+    # Locate the stored snapshot — search under pages/<target_id>/
+    prefix = f"pages/{rerun_target_id}/"
+    meta_key = None
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents") or []:
+            key = obj["Key"]
+            if key.endswith(f"/{rerun_run_id}/meta.json"):
+                meta_key = key
+                break
+        if meta_key:
+            break
+
+    if not meta_key:
+        log.error("rerun: could not find meta.json for run_id=%s target_id=%s", rerun_run_id, rerun_target_id)
+        raise SystemExit(1)
+
+    run_prefix = meta_key[: -len("/meta.json")]
+    meta = json.loads(_fetch(meta_key))
+    before_html = _fetch(f"{run_prefix}/before.html")
+    after_html = _fetch(f"{run_prefix}/after.html")
+
+    if not after_html:
+        log.error("rerun: no after.html for run_id=%s target_id=%s", rerun_run_id, rerun_target_id)
+        raise SystemExit(1)
+
+    target_context = {
+        "label": meta.get("label") or rerun_target_id,
+        "url": meta.get("url") or "",
+        "org_path": [],
+        "group": "",
+        "tags": [],
+    }
+
+    from bubble.page_change_agent import extract_page_change, get_config_hash, PAGE_CHANGE_AGENT_ENABLED
+    if not PAGE_CHANGE_AGENT_ENABLED:
+        log.error("rerun: PAGE_CHANGE_AGENT_ENABLED is false — cannot rerun")
+        raise SystemExit(1)
+
+    log.info("rerun: running page_change_agent...")
+    agent_output = extract_page_change(before_html, after_html, target_context)
+    if not agent_output:
+        log.error("rerun: agent returned no output")
+        raise SystemExit(1)
+
+    # Run document agent on library items if applicable
+    from bubble.document_agent import should_run_for_alert, extract_document_data
+    doc_extractions: list[dict] = []
+    if should_run_for_alert(agent_output):
+        # Old schema: library_items array; new flat schema: single library_item_* fields
+        library_items = agent_output.get("library_items") or []
+        if not library_items:
+            # New flat schema — build a synthetic single-item list from top-level fields
+            lib_name = (
+                agent_output.get("library_item_preliminary_title")
+                or agent_output.get("library_item_title")
+                or ""
+            )
+            lib_url = agent_output.get("library_item_url") or ""
+            lib_file = agent_output.get("library_items_file_name") or ""
+            # Only add if there's a meaningful title (not N/A)
+            if lib_name and lib_name.strip().upper() not in ("N/A", ""):
+                library_items = [{"preliminary_title": lib_name, "url": lib_url, "file_name": lib_file}]
+
+        for item in library_items:
+            name = item.get("preliminary_title") or item.get("title") or item.get("file_name") or ""
+            url = item.get("url") or ""
+            if not name:
+                continue
+            log.info("rerun: document agent: %s", name[:60])
+            doc_result = extract_document_data(name, url)
+            if doc_result:
+                doc_extractions.append({"item": item, "extraction": doc_result})
+
+    config_hash = get_config_hash()
+    rerun_timestamp = datetime.now(timezone.utc).isoformat()
+
+    from storage.alert_s3 import _build_table_rows, _build_doc_extraction_rows
+    new_rows = _build_table_rows(
+        agent_output, doc_extractions,
+        rerun_run_id, rerun_timestamp, rerun_target_id, meta.get("url") or "",
+        config_hash=config_hash,
+    )
+
+    # Build doc extraction rerun rows
+    doc_rerun_rows = _build_doc_extraction_rows(
+        doc_extractions,
+        rerun_run_id, rerun_timestamp, rerun_target_id, meta.get("url") or "",
+    )
+
+    # Fetch original rows for diff
+    original_rows: list[dict] = []
+    try:
+        jsonl = s3.get_object(Bucket=bucket, Key="alerts/alerts_table.jsonl")["Body"].read().decode("utf-8")
+        for line in jsonl.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+                if row.get("run_id") == rerun_run_id and row.get("target_id") == rerun_target_id:
+                    original_rows.append(row)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Fetch original doc extraction rows for diff
+    doc_original_rows: list[dict] = []
+    try:
+        doc_jsonl = s3.get_object(Bucket=bucket, Key="alerts/document_extractions_table.jsonl")["Body"].read().decode("utf-8")
+        for line in doc_jsonl.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+                if row.get("run_id") == rerun_run_id and row.get("target_id") == rerun_target_id:
+                    doc_original_rows.append(row)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    result = {
+        "run_id": rerun_run_id,
+        "target_id": rerun_target_id,
+        "rerun_timestamp": rerun_timestamp,
+        "config_hash": config_hash,
+        "original_rows": original_rows,
+        "rerun_rows": new_rows,
+        "doc_original_rows": doc_original_rows,
+        "doc_rerun_rows": doc_rerun_rows,
+    }
+
+    result_key = f"alerts/reruns/{rerun_run_id}/{rerun_target_id}/result.json"
+    s3.put_object(
+        Bucket=bucket,
+        Key=result_key,
+        Body=json.dumps(result, indent=2, ensure_ascii=False).encode("utf-8"),
+        ContentType="application/json",
+    )
+    log.info("rerun: wrote result to s3://%s/%s", bucket, result_key)
+
+
 def _run_smoke_bubble_resolvers() -> int:
     """Run resolver smoke tests against LIVE Bubble. Returns exit code 0 (pass) or 1 (fail)."""
     from bubble import lookups
@@ -2615,6 +2792,14 @@ def main() -> None:
 
     if args.smoke_bubble_resolvers:
         raise SystemExit(_run_smoke_bubble_resolvers())
+
+    # Rerun mode: re-evaluate a single stored alert with current agent config.
+    # Triggered via RERUN_RUN_ID + RERUN_TARGET_ID env vars (set by ECS RunTask override).
+    rerun_run_id = os.environ.get("RERUN_RUN_ID", "").strip()
+    rerun_target_id = os.environ.get("RERUN_TARGET_ID", "").strip()
+    if rerun_run_id and rerun_target_id:
+        _run_rerun(rerun_run_id, rerun_target_id)
+        return
 
     from datetime import datetime, timezone
     run_timestamp = int(datetime.now(timezone.utc).timestamp())

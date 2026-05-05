@@ -250,10 +250,10 @@ resource "aws_iam_role_policy" "task" {
         Resource = "arn:aws:dynamodb:us-east-1:815039343351:table/chatkit_production_config"
       },
       {
-        Sid      = "S3ReadTargets"
+        Sid      = "S3ReadArtifacts"
         Effect   = "Allow"
         Action   = ["s3:GetObject"]
-        Resource = "arn:aws:s3:::${aws_s3_bucket.artifacts.id}/targets/*"
+        Resource = "arn:aws:s3:::${aws_s3_bucket.artifacts.id}/*"
       },
       {
         Sid      = "S3WriteArtifacts"
@@ -338,7 +338,7 @@ resource "aws_ecs_task_definition" "app" {
       { name = "CHANGELOG_PREFIX", value = "changelog/" },
       { name = "TARGETS_SOURCE", value = local.targets_s3_uri },
       { name = "TARGETS_FILE", value = "/app/targets.json" },
-      { name = "EMAIL_ENABLED", value = "true" },
+      { name = "EMAIL_ENABLED", value = "false" },
       { name = "FROM_EMAIL", value = var.email_from },
       { name = "TO_EMAILS", value = var.email_to },
       { name = "EMAIL_SUBJECT_PREFIX", value = var.email_subject_prefix },
@@ -355,9 +355,10 @@ resource "aws_ecs_task_definition" "app" {
       # RunSpec prod observe: bubble enrich on, refs blocked, debug artifacts, dry-run Bubble (validated at startup)
       { name = "PROD_OBSERVE_MODE", value = "true" },
       { name = "AI_ENRICHMENT_ENABLED", value = "true" },
-      # Page change agent: enabled; pgvector off until DB credentials are added to SSM
+      # Page change agent: pgvector on — DB host/creds from Secrets Manager, port direct Postgres
       { name = "PAGE_CHANGE_AGENT_ENABLED", value = "true" },
       { name = "PGVECTOR_ENABLED", value = "true" },
+      { name = "DATABASE_PORT", value = "5432" },
       { name = "ARTIFACT_OUTPUT_DIR", value = "debug" },
       { name = "AI_REFERENCE_FIELDS_BLOCKED", value = "true" },
       { name = "RUN_SPEC_VALIDATION_FAIL_FAST", value = "false" },

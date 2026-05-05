@@ -4,5 +4,7 @@ __pycache__/
 *.pyc
 state.json
 last_report.txt
+last_email_report.txt
 snapshots/
 debug/
+last_alerts.json
