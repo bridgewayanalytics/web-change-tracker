@@ -1,6 +1,6 @@
 """LLM-based reranker for pgvector search candidates.
 
-Uses parallel gpt-5-nano calls with reasoning_effort="low".
+Uses parallel gpt-5-nano calls for relevance scoring.
 The function signature is the stable interface; swap the implementation to
 Cohere Rerank or a cross-encoder without changing any other code.
 """
@@ -13,7 +13,6 @@ import httpx
 from openai import AsyncOpenAI
 
 RERANK_MODEL = "gpt-5-nano"
-RERANK_REASONING_EFFORT = "low"
 
 RERANK_SYSTEM_PROMPT = """You are a relevance scoring engine for an insurance regulation
 knowledge base. Given a user query and a candidate text chunk, score the chunk's
@@ -59,8 +58,7 @@ async def _score_one(client: AsyncOpenAI, query: str, chunk: dict[str, Any]) -> 
                     f"{chunk['content'][:1500]}"
                 )},
             ],
-            reasoning_effort=RERANK_REASONING_EFFORT,
-            max_completion_tokens=300,
+            max_tokens=150,
         )
         choice = resp.choices[0]
         if choice.finish_reason == "length":
