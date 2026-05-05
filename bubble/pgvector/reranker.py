@@ -12,7 +12,7 @@ from typing import Any, Optional
 import httpx
 from openai import AsyncOpenAI
 
-RERANK_MODEL = "gpt-5-nano"
+RERANK_MODEL = "gpt-5.4"
 
 RERANK_SYSTEM_PROMPT = """You are a relevance scoring engine for an insurance regulation
 knowledge base. Given a user query and a candidate text chunk, score the chunk's
@@ -58,7 +58,8 @@ async def _score_one(client: AsyncOpenAI, query: str, chunk: dict[str, Any]) -> 
                     f"{chunk['content'][:1500]}"
                 )},
             ],
-            max_tokens=150,
+            reasoning_effort="low",
+            max_completion_tokens=500,
         )
         choice = resp.choices[0]
         if choice.finish_reason == "length":
