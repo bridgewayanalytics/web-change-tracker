@@ -72,9 +72,11 @@ async def _score_one(client: AsyncOpenAI, query: str, chunk: dict[str, Any]) -> 
             result = json.loads(content)
             chunk["rerank_score"] = float(result["score"])
     except Exception as e:
-        log_msg = f"[reranker] WARNING: scoring failed ({type(e).__name__}) — falling back to score=0"
         import logging
-        logging.getLogger(__name__).debug(log_msg)
+        logging.getLogger(__name__).warning(
+            "[reranker] scoring failed (%s: %s) — falling back to score=0",
+            type(e).__name__, e,
+        )
         chunk["rerank_score"] = 0.0
     return chunk
 
