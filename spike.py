@@ -2511,22 +2511,27 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str) -> None:
         # Old schema: library_items array; new flat schema: single library_item_* fields
         library_items = agent_output.get("library_items") or []
         if not library_items:
-            # New flat schema — build a synthetic single-item list from top-level fields
-            lib_name = (
-                agent_output.get("library_item_preliminary_title")
-                or agent_output.get("library_item_title")
-                or ""
-            )
+            # New flat schema — library_item_preliminary_title is {status, library_item_title}
+            raw_title = agent_output.get("library_item_preliminary_title") or {}
+            if isinstance(raw_title, dict):
+                lib_name = raw_title.get("library_item_title") or raw_title.get("title") or ""
+            else:
+                lib_name = str(raw_title)
             lib_url = agent_output.get("library_item_url") or ""
             lib_file = agent_output.get("library_items_file_name") or ""
             # Only add if there's a meaningful title (not N/A)
-            if lib_name and lib_name.strip().upper() not in ("N/A", ""):
+            if lib_name and lib_name.strip().upper() not in ("N/A", "N/A.", "-", ""):
                 library_items = [{"preliminary_title": lib_name, "url": lib_url, "file_name": lib_file}]
 
         for item in library_items:
-            name = item.get("preliminary_title") or item.get("title") or item.get("file_name") or ""
+            raw = item.get("preliminary_title") or item.get("title") or item.get("file_name") or ""
+            # preliminary_title may be a flat string or a new-schema {status, library_item_title} dict
+            if isinstance(raw, dict):
+                name = raw.get("library_item_title") or raw.get("title") or ""
+            else:
+                name = str(raw)
             url = item.get("url") or ""
-            if not name:
+            if not name or name.strip().upper() in ("N/A", "N/A.", "-", ""):
                 continue
             log.info("rerun: document agent: %s", name[:60])
             doc_result = extract_document_data(name, url)
