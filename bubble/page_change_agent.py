@@ -303,6 +303,7 @@ async def _run_with_pgvector(
 ) -> str:
     """Run the agent with pgvector search tools via the OpenAI Agents SDK."""
     from agents import Agent, Runner, ModelSettings
+    from agents.model_settings import Reasoning
     from bubble.pgvector.client import init_pg_pool, close_pg_pool
     from bubble.pgvector.search_tool import set_pgvector_namespaces, search_knowledge_base, list_available_documents
 
@@ -315,7 +316,10 @@ async def _run_with_pgvector(
             instructions=system_prompt,
             tools=[search_knowledge_base, list_available_documents],
             model=model,
-            model_settings=ModelSettings(reasoning_effort=reasoning_effort),
+            model_settings=ModelSettings(
+                reasoning=Reasoning(effort=reasoning_effort),
+                verbosity=reasoning_effort,  # match verbosity to effort level
+            ),
         )
         result = await Runner.run(agent, input=user_content)
         return result.final_output or ""
