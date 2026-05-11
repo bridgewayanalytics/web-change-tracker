@@ -1,0 +1,155 @@
+# Organization Tree
+# Source: Bridgeway Analytics organization hierarchy
+# Format: dash depth indicates hierarchy level.
+#   -      Level 1 (top-level category)
+#   --     Level 2 (sub-category)
+#   ---    Level 3 (organization)
+#   ----   Level 4 (committee/task force)
+#   -----  Level 5 (working group)
+#   ------ Level 6 (subgroup)
+# Short names / abbreviations shown in parentheses where available.
+#
+# Instructions for the agent:
+# - Use this tree to assign the Organization field in your output.
+# - Match to the most specific (deepest) applicable organization.
+# - When reporting, use the full Name exactly as written (not the short name).
+
+- Organization/Publisher
+-- Bridgeway Analytics
+-- Federal
+--- Federal Reserve System
+---- Federal Reserve Bank of Atlanta
+---- Federal Reserve Bank of Boston
+---- Federal Reserve Bank of Chicago
+---- Federal Reserve Bank of Cleveland
+---- Federal Reserve Bank of Dallas
+---- Federal Reserve Bank of Kansas City
+---- Federal Reserve Bank of Minneapolis
+---- Federal Reserve Bank of New York (Federal Reserve Bank of NY)
+---- Federal Reserve Bank of Philadelphia
+---- Federal Reserve Bank of Richmond (Richmond)
+---- Federal Reserve Bank of San Francisco
+---- Federal Reserve Bank of St. Louis (St. Louis)
+---- Federal Reserve Board (FRB)
+--- Securities and Exchange Comission (SEC)
+--- The U.S. Department of the Treasury (The US Department of the Treasury)
+---- Department of Treasury (DoT)
+----- Federal Advisory Committee on Insurance (FACoI)
+---- Federal Advisory Committee on Insurance
+---- Federal Insurance Office (FIO)
+---- Financial Stability Oversight Council (FSOC)
+--- U.S. House Committee on Financial Services (U.S. HC on FS)
+--- U.S. Senate Committee on Banking, Housing and Urban Affairs (Committee on BH&UA)
+-- International
+--- Bank for International Settlements (BIS)
+--- Bank of England (BoE)
+---- Prudential Regulation Authority (UK) (PRA (UK))
+--- Bermuda Monetary Authority (BMA)
+--- Cayman Islands Monetary Authority (CIMA)
+--- European Commission
+--- European Supervisory Authorities (ESAs)
+---- European Banking Authority (EBA)
+---- European Insurance and Occupational Pensions Authority (EIOPA)
+---- European Securities and Markets Authority (ESMA)
+--- European Union
+--- Financial Stability Board (FSB)
+--- IFRS Accounting
+--- International Association of Securities Commisioners (IASCO)
+--- International Monetary Fund (IMF)
+--- The International Association of Insurance Supervisors (IAIS)
+--- The International Auditing and Assurance Standards Board (IAASB)
+--- U.K. House of Lords
+-- NAIC
+--- Capital Markets & Investment Analysis Office (NAIC CM&IAO)
+---- Capital Markets Bureau (NAIC CMB)
+---- Center for Insurance Policy and Research (NAIC CIP&R)
+---- Securities Valuation Office (NAIC SVO)
+---- Structured Securities Group (NAIC SSG)
+--- Executive (EX) Committee (NAIC EX-Committee)
+---- Climate and Resiliency (EX) Task Force (NAIC C&RTF)
+---- Risk-Based Capital (RBC) Model Governance (EX) Task Force (NAIC RBC-MG-TF)
+--- Financial Condition (E) Committee (NAIC E-Committee)
+---- Accounting Practices & Procedures (E) Task Force (NAIC AP&PTF)
+----- Blanks (E) Working Group (NAIC BWG)
+----- Statutory Accounting Principles (E) Working Group (NAIC SAPWG)
+---- Capital Adequacy (E) Task Force (NAIC CATF)
+----- Health Risk-Based Capital (E) Working Group (NAIC HRBC-WG)
+----- Life Risk Based Capital (E) Working Group (NAIC LRBC-WG)
+------ Longevity Risk (E/A) Subgroup (LRS)
+------ RBC Risk & Evaluation Ad Hoc Group - Asset Concentration Subgroup (NAIC RBC R&E AHG - ACSG)
+------ Variable Annuities Capital and Reserve (E/A) Subgroup (VAC&R Subgroup)
+----- Property & Casualty Risk-Based Capital (E) Working Group (NAIC P&C-RBC-WG)
+----- Risk Based Capital Investment Risk & Evaluation (E) Working Group (NAIC RBC-IRE-WG)
+---- Examination Oversight (E) Task Force (NAIC EOTF)
+---- Financial Stability (E) Task Force (NAIC FSTF)
+----- Macroprudential (E) Working Group (NAIC MWG)
+---- Group Capital Calculation (E) Working Group (NAIC GCCWG)
+---- Group Solvency Issues (E) Working Group (NAIC GSI WG)
+---- Invested Assets (E) Task Force (NAIC IA-TF)
+----- Credit Rating Provider (E) Working Group (NAIC CRP-WG)
+----- Investment Analysis (E) Working Group (NAIC IA-WG)
+----- Investment Designation Analysis (E) Working Group (NAIC IDA-WG)
+---- Receivership & Insolvency (E) Task Force (R&I-TF)
+---- Reinsurance (E) Task Force (NAIC RTF)
+---- Valuation of Securities (E) Task Force (NAIC VOSTF)
+----- CLO Modelling Ad-hoc Group (NAIC CLO-M-AHG)
+--- International Insurance Relations (G) Committee (NAIC G-Committee)
+---- Aggregation Method Implementation (G) Working Group (NAIC AMI-WG)
+--- Journal of Insurance Regulation
+--- Life Insurance & Annuities (A) Committee (NAIC A-Committee)
+---- Life Actuarial (A) Task Force (NAIC LATF)
+----- Experience Reporting (A) Subgroup (ERS)
+----- Generator of Economic Scenarios (GOES) (E/A) Subgroup (Also under Life Risk-Based Capital (E) Working Group) (NAIC GOES-SG)
+----- Valuation Manual (VM)-22 (A) Subgroup (NAIC VM-22 SG)
+----- Variable Annuities Capital and Reserve (E/A) Subgroup (also under  Life Risk-Based Capital (E) Working Group) (NAIC VAC&R SG)
+---- Life Insurance and Annuities Illustrations (A) Working Group (NAIC LI&AI-WG)
+--- NAIC - Other
+---- Center for Insurance Policy and Research (CIPR)
+-- Other
+--- AM Best
+--- Actuarial Standard Board (ASB)
+--- Alternative Credit Counsil (ACC)
+--- American Academy of Actuaries (AAA)
+--- American Banker
+--- American Bankers Association (ABA)
+---- ABA Banking Journal
+--- American Council of Life Insurers (ACLI)
+--- Bank of America (BofA)
+--- Bank of International Settlements (BIS)
+--- Bill Track
+--- Bloomberg
+--- Cayman International Reinsurance Company Association (CIRCA)
+--- Conning
+--- EUR Lex
+--- Equitable
+--- Fitch Ratings
+--- Global Association of Risk Proffesionals
+--- Green Street
+--- Insurance AUM
+--- Insurance Asset Risk
+--- Journal of Insurance Regulation
+--- Justia
+--- KPMG
+--- Mathematical Finance Company
+--- MetLife
+--- Moody's Analytics (Moody's)
+--- Moody's Ratings
+--- OliverWyman (OliverW)
+--- Other
+--- Risk Regulatory Consulting (RRC)
+--- S&P Global Ratings (S&P)
+--- Society of Actuaries (SoA)
+--- The Travelers Companies, Inc.
+--- Wall Street Journal (WSJ)
+-- U.S. State Legislatures (State Legislatures)
+--- Connecticut
+--- Iowa
+--- Massachusetts
+--- New Jersey
+--- New York State (New York)
+---- Department Of Financial Services (NY DOFS)
+---- New York State Senate
+--- Texas
+--- Utah
+- Capital Markets Bureau (NAIC CMB)
+- Structured Securities Group (NAIC SSG)

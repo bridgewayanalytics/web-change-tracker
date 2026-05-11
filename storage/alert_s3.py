@@ -83,9 +83,8 @@ def _flatten_val(val) -> str | bool | None:
     return val
 
 
-def _build_table_rows(
+def _build_rows_for_single_alert(
     agent_output: dict,
-    doc_extractions: list[dict],
     run_id: str,
     run_timestamp_iso: str,
     target_id: str,
@@ -93,16 +92,23 @@ def _build_table_rows(
     config_hash: str = "",
 ) -> list[dict]:
     """
-    Build alert_table rows from web-tracking-agent output.
+    Build alert_table rows from a single alert dict.
 
-    - One row per library item; if no library items, one row for the alert.
-    - All agent output fields stored verbatim — no data dropped, no modifications.
-    - events and agenda_items: stored as full JSON arrays (no data loss) AND first-item
-      fields are also flattened with event_* / agenda_item_* prefixes for backward
-      compatibility with existing rows and the rerun diff view.
-    - library_items exploded to one row each, fields prefixed with library_item_.
+    Handles two schema formats:
+    - **Flat schema (May 2026+):** All fields are top-level (event_title,
+      library_item_url, etc.). Stored verbatim — one row per alert.
+    - **Nested schema (pre-May 2026):** events[], library_items[], agenda_items[]
+      arrays. Exploded: one row per library item, first-item fields flattened
+      with event_*/agenda_item_* prefixes.
     """
     _NESTED = {"events", "library_items", "agenda_items"}
+
+    # Detect schema format: if any nested array key is present with actual
+    # list content, use the old nested-array path.
+    has_nested = any(
+        isinstance(agent_output.get(k), list) and agent_output.get(k)
+        for k in _NESTED
+    )
 
     base: dict = {
         "run_id": run_id,
@@ -112,20 +118,26 @@ def _build_table_rows(
         "config_hash": config_hash,
     }
 
-    # All top-level agent output fields — stored verbatim (exact agent output)
+    if not has_nested:
+        # Flat schema — all agent output fields stored verbatim as top-level keys
+        for key, val in agent_output.items():
+            base[key] = val
+        return [base]
+
+    # --- Nested schema (backward compat for old rows) ---
+
+    # All top-level agent output fields (excluding nested arrays)
     for key, val in agent_output.items():
         if key not in _NESTED:
             base[key] = val
 
-    # Full arrays — no data loss (stored as-is for rerun diff view)
+    # Full arrays — stored as-is for rerun diff view
     events = agent_output.get("events") or []
     agenda_items = agent_output.get("agenda_items") or []
     base["events"] = events
     base["agenda_items"] = agenda_items
 
-    # First-item flattening — backward compatibility with existing rows and rerun diffs.
-    # Values stored verbatim: if the agent output null or "" instead of "N/A" that is
-    # visible on the dashboard as a dash, indicating the agent didn't follow instructions.
+    # First-item flattening for backward compatibility
     if events:
         for key, val in events[0].items():
             base[f"event_{key}"] = _flatten_val(val)
@@ -147,12 +159,44 @@ def _build_table_rows(
     return rows
 
 
+def _build_table_rows(
+    agent_outputs: list[dict] | dict,
+    doc_extractions: list[dict],
+    run_id: str,
+    run_timestamp_iso: str,
+    target_id: str,
+    source_url: str,
+    config_hash: str = "",
+) -> list[dict]:
+    """
+    Build alert_table rows from web-tracking-agent output.
+
+    Accepts either a list of alert dicts (multi-alert) or a single dict
+    (backward compatibility). Delegates to _build_rows_for_single_alert
+    for each alert.
+    """
+    # Normalize to list
+    if isinstance(agent_outputs, dict):
+        alerts = [agent_outputs]
+    else:
+        alerts = agent_outputs
+
+    rows: list[dict] = []
+    for alert in alerts:
+        rows.extend(_build_rows_for_single_alert(
+            alert, run_id, run_timestamp_iso, target_id, source_url,
+            config_hash=config_hash,
+        ))
+    return rows
+
+
 def _build_doc_extraction_rows(
     doc_extractions: list[dict],
     run_id: str,
     run_timestamp_iso: str,
     target_id: str,
     source_url: str,
+    agent_call_id: str = "",
 ) -> list[dict]:
     """
     Build document_extractions_table rows — one per library item processed.
@@ -172,6 +216,7 @@ def _build_doc_extraction_rows(
             "run_timestamp": run_timestamp_iso,
             "target_id": target_id,
             "source_url": source_url,
+            "agent_call_id": agent_call_id,
             "library_item_title": item.get("preliminary_title") or item.get("title") or "",
             "library_item_url": item.get("url") or "",
             "library_item_file_name": item.get("file_name") or "",
@@ -230,20 +275,29 @@ def store_run_alerts(
     for ev in change_events:
         if "error" in ev:
             continue
-        agent_output = ev.get("__agent_output") or {}
-        if not agent_output:
+        # __agent_output is now a list of alert dicts (or a single dict for backward compat)
+        raw_output = ev.get("__agent_output")
+        if not raw_output:
             continue
-        if agent_output.get("alert_type") == "No Meaningful Change":
+        if isinstance(raw_output, dict):
+            agent_alerts = [raw_output]
+        else:
+            agent_alerts = raw_output
+
+        # Filter out "No Meaningful Change" alerts
+        agent_alerts = [a for a in agent_alerts if a.get("alert_type") != "No Meaningful Change"]
+        if not agent_alerts:
             continue
 
         target_id = ev.get("target_id") or "unknown"
         source_url = ev.get("url") or ""
+        agent_call_id = agent_alerts[0].get("agent_call_id", "")
         page_key_prefix = f"pages/{target_id}/{date_prefix}/{run_id}"
 
-        # Write per-page agent_output.json
+        # Write per-page agent_output.json (full list of alerts)
         agent_key = f"{page_key_prefix}/agent_output.json"
         try:
-            _put_json(client, bucket, agent_key, agent_output, run_id)
+            _put_json(client, bucket, agent_key, agent_alerts, run_id)
         except Exception as e:
             log.warning("alert_s3: failed to write agent_output for %s: %s", target_id, e)
             agent_key = None
@@ -257,30 +311,32 @@ def store_run_alerts(
             except Exception as e:
                 log.warning("alert_s3: failed to write doc_extractions for %s: %s", target_id, e)
 
-        # Structured alert row (alerts.json)
-        row: dict = {
-            "run_id": run_id,
-            "run_timestamp": run_timestamp_iso,
-            "target_id": target_id,
-            "source_url": source_url,
-            "alert_type": agent_output.get("alert_type") or "",
-            "alert_title": agent_output.get("alert_title") or "",
-            "alert_description": agent_output.get("alert_description") or "",
-            "alert_url": agent_output.get("alert_url"),
-            "organization": agent_output.get("organization"),
-            "alert_date_time": agent_output.get("alert_date_time"),
-            "events": agent_output.get("events") or [],
-            "library_items": agent_output.get("library_items") or [],
-            "agenda_items": agent_output.get("agenda_items") or [],
-            "doc_extractions": [e.get("extraction") or {} for e in doc_extractions],
-        }
-        if agent_key:
-            row["detail_s3_key"] = agent_key
-        alert_rows.append(row)
+        # Structured alert rows (alerts.json) — one per alert
+        for agent_output in agent_alerts:
+            row: dict = {
+                "run_id": run_id,
+                "run_timestamp": run_timestamp_iso,
+                "target_id": target_id,
+                "source_url": source_url,
+                "agent_call_id": agent_call_id,
+                "alert_type": agent_output.get("alert_type") or "",
+                "alert_title": agent_output.get("alert_title") or "",
+                "alert_description": agent_output.get("alert_description") or "",
+                "alert_url": agent_output.get("alert_url"),
+                "organization": agent_output.get("organization"),
+                "alert_date_time": agent_output.get("alert_date_time"),
+                "events": agent_output.get("events") or [],
+                "library_items": agent_output.get("library_items") or [],
+                "agenda_items": agent_output.get("agenda_items") or [],
+                "doc_extractions": [e.get("extraction") or {} for e in doc_extractions],
+            }
+            if agent_key:
+                row["detail_s3_key"] = agent_key
+            alert_rows.append(row)
 
-        # Alert table rows (alerts_table.jsonl) — one per library item
+        # Alert table rows (alerts_table.jsonl) — one per alert (per library item)
         table_rows.extend(_build_table_rows(
-            agent_output, doc_extractions,
+            agent_alerts, doc_extractions,
             run_id, run_timestamp_iso, target_id, source_url,
             config_hash=config_hash,
         ))
@@ -289,6 +345,7 @@ def store_run_alerts(
         doc_table_rows.extend(_build_doc_extraction_rows(
             doc_extractions,
             run_id, run_timestamp_iso, target_id, source_url,
+            agent_call_id=agent_call_id,
         ))
 
     # Write alerts.json (per-run structured output)

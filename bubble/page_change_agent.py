@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import re
+import uuid
 
 log = logging.getLogger(__name__)
 
@@ -369,13 +370,26 @@ def _parse_output(raw: str) -> dict:
 # Public interface
 # ---------------------------------------------------------------------------
 
+def _unwrap_alerts(result: dict) -> list[dict]:
+    """
+    If the agent output has a top-level ``alerts`` array, return that list.
+    Otherwise wrap the single dict in a one-element list.
+    Filters out "No Meaningful Change" entries.
+    """
+    alerts = result.get("alerts")
+    if isinstance(alerts, list) and alerts:
+        return [a for a in alerts if isinstance(a, dict)]
+    # Single-alert (old schema or flat schema without wrapper)
+    return [result]
+
+
 def extract_page_change(
     before_html: str,
     after_html: str,
     target_context: dict,
-) -> dict:
+) -> list[dict]:
     """
-    Compare before/after HTML and return structured change extraction.
+    Compare before/after HTML and return structured change extractions.
 
     Args:
         before_html: Stripped content HTML from previous state (empty string for first run).
@@ -383,12 +397,14 @@ def extract_page_change(
         target_context: {label, url, org_path, group, tags} from target config.
 
     Returns:
-        Dict with keys: alert_type, alert_title, alert_description, alert_url,
-        events, library_items, agenda_items.
-        Returns {} on any failure (never raises).
+        List of alert dicts. Each dict includes an ``agent_call_id`` field
+        (shared UUID identifying this specific agent invocation).
+        Returns [] on any failure (never raises).
     """
     if not PAGE_CHANGE_AGENT_ENABLED:
-        return {}
+        return []
+
+    agent_call_id = str(uuid.uuid4())
 
     try:
         model = os.environ.get("PAGE_CHANGE_AGENT_MODEL", "").strip() or _get_model() or "gpt-5.4"
@@ -415,7 +431,7 @@ def extract_page_change(
             f"=== TARGET CONTEXT ===\n{context_block}\n\n"
             f"=== BEFORE (previous version) ===\n{before_html or '(empty — first run)'}\n\n"
             f"=== AFTER (current version) ===\n{after_html}\n\n"
-            f"Return your analysis as a single JSON object with exactly this schema:\n"
+            f"Return your analysis as a JSON object matching exactly this schema:\n"
             f"{output_schema}\n"
             "alert_type must be one of: 'New Agenda', 'New Materials', 'New Agenda & Materials', "
             "'Updated Agenda', 'Updated Materials', 'Updated Agenda & Materials', 'New Meeting', "
@@ -428,14 +444,41 @@ def extract_page_change(
         )
 
         if _pgvector_enabled():
-            log.info("page_change_agent: running with pgvector tools (model=%s)", model)
+            log.info("page_change_agent: running with pgvector tools (model=%s, call_id=%s)", model, agent_call_id[:8])
             raw = asyncio.run(_run_with_pgvector(
                 system_prompt, user_content, model, reasoning_effort,
                 pgvector_namespaces if isinstance(pgvector_namespaces, list) else [],
             ))
-            result = _parse_output(raw)
+
+            # Step 2: enforce schema via Structured Outputs so output always
+            # matches DynamoDB schema (same pattern as document_agent.py)
+            json_schema = _get_output_json_schema()
+            if json_schema and raw:
+                log.info("page_change_agent: enforcing structured output schema '%s' (call_id=%s)", _get_output_json_schema_name(), agent_call_id[:8])
+                from bubble.openai_client import chat_json
+                result = chat_json(
+                    [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a JSON formatter. Format the web change analysis below "
+                                "into a JSON object that strictly matches the required schema. "
+                                "Use only the data provided — do not invent values. "
+                                "For fields not mentioned in the analysis, use \"N/A\"."
+                            ),
+                        },
+                        {"role": "user", "content": raw},
+                    ],
+                    model=model,
+                    reasoning_effort="low",
+                    json_schema=json_schema,
+                    json_schema_name=_get_output_json_schema_name(),
+                    json_schema_strict=_get_output_json_schema_strict(),
+                )
+            else:
+                result = _parse_output(raw)
         else:
-            log.info("page_change_agent: running without pgvector (model=%s)", model)
+            log.info("page_change_agent: running without pgvector (model=%s, call_id=%s)", model, agent_call_id[:8])
             from bubble.openai_client import chat_json
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -453,11 +496,19 @@ def extract_page_change(
                 json_schema_strict=_get_output_json_schema_strict(),
             )
 
-        return result if isinstance(result, dict) else {}
+        if not isinstance(result, dict):
+            return []
+
+        alerts = _unwrap_alerts(result)
+        # Stamp each alert with the agent_call_id
+        for alert in alerts:
+            alert["agent_call_id"] = agent_call_id
+        log.info("page_change_agent: produced %d alert(s) (call_id=%s)", len(alerts), agent_call_id[:8])
+        return alerts
 
     except Exception as e:
         log.warning("page_change_agent failed (non-fatal): %r", e, exc_info=True)
-        return {}
+        return []
 
 
 def agent_output_to_by_type(agent_output: dict) -> dict:

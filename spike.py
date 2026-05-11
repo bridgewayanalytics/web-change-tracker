@@ -1853,45 +1853,54 @@ def _build_bubble_payloads(
                 "group": ev.get("group", ""),
                 "tags": ev.get("tags", []),
             }
-            agent_output = extract_page_change(before_html, after_html, target_context)
-            if agent_output and agent_output.get("alert_type") != "No Meaningful Change":
-                # Attach agent fields to change event for downstream use
-                ev["__agent_output"] = agent_output
-                # Merge agent-extracted by_type into change (agent takes precedence when present)
-                agent_by_type = agent_output_to_by_type(agent_output)
+            agent_alerts = extract_page_change(before_html, after_html, target_context)
+            # Filter out "No Meaningful Change" alerts
+            agent_alerts = [a for a in agent_alerts if a.get("alert_type") != "No Meaningful Change"]
+            if agent_alerts:
+                # Store the list of alert dicts for downstream storage
+                ev["__agent_output"] = agent_alerts
+                # Use first alert for by_type merging and metadata (backward compat)
+                first_alert = agent_alerts[0]
+                agent_by_type = agent_output_to_by_type(first_alert)
                 if agent_by_type:
                     existing = ev["change"].get("by_type") or {}
                     merged = dict(existing)
                     merged.update(agent_by_type)
                     ev["change"] = dict(ev["change"])
                     ev["change"]["by_type"] = merged
-                # Attach alert metadata for payload builders
+                # Attach alert metadata for payload builders (from first alert)
                 for field in ("alert_type", "alert_title", "alert_description"):
-                    if agent_output.get(field):
-                        ev[f"__agent_{field}"] = agent_output[field]
+                    if first_alert.get(field):
+                        ev[f"__agent_{field}"] = first_alert[field]
 
     # Run document agent for events where the alert type indicates new/updated materials
     from bubble.document_agent import should_run_for_alert, extract_document_data as _extract_doc
     for ev in change_events:
-        agent_output = ev.get("__agent_output") or {}
-        if not agent_output or not should_run_for_alert(agent_output):
+        agent_alerts = ev.get("__agent_output") or []
+        if not agent_alerts:
             continue
-        library_items = agent_output.get("library_items") or []
+        # Normalize to list (backward compat if somehow a dict)
+        if isinstance(agent_alerts, dict):
+            agent_alerts = [agent_alerts]
         doc_results: list[dict] = []
-        for item in library_items:
-            name = item.get("preliminary_title") or item.get("title") or item.get("file_name") or ""
-            url = item.get("url") or ""
-            if not name or name.strip().upper() in ("N/A", "N/A.", "-"):
+        for agent_output in agent_alerts:
+            if not should_run_for_alert(agent_output):
                 continue
-            doc_result = _extract_doc(name, url)
-            if doc_result:
-                doc_results.append({"item": item, "extraction": doc_result})
-                log.info(
-                    "document_agent: %s -> topics=%s agenda=%s",
-                    name[:60],
-                    doc_result.get("topic_ids"),
-                    doc_result.get("agenda_item_ids"),
-                )
+            library_items = agent_output.get("library_items") or []
+            for item in library_items:
+                name = item.get("preliminary_title") or item.get("title") or item.get("file_name") or ""
+                url = item.get("url") or ""
+                if not name or name.strip().upper() in ("N/A", "N/A.", "-"):
+                    continue
+                doc_result = _extract_doc(name, url)
+                if doc_result:
+                    doc_results.append({"item": item, "extraction": doc_result})
+                    log.info(
+                        "document_agent: %s -> topics=%s agenda=%s",
+                        name[:60],
+                        doc_result.get("topic_ids"),
+                        doc_result.get("agenda_item_ids"),
+                    )
         if doc_results:
             ev["__doc_extraction"] = doc_results
 
@@ -2499,15 +2508,21 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str) -> None:
         raise SystemExit(1)
 
     log.info("rerun: running page_change_agent...")
-    agent_output = extract_page_change(before_html, after_html, target_context)
-    if not agent_output:
-        log.error("rerun: agent returned no output")
+    agent_alerts = extract_page_change(before_html, after_html, target_context)
+    # Filter out "No Meaningful Change"
+    agent_alerts = [a for a in agent_alerts if a.get("alert_type") != "No Meaningful Change"]
+    if not agent_alerts:
+        log.error("rerun: agent returned no meaningful output")
         raise SystemExit(1)
+
+    agent_call_id = agent_alerts[0].get("agent_call_id", "")
 
     # Run document agent on library items if applicable
     from bubble.document_agent import should_run_for_alert, extract_document_data
     doc_extractions: list[dict] = []
-    if should_run_for_alert(agent_output):
+    for agent_output in agent_alerts:
+        if not should_run_for_alert(agent_output):
+            continue
         # Old schema: library_items array; new flat schema: single library_item_* fields
         library_items = agent_output.get("library_items") or []
         if not library_items:
@@ -2543,7 +2558,7 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str) -> None:
 
     from storage.alert_s3 import _build_table_rows, _build_doc_extraction_rows
     new_rows = _build_table_rows(
-        agent_output, doc_extractions,
+        agent_alerts, doc_extractions,
         rerun_run_id, rerun_timestamp, rerun_target_id, meta.get("url") or "",
         config_hash=config_hash,
     )
@@ -2552,6 +2567,7 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str) -> None:
     doc_rerun_rows = _build_doc_extraction_rows(
         doc_extractions,
         rerun_run_id, rerun_timestamp, rerun_target_id, meta.get("url") or "",
+        agent_call_id=agent_call_id,
     )
 
     # Fetch original rows for diff
