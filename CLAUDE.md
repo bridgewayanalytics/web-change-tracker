@@ -55,6 +55,8 @@ When `RERUN_RUN_ID` and `RERUN_TARGET_ID` environment variables are set, `spike.
 
 Result schema includes: `run_id`, `target_id`, `rerun_timestamp`, `config_hash`, `original_rows`, `rerun_rows`, `doc_original_rows`, `doc_rerun_rows`.
 
+`RERUN_MODE` env var controls which agents run: `"alerts"` (page_change_agent only), `"docs"` (document_agent only), `"both"` (default).
+
 Full spec: `docs/rerun-feature.md`
 
 ## Key directories
@@ -89,7 +91,7 @@ Full spec: `docs/rerun-feature.md`
 |--------|---------|
 | `scripts/deploy.sh` | Build Docker, push ECR, terraform apply |
 | `scripts/backfill_alerts.py` | Reprocess stored page changes through agents (re-runs both agents) |
-| `scripts/backfill_document_extractions.py` | Backfill `document_extractions_table.jsonl` from stored `agent_output.json` (safe, never touches `alerts_table.jsonl`) |
+| `scripts/backfill_document_extractions.py` | Backfill `document_extractions_table.jsonl` from stored `agent_output.json` (safe, never touches `alerts_table.jsonl`). Handles flat schema library items, list-format `agent_output.json`, and `alerts` array wrapper. |
 | `scripts/rebuild_alerts_table.py` | Rebuild `alerts_table.jsonl` from stored `agent_output.json` files (no agent re-run, useful for dedup/schema fixes) |
 | `scripts/wrap_schema_alerts.py` | Wrap flat DynamoDB `output_json_schema` in `alerts` array wrapper for multi-alert support |
 | `scripts/backfill_call_id.py` | One-time backfill of `agent_call_id` on existing JSONL rows (groups by `run_id` + `target_id`) |
@@ -205,6 +207,7 @@ python3 scripts/backfill_call_id.py --dry-run  # preview agent_call_id backfill
 **Rerun mode:**
 - `RERUN_RUN_ID` — run_id to re-evaluate (set by ECS RunTask override)
 - `RERUN_TARGET_ID` — target_id to re-evaluate (set by ECS RunTask override)
+- `RERUN_MODE` — controls which agents run during rerun: `"alerts"` (page_change_agent only), `"docs"` (document_agent only), `"both"` (default). Set by ECS RunTask override from the dashboard.
 
 **Email:**
 - `SEND_EMAIL=true`, `FROM_EMAIL`, `TO_EMAILS`, `SES_REGION`
@@ -233,6 +236,9 @@ python3 scripts/backfill_call_id.py --dry-run  # preview agent_call_id backfill
 - Bubble.io integration is currently legacy; Bubble admin UI syncs `output_json_schema` + `output_requested_values` to DynamoDB
 - Debug artifacts go to `debug/` directory (gitignored)
 - `prompts/org_tree.txt` — dash-depth hierarchy of 140+ organizations, sourced from Bubble API. Injected into agent context to guide `organization` field assignment. Regenerate from Bubble API if org structure changes.
+- **ECS entrypoint.sh:** Supports running arbitrary Python commands via CMD override (e.g., `python scripts/backfill_document_extractions.py`). If `$1` is `python`, the full command is exec'd directly. Default (no args) runs `python spike.py`.
+- **Library item extraction (flat schema):** `spike.py` extracts library items from flat schema fields (`library_item_preliminary_title`, `library_item_url`, `library_items_file_name`) in the normal pipeline, not just from nested `library_items[]` arrays. The backfill script mirrors this logic.
+- **Multi-alert granularity (DynamoDB instructions):** The `web-tracking-agent` instructions explicitly constrain granularity: one row per distinct document/PDF (by URL or filename), one row per distinct event/meeting. Multiple agenda items within the same document go in the `agenda_item_title_and_chronicle_topics` array of that one row — do NOT fan out by agenda item.
 
 ## Critical warnings
 

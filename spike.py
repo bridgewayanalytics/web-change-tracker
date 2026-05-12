@@ -1886,11 +1886,28 @@ def _build_bubble_payloads(
         for agent_output in agent_alerts:
             if not should_run_for_alert(agent_output):
                 continue
+            # Old schema: library_items array; new flat schema: single library_item_* fields
             library_items = agent_output.get("library_items") or []
+            if not library_items:
+                # New flat schema — library_item_preliminary_title is {status, title}
+                raw_title = agent_output.get("library_item_preliminary_title") or {}
+                if isinstance(raw_title, dict):
+                    lib_name = raw_title.get("library_item_title") or raw_title.get("title") or ""
+                else:
+                    lib_name = str(raw_title)
+                lib_url = agent_output.get("library_item_url") or ""
+                lib_file = agent_output.get("library_items_file_name") or ""
+                if lib_name and lib_name.strip().upper() not in ("N/A", "N/A.", "-", ""):
+                    library_items = [{"preliminary_title": lib_name, "url": lib_url, "file_name": lib_file}]
+
             for item in library_items:
-                name = item.get("preliminary_title") or item.get("title") or item.get("file_name") or ""
+                raw = item.get("preliminary_title") or item.get("title") or item.get("file_name") or ""
+                if isinstance(raw, dict):
+                    name = raw.get("library_item_title") or raw.get("title") or ""
+                else:
+                    name = str(raw)
                 url = item.get("url") or ""
-                if not name or name.strip().upper() in ("N/A", "N/A.", "-"):
+                if not name or name.strip().upper() in ("N/A", "N/A.", "-", ""):
                     continue
                 doc_result = _extract_doc(name, url)
                 if doc_result:
@@ -2077,60 +2094,72 @@ def render_email_report(
             lines.append(f"URL:  {url}")
         lines.append("")
 
-        agent_output = ev.get("__agent_output") or {}
-        if agent_output:
-            def _val(key: str) -> str:
-                v = agent_output.get(key)
-                return str(v) if v is not None else "(none)"
+        raw_output = ev.get("__agent_output")
+        if isinstance(raw_output, dict):
+            agent_alerts = [raw_output]
+        elif isinstance(raw_output, list):
+            agent_alerts = raw_output
+        else:
+            agent_alerts = []
 
-            lines.append(f"Alert Type:        {_val('alert_type')}")
-            lines.append(f"Alert Title:       {_val('alert_title')}")
-            lines.append(f"Alert Description: {_val('alert_description')}")
-            lines.append(f"Alert URL:         {_val('alert_url')}")
-            lines.append(f"Organization:      {_val('organization')}")
-            lines.append(f"Alert Date/Time:   {_val('alert_date_time')}")
-            lines.append("")
+        if agent_alerts:
+            for alert_idx, agent_output in enumerate(agent_alerts):
+                if len(agent_alerts) > 1:
+                    lines.append(f"--- Alert {alert_idx + 1} of {len(agent_alerts)} ---")
 
-            events_list = agent_output.get("events") or []
-            if events_list:
-                lines.append(f"Events ({len(events_list)}):")
-                for ev_item in events_list:
-                    lines.append(f"  - {ev_item.get('title') or '(no title)'}")
-                    if ev_item.get("start_datetime"):
-                        lines.append(f"    Start:    {ev_item['start_datetime']}")
-                    if ev_item.get("end_datetime"):
-                        lines.append(f"    End:      {ev_item['end_datetime']}")
-                    if ev_item.get("timezone"):
-                        lines.append(f"    Timezone: {ev_item['timezone']}")
-                    if ev_item.get("url"):
-                        lines.append(f"    URL:      {ev_item['url']}")
-                    if ev_item.get("call_in_access_code"):
-                        lines.append(f"    Access:   {ev_item['call_in_access_code']}")
+                def _val(key: str) -> str:
+                    v = agent_output.get(key)
+                    return str(v) if v is not None else "(none)"
+
+                lines.append(f"Alert Type:        {_val('alert_type')}")
+                lines.append(f"Alert Title:       {_val('alert_title')}")
+                lines.append(f"Alert Description: {_val('alert_description')}")
+                lines.append(f"Alert URL:         {_val('alert_url')}")
+                lines.append(f"Organization:      {_val('organization')}")
+                lines.append(f"Alert Date/Time:   {_val('alert_date_time')}")
                 lines.append("")
 
-            lib_items = agent_output.get("library_items") or []
-            if lib_items:
-                lines.append(f"Library Items ({len(lib_items)}):")
-                for item in lib_items:
-                    title = item.get("preliminary_title") or item.get("title") or item.get("file_name") or "(no title)"
-                    lines.append(f"  - {title}")
-                    if item.get("url"):
-                        lines.append(f"    URL: {item['url']}")
-                    if item.get("file_name"):
-                        lines.append(f"    File: {item['file_name']}")
-                lines.append("")
+                # Legacy nested schema fields
+                events_list = agent_output.get("events") or []
+                if events_list:
+                    lines.append(f"Events ({len(events_list)}):")
+                    for ev_item in events_list:
+                        lines.append(f"  - {ev_item.get('title') or '(no title)'}")
+                        if ev_item.get("start_datetime"):
+                            lines.append(f"    Start:    {ev_item['start_datetime']}")
+                        if ev_item.get("end_datetime"):
+                            lines.append(f"    End:      {ev_item['end_datetime']}")
+                        if ev_item.get("timezone"):
+                            lines.append(f"    Timezone: {ev_item['timezone']}")
+                        if ev_item.get("url"):
+                            lines.append(f"    URL:      {ev_item['url']}")
+                        if ev_item.get("call_in_access_code"):
+                            lines.append(f"    Access:   {ev_item['call_in_access_code']}")
+                    lines.append("")
 
-            agenda_items = agent_output.get("agenda_items") or []
-            if agenda_items:
-                lines.append(f"Agenda Items ({len(agenda_items)}):")
-                for ag in agenda_items:
-                    title = ag.get("title") or ag.get("official_title") or "(no title)"
-                    lines.append(f"  - {title}")
-                    if ag.get("standardized_id"):
-                        lines.append(f"    ID: {ag['standardized_id']}")
-                    if ag.get("chronicle_topics"):
-                        lines.append(f"    Topics: {', '.join(ag['chronicle_topics'])}")
-                lines.append("")
+                lib_items = agent_output.get("library_items") or []
+                if lib_items:
+                    lines.append(f"Library Items ({len(lib_items)}):")
+                    for item in lib_items:
+                        title = item.get("preliminary_title") or item.get("title") or item.get("file_name") or "(no title)"
+                        lines.append(f"  - {title}")
+                        if item.get("url"):
+                            lines.append(f"    URL: {item['url']}")
+                        if item.get("file_name"):
+                            lines.append(f"    File: {item['file_name']}")
+                    lines.append("")
+
+                agenda_items = agent_output.get("agenda_items") or []
+                if agenda_items:
+                    lines.append(f"Agenda Items ({len(agenda_items)}):")
+                    for ag in agenda_items:
+                        title = ag.get("title") or ag.get("official_title") or "(no title)"
+                        lines.append(f"  - {title}")
+                        if ag.get("standardized_id"):
+                            lines.append(f"    ID: {ag['standardized_id']}")
+                        if ag.get("chronicle_topics"):
+                            lines.append(f"    Topics: {', '.join(ag['chronicle_topics'])}")
+                    lines.append("")
         else:
             lines.append("(no agent output)")
             lines.append("")
@@ -2436,9 +2465,14 @@ def _run_simulate_change(
     write_reference_resolution_report()
 
 
-def _run_rerun(rerun_run_id: str, rerun_target_id: str) -> None:
+def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alerts") -> None:
     """
     Re-evaluate a single stored alert using the current DynamoDB agent config.
+
+    rerun_mode:
+      "alerts"  — re-run page_change_agent only (default, triggered from Alerts page)
+      "docs"    — re-run document_agent only (triggered from Document Extractions page)
+      "both"    — re-run both agents
 
     Fetches before/after HTML from S3 at:
       pages/<target_id>/YYYY/MM/DD/<run_id>/before.html
@@ -2517,41 +2551,42 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str) -> None:
 
     agent_call_id = agent_alerts[0].get("agent_call_id", "")
 
-    # Run document agent on library items if applicable
-    from bubble.document_agent import should_run_for_alert, extract_document_data
+    # Run document agent on library items if applicable (only in "docs" or "both" mode)
     doc_extractions: list[dict] = []
-    for agent_output in agent_alerts:
-        if not should_run_for_alert(agent_output):
-            continue
-        # Old schema: library_items array; new flat schema: single library_item_* fields
-        library_items = agent_output.get("library_items") or []
-        if not library_items:
-            # New flat schema — library_item_preliminary_title is {status, library_item_title}
-            raw_title = agent_output.get("library_item_preliminary_title") or {}
-            if isinstance(raw_title, dict):
-                lib_name = raw_title.get("library_item_title") or raw_title.get("title") or ""
-            else:
-                lib_name = str(raw_title)
-            lib_url = agent_output.get("library_item_url") or ""
-            lib_file = agent_output.get("library_items_file_name") or ""
-            # Only add if there's a meaningful title (not N/A)
-            if lib_name and lib_name.strip().upper() not in ("N/A", "N/A.", "-", ""):
-                library_items = [{"preliminary_title": lib_name, "url": lib_url, "file_name": lib_file}]
-
-        for item in library_items:
-            raw = item.get("preliminary_title") or item.get("title") or item.get("file_name") or ""
-            # preliminary_title may be a flat string or a new-schema {status, library_item_title} dict
-            if isinstance(raw, dict):
-                name = raw.get("library_item_title") or raw.get("title") or ""
-            else:
-                name = str(raw)
-            url = item.get("url") or ""
-            if not name or name.strip().upper() in ("N/A", "N/A.", "-", ""):
+    if rerun_mode in ("docs", "both"):
+        from bubble.document_agent import should_run_for_alert, extract_document_data
+        for agent_output in agent_alerts:
+            if not should_run_for_alert(agent_output):
                 continue
-            log.info("rerun: document agent: %s", name[:60])
-            doc_result = extract_document_data(name, url)
-            if doc_result:
-                doc_extractions.append({"item": item, "extraction": doc_result})
+            # Old schema: library_items array; new flat schema: single library_item_* fields
+            library_items = agent_output.get("library_items") or []
+            if not library_items:
+                # New flat schema — library_item_preliminary_title is {status, library_item_title}
+                raw_title = agent_output.get("library_item_preliminary_title") or {}
+                if isinstance(raw_title, dict):
+                    lib_name = raw_title.get("library_item_title") or raw_title.get("title") or ""
+                else:
+                    lib_name = str(raw_title)
+                lib_url = agent_output.get("library_item_url") or ""
+                lib_file = agent_output.get("library_items_file_name") or ""
+                # Only add if there's a meaningful title (not N/A)
+                if lib_name and lib_name.strip().upper() not in ("N/A", "N/A.", "-", ""):
+                    library_items = [{"preliminary_title": lib_name, "url": lib_url, "file_name": lib_file}]
+
+            for item in library_items:
+                raw = item.get("preliminary_title") or item.get("title") or item.get("file_name") or ""
+                # preliminary_title may be a flat string or a new-schema {status, library_item_title} dict
+                if isinstance(raw, dict):
+                    name = raw.get("library_item_title") or raw.get("title") or ""
+                else:
+                    name = str(raw)
+                url = item.get("url") or ""
+                if not name or name.strip().upper() in ("N/A", "N/A.", "-", ""):
+                    continue
+                log.info("rerun: document agent: %s", name[:60])
+                doc_result = extract_document_data(name, url)
+                if doc_result:
+                    doc_extractions.append({"item": item, "extraction": doc_result})
 
     config_hash = get_config_hash()
     rerun_timestamp = datetime.now(timezone.utc).isoformat()
@@ -2819,7 +2854,8 @@ def main() -> None:
     rerun_run_id = os.environ.get("RERUN_RUN_ID", "").strip()
     rerun_target_id = os.environ.get("RERUN_TARGET_ID", "").strip()
     if rerun_run_id and rerun_target_id:
-        _run_rerun(rerun_run_id, rerun_target_id)
+        rerun_mode = os.environ.get("RERUN_MODE", "alerts").strip()
+        _run_rerun(rerun_run_id, rerun_target_id, rerun_mode=rerun_mode)
         return
 
     from datetime import datetime, timezone

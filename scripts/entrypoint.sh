@@ -31,7 +31,8 @@ fi
 # otherwise treat args as spike.py arguments (e.g. docker run image --verbose)
 if [[ $# -eq 0 ]]; then
   exec python spike.py
-elif [[ "$1" == python ]] && [[ "${2:-}" == spike.py ]]; then
+elif [[ "$1" == python ]]; then
+  # Full python command (e.g. "python spike.py", "python scripts/backfill_document_extractions.py")
   exec "$@"
 else
   exec python spike.py "$@"

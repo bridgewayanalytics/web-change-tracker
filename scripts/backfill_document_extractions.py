@@ -61,7 +61,7 @@ def list_agent_outputs(client, limit: int) -> list[dict]:
     return entries[:limit]
 
 
-def fetch_json(client, key: str) -> dict | None:
+def fetch_json(client, key: str) -> dict | list | None:
     try:
         resp = client.get_object(Bucket=BUCKET, Key=key)
         return json.loads(resp["Body"].read().decode("utf-8"))
@@ -109,18 +109,16 @@ def run_backfill(limit: int = 5, dry_run: bool = False):
             log.warning("Could not load agent_output for %s/%s, skipping", target_id, run_id)
             continue
 
-        alert_type = agent_output.get("alert_type", "")
-        if alert_type == "No Meaningful Change":
-            log.info("  %s/%s: no meaningful change, skipping", target_id, run_id)
-            continue
-
-        if not should_run_for_alert(agent_output):
-            log.info("  %s/%s: alert_type=%r — not a document alert, skipping", target_id, run_id, alert_type)
-            continue
-
-        library_items = agent_output.get("library_items") or []
-        if not library_items:
-            log.info("  %s/%s: no library items, skipping", target_id, run_id)
+        # Unwrap to list of alert dicts
+        # agent_output.json can be: a list (multi-alert), a dict with "alerts" key, or a single dict
+        if isinstance(agent_output, list):
+            alert_dicts = agent_output
+        elif isinstance(agent_output, dict) and "alerts" in agent_output and isinstance(agent_output["alerts"], list):
+            alert_dicts = agent_output["alerts"]
+        elif isinstance(agent_output, dict):
+            alert_dicts = [agent_output]
+        else:
+            log.warning("Unexpected agent_output type for %s/%s: %s", target_id, run_id, type(agent_output))
             continue
 
         # Load meta for run_timestamp and source_url
@@ -134,22 +132,49 @@ def run_backfill(limit: int = 5, dry_run: bool = False):
             if run_timestamp else entry["last_modified"].isoformat()
         )
 
-        log.info("  %s/%s: alert_type=%r  %d library item(s)", target_id, run_id, alert_type, len(library_items))
-
         doc_extractions: list[dict] = []
-        for item in library_items:
-            name = item.get("preliminary_title") or item.get("title") or item.get("file_name") or ""
-            url = item.get("url") or ""
-            if not name or name.strip().upper() in ("N/A", "N/A.", "-"):
-                log.info("    -> skipping item with no title")
+        for alert_dict in alert_dicts:
+            alert_type = alert_dict.get("alert_type", "")
+            if alert_type == "No Meaningful Change":
+                log.info("  %s/%s: no meaningful change, skipping", target_id, run_id)
                 continue
-            log.info("    -> document agent: %s", name[:80])
-            result = extract_document_data(name, url)
-            if result:
-                doc_extractions.append({"item": item, "extraction": result})
-                log.info("       extracted %d field(s)", len(result))
-            else:
-                log.info("       no output")
+
+            if not should_run_for_alert(alert_dict):
+                log.info("  %s/%s: alert_type=%r — not a document alert, skipping", target_id, run_id, alert_type)
+                continue
+
+            # Old schema: library_items array; new flat schema: single library_item_* fields
+            library_items = alert_dict.get("library_items") or []
+            if not library_items:
+                raw_title = alert_dict.get("library_item_preliminary_title") or {}
+                if isinstance(raw_title, dict):
+                    lib_name = raw_title.get("library_item_title") or raw_title.get("title") or ""
+                else:
+                    lib_name = str(raw_title)
+                lib_url = alert_dict.get("library_item_url") or ""
+                lib_file = alert_dict.get("library_items_file_name") or ""
+                if lib_name and lib_name.strip().upper() not in ("N/A", "N/A.", "-", ""):
+                    library_items = [{"preliminary_title": lib_name, "url": lib_url, "file_name": lib_file}]
+
+            if not library_items:
+                log.info("  %s/%s: alert_type=%r — no library items", target_id, run_id, alert_type)
+                continue
+
+            log.info("  %s/%s: alert_type=%r  %d library item(s)", target_id, run_id, alert_type, len(library_items))
+
+            for item in library_items:
+                name = item.get("preliminary_title") or item.get("title") or item.get("file_name") or ""
+                url = item.get("url") or ""
+                if not name or name.strip().upper() in ("N/A", "N/A.", "-"):
+                    log.info("    -> skipping item with no title")
+                    continue
+                log.info("    -> document agent: %s", name[:80])
+                result = extract_document_data(name, url)
+                if result:
+                    doc_extractions.append({"item": item, "extraction": result})
+                    log.info("       extracted %d field(s)", len(result))
+                else:
+                    log.info("       no output")
 
         rows = _build_doc_extraction_rows(
             doc_extractions, run_id, run_timestamp_iso, target_id, source_url,

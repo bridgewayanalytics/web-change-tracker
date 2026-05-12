@@ -61,6 +61,8 @@ When `RERUN_RUN_ID` + `RERUN_TARGET_ID` env vars are set, `spike.py` skips the n
 3. Writes result to `alerts/reruns/<run_id>/<target_id>/result.json`
 4. Dashboard handles Accept (patches JSONL) or Discard (deletes result)
 
+`RERUN_MODE` controls which agents run: `"alerts"` (page_change_agent only), `"docs"` (document_agent only), `"both"` (default).
+
 Full spec: `docs/rerun-feature.md`
 
 ### AWS Resources
@@ -277,6 +279,7 @@ Auth0 authentication protects all pages. The dashboard is accessible only to aut
 | `DATABASE_PORT` | pgvector DB port (default `6432`) |
 | `RERUN_RUN_ID` | (Rerun mode) run_id to re-evaluate — set by ECS RunTask override |
 | `RERUN_TARGET_ID` | (Rerun mode) target_id to re-evaluate — set by ECS RunTask override |
+| `RERUN_MODE` | (Rerun mode) `"alerts"` / `"docs"` / `"both"` (default) — controls which agents run |
 
 ### Email
 
@@ -409,10 +412,11 @@ web-change-tracker/
 ├── scripts/
 │   ├── deploy.sh                         # Build Docker, push ECR, terraform apply
 │   ├── backfill_alerts.py                # Reprocess stored page changes through agents
-│   ├── backfill_document_extractions.py  # Backfill doc extractions only (safe)
+│   ├── backfill_document_extractions.py  # Backfill doc extractions only (safe, handles flat schema + list format)
 │   ├── rebuild_alerts_table.py           # Rebuild from stored agent_output.json (no re-run)
 │   ├── wrap_schema_alerts.py             # Wrap DynamoDB schema in alerts array
 │   ├── backfill_call_id.py               # Backfill agent_call_id on existing rows
+│   ├── entrypoint.sh                     # Docker entrypoint (supports arbitrary python commands via CMD override)
 │   └── infer_pdf.py                      # PDF inference/analysis
 ├── docs/
 │   └── rerun-feature.md            # Re-evaluate alert feature spec (shared with dashboard)
