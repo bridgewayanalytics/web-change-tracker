@@ -2543,19 +2543,83 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
 
     log.info("rerun: running page_change_agent...")
     agent_alerts = extract_page_change(before_html, after_html, target_context)
-    # Filter out "No Meaningful Change"
-    agent_alerts = [a for a in agent_alerts if a.get("alert_type") != "No Meaningful Change"]
-    if not agent_alerts:
-        log.error("rerun: agent returned no meaningful output")
-        raise SystemExit(1)
+    # Keep "No Meaningful Change" for docs mode (still need to identify library items from the
+    # result); filter it only for alerts-only reruns where it would produce no rows.
+    agent_alerts_for_rows = [a for a in agent_alerts if a.get("alert_type") != "No Meaningful Change"]
 
-    agent_call_id = agent_alerts[0].get("agent_call_id", "")
+    if not agent_alerts_for_rows and rerun_mode == "alerts":
+        log.warning("rerun: agent returned no meaningful output — writing empty result")
+        # Write an empty result so the dashboard can show "no change" rather than a hard failure
+        config_hash = get_config_hash()
+        rerun_timestamp = datetime.now(timezone.utc).isoformat()
+        # Fetch original rows for comparison
+        original_rows: list[dict] = []
+        try:
+            jsonl_body = s3.get_object(Bucket=bucket, Key="alerts/alerts_table.jsonl")["Body"].read().decode("utf-8")
+            for line in jsonl_body.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                    if row.get("run_id") == rerun_run_id and row.get("target_id") == rerun_target_id:
+                        original_rows.append(row)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        result = {
+            "run_id": rerun_run_id,
+            "target_id": rerun_target_id,
+            "rerun_timestamp": rerun_timestamp,
+            "config_hash": config_hash,
+            "original_rows": original_rows,
+            "rerun_rows": [],
+            "doc_original_rows": [],
+            "doc_rerun_rows": [],
+            "error": "page_change_agent returned no meaningful output — the agent may have determined no change occurred",
+        }
+        result_key = f"alerts/reruns/{rerun_run_id}/{rerun_target_id}/result.json"
+        s3.put_object(
+            Bucket=bucket,
+            Key=result_key,
+            Body=json.dumps(result, indent=2, ensure_ascii=False).encode("utf-8"),
+            ContentType="application/json",
+        )
+        log.info("rerun: wrote empty result to s3://%s/%s", bucket, result_key)
+        return
+
+    agent_call_id = agent_alerts_for_rows[0].get("agent_call_id", "") if agent_alerts_for_rows else ""
+
+    # For docs/both mode: if page_change_agent failed, fall back to original alert rows
+    # so document extraction can still proceed independently.
+    if rerun_mode in ("docs", "both") and not agent_alerts_for_rows:
+        log.warning("rerun: page_change_agent returned no output — falling back to original rows for doc extraction")
+        # Fetch original rows from S3 to use as the agent_alerts source
+        try:
+            jsonl_body = s3.get_object(Bucket=bucket, Key="alerts/alerts_table.jsonl")["Body"].read().decode("utf-8")
+            for line in jsonl_body.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                    if row.get("run_id") == rerun_run_id and row.get("target_id") == rerun_target_id:
+                        agent_alerts_for_rows.append(row)
+                except Exception:
+                    pass
+        except Exception as exc:
+            log.error("rerun: could not fetch original rows as fallback: %s", exc)
+            raise SystemExit(1) from exc
+        if not agent_alerts_for_rows:
+            log.error("rerun: no original rows found for fallback")
+            raise SystemExit(1)
 
     # Run document agent on library items if applicable (only in "docs" or "both" mode)
     doc_extractions: list[dict] = []
     if rerun_mode in ("docs", "both"):
         from bubble.document_agent import should_run_for_alert, extract_document_data
-        for agent_output in agent_alerts:
+        for agent_output in agent_alerts_for_rows:
             if not should_run_for_alert(agent_output):
                 continue
             # Old schema: library_items array; new flat schema: single library_item_* fields
@@ -2597,7 +2661,7 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
 
     from storage.alert_s3 import _build_table_rows, _build_doc_extraction_rows
     new_rows = _build_table_rows(
-        agent_alerts, doc_extractions,
+        agent_alerts_for_rows, doc_extractions,
         rerun_run_id, rerun_timestamp, rerun_target_id, meta.get("url") or "",
         config_hash=config_hash,
     )

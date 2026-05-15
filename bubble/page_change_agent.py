@@ -228,8 +228,10 @@ def _sanitize_schema_node(node: object) -> object:
             return {"type": "string"}
         if key == "format" and val not in _OPENAI_SUPPORTED_FORMATS:
             continue  # drop unsupported format values (e.g. "uri")
-        if key in ("properties", "items") and isinstance(val, dict):
+        if key == "properties" and isinstance(val, dict):
             result[key] = {k: _sanitize_schema_node(v) for k, v in val.items()}
+        elif key == "items" and isinstance(val, dict):
+            result[key] = _sanitize_schema_node(val)
         elif key == "items" and isinstance(val, list):
             result[key] = [_sanitize_schema_node(i) for i in val]
         elif isinstance(val, dict):
@@ -238,6 +240,9 @@ def _sanitize_schema_node(node: object) -> object:
             result[key] = [_sanitize_schema_node(i) if isinstance(i, dict) else i for i in val]
         else:
             result[key] = val
+    # Strict mode requires additionalProperties: false on every object that declares properties.
+    if result.get("type") == "object" and "properties" in result and "additionalProperties" not in result:
+        result["additionalProperties"] = False
     return result
 
 
