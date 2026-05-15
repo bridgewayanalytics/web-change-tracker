@@ -23,6 +23,7 @@ import logging
 import os
 import re
 import uuid
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 
@@ -250,12 +251,50 @@ def _sanitize_schema_for_openai(schema: dict) -> dict:
     return _sanitize_schema_node(schema)  # type: ignore[return-value]
 
 
+def _ensure_alerts_wrapper(schema: dict) -> dict:
+    """Wrap schema in a top-level ``alerts`` array if not already wrapped.
+
+    Bubble admin always writes a flat object schema to DynamoDB. The pipeline
+    needs the ``alerts`` wrapper so the agent can return multiple alert rows
+    from a single page change. This function adds the wrapper at runtime so
+    Bubble can sync freely without breaking multi-alert support.
+    """
+    props = schema.get("properties", {})
+    if set(props.keys()) == {"alerts"}:
+        return schema  # already wrapped
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "alerts": {
+                "type": "array",
+                "items": schema,
+            }
+        },
+        "required": ["alerts"],
+    }
+
+
+def _load_org_tree() -> str:
+    """Load prompts/org_tree.txt for injection into the user message.
+
+    Returns the full file content, or empty string if the file is missing.
+    """
+    path = Path(__file__).resolve().parent.parent / "prompts" / "org_tree.txt"
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        log.warning("org_tree.txt not found at %s — organization guidance will be omitted", path)
+        return ""
+
+
 def _get_output_json_schema() -> dict | None:
     """Return the structured output schema from DynamoDB, sanitized for OpenAI, or None if not set."""
     cfg = _load_dynamo_config()
     schema = cfg.get("output_json_schema")
     if not isinstance(schema, dict):
         return None
+    schema = _ensure_alerts_wrapper(schema)
     return _sanitize_schema_for_openai(schema)
 
 
@@ -427,8 +466,14 @@ def extract_page_change(
         )
 
         output_schema = _get_output_schema_str()
+        org_tree = _load_org_tree()
+        org_tree_block = (
+            f"=== ORGANIZATION REFERENCE (org_tree.txt) ===\n{org_tree}\n\n"
+            if org_tree else ""
+        )
         user_content = (
             f"=== TARGET CONTEXT ===\n{context_block}\n\n"
+            f"{org_tree_block}"
             f"=== BEFORE (previous version) ===\n{before_html or '(empty — first run)'}\n\n"
             f"=== AFTER (current version) ===\n{after_html}\n\n"
             f"Return your analysis as a JSON object matching exactly this schema:\n"

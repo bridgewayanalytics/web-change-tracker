@@ -2465,7 +2465,7 @@ def _run_simulate_change(
     write_reference_resolution_report()
 
 
-def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alerts") -> None:
+def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alerts", rerun_library_item_url: str = "") -> None:
     """
     Re-evaluate a single stored alert using the current DynamoDB agent config.
 
@@ -2583,6 +2583,10 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
                 url = item.get("url") or ""
                 if not name or name.strip().upper() in ("N/A", "N/A.", "-", ""):
                     continue
+                # Per-document scoping: skip items that don't match the target URL
+                if rerun_library_item_url and url != rerun_library_item_url:
+                    log.info("rerun: skipping document (URL mismatch): %s", name[:60])
+                    continue
                 log.info("rerun: document agent: %s", name[:60])
                 doc_result = extract_document_data(name, url)
                 if doc_result:
@@ -2633,6 +2637,9 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
             try:
                 row = json.loads(line)
                 if row.get("run_id") == rerun_run_id and row.get("target_id") == rerun_target_id:
+                    # Per-document scoping: only include the target document
+                    if rerun_library_item_url and row.get("library_item_url") != rerun_library_item_url:
+                        continue
                     doc_original_rows.append(row)
             except Exception:
                 pass
@@ -2855,7 +2862,8 @@ def main() -> None:
     rerun_target_id = os.environ.get("RERUN_TARGET_ID", "").strip()
     if rerun_run_id and rerun_target_id:
         rerun_mode = os.environ.get("RERUN_MODE", "alerts").strip()
-        _run_rerun(rerun_run_id, rerun_target_id, rerun_mode=rerun_mode)
+        rerun_library_item_url = os.environ.get("RERUN_LIBRARY_ITEM_URL", "").strip()
+        _run_rerun(rerun_run_id, rerun_target_id, rerun_mode=rerun_mode, rerun_library_item_url=rerun_library_item_url)
         return
 
     from datetime import datetime, timezone

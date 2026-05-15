@@ -247,7 +247,7 @@ resource "aws_iam_role_policy" "task" {
         Sid      = "DynamoDBChatConfig"
         Effect   = "Allow"
         Action   = ["dynamodb:GetItem"]
-        Resource = "arn:aws:dynamodb:us-east-1:815039343351:table/chatkit_production_config"
+        Resource = aws_dynamodb_table.chatkit_config.arn
       },
       {
         Sid      = "S3ReadArtifacts"

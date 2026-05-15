@@ -152,9 +152,9 @@ New flat schema — all top-level, no nested arrays for event/library/agenda ite
 | `event_url` | string | "N/A" if none |
 | `event_call_in_number_access_code` | string | "N/A" if none |
 | `agenda_item_title_and_chronicle_topics` | `[{status, agenda_item_title, chronicle_topics[]}]` | Array (minItems 1) |
-| `agenda_item_title_official` | `{status, title_official}` | Object |
-| `agenda_item_standardized_id` | `{status, standardized_id}` | Object |
-| `agenda_item_official_id` | `{status, official_id}` | Object |
+| `agenda_item_title_official` | `[{status, official_title}]` | Array (minItems 1) |
+| `agenda_item_standardized_id` | `[{status, standardized_id}]` | Array (minItems 1) |
+| `agenda_item_official_id` | `[{status, official_id}]` | Array (minItems 1) |
 | `library_item_preliminary_title` | `{status, title}` | Object; status in New/Updated/Existing/N/A |
 | `library_item_url` | string | URL or "N/A" |
 | `library_items_file_name` | string | Filename or "N/A" |
