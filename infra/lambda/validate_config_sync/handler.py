@@ -224,11 +224,20 @@ def handler(event, context):
 
         corrections = []
 
-        # Extract current state
+        # Extract current state.
+        # _previous_required_keys and field_key_aliases are Lambda-managed fields
+        # that Bubble's PutItem wipes on every sync. Fall back to old_image so
+        # rename detection survives Bubble overwrites.
         required_keys = _extract_required_keys(new_image)
         labels = _extract_labels(new_image)
-        prev_keys = _extract_str_list(new_image, "_previous_required_keys")
-        aliases = _extract_str_map(new_image, "field_key_aliases")
+        prev_keys = (
+            _extract_str_list(new_image, "_previous_required_keys")
+            or _extract_str_list(old_image, "_previous_required_keys")
+        )
+        aliases = (
+            _extract_str_map(new_image, "field_key_aliases")
+            or _extract_str_map(old_image, "field_key_aliases")
+        )
 
         if not required_keys:
             log.info("No output_json_schema.required for %s — skipping", config_key)
