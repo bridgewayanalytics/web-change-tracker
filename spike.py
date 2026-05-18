@@ -1854,8 +1854,9 @@ def _build_bubble_payloads(
                 "tags": ev.get("tags", []),
             }
             agent_alerts = extract_page_change(before_html, after_html, target_context)
-            # Filter out "No Meaningful Change" alerts
-            agent_alerts = [a for a in agent_alerts if a.get("alert_type") != "No Meaningful Change"]
+            # Filter out "No Meaningful Change" alerts (handles both alert_type and Alert Type1 keys)
+            from bubble.page_change_agent import _is_no_meaningful_change
+            agent_alerts = [a for a in agent_alerts if not _is_no_meaningful_change(a)]
             if agent_alerts:
                 # Store the list of alert dicts for downstream storage
                 ev["__agent_output"] = agent_alerts
@@ -1869,9 +1870,13 @@ def _build_bubble_payloads(
                     ev["change"] = dict(ev["change"])
                     ev["change"]["by_type"] = merged
                 # Attach alert metadata for payload builders (from first alert)
-                for field in ("alert_type", "alert_title", "alert_description"):
-                    if first_alert.get(field):
-                        ev[f"__agent_{field}"] = first_alert[field]
+                # Check both snake_case and human-readable label field names
+                from bubble.page_change_agent import _get_alert_type
+                ev["__agent_alert_type"] = _get_alert_type(first_alert)
+                for snake, label in (("alert_title", "Alert Title"), ("alert_description", "Alert Description")):
+                    val = first_alert.get(snake) or first_alert.get(label) or ""
+                    if val:
+                        ev[f"__agent_{snake}"] = val
 
     # Run document agent for events where the alert type indicates new/updated materials
     from bubble.document_agent import should_run_for_alert, extract_document_data as _extract_doc
@@ -2107,16 +2112,20 @@ def render_email_report(
                 if len(agent_alerts) > 1:
                     lines.append(f"--- Alert {alert_idx + 1} of {len(agent_alerts)} ---")
 
-                def _val(key: str) -> str:
-                    v = agent_output.get(key)
-                    return str(v) if v is not None else "(none)"
+                def _val(key: str, *alt_keys: str) -> str:
+                    for k in (key,) + alt_keys:
+                        v = agent_output.get(k)
+                        if v is not None:
+                            return str(v)
+                    return "(none)"
 
-                lines.append(f"Alert Type:        {_val('alert_type')}")
-                lines.append(f"Alert Title:       {_val('alert_title')}")
-                lines.append(f"Alert Description: {_val('alert_description')}")
-                lines.append(f"Alert URL:         {_val('alert_url')}")
-                lines.append(f"Organization:      {_val('organization')}")
-                lines.append(f"Alert Date/Time:   {_val('alert_date_time')}")
+                from bubble.page_change_agent import _get_alert_type
+                lines.append(f"Alert Type:        {_get_alert_type(agent_output) or '(none)'}")
+                lines.append(f"Alert Title:       {_val('alert_title', 'Alert Title')}")
+                lines.append(f"Alert Description: {_val('alert_description', 'Alert Description')}")
+                lines.append(f"Alert URL:         {_val('alert_url', 'Alert URL')}")
+                lines.append(f"Organization:      {_val('organization', 'Organization')}")
+                lines.append(f"Alert Date/Time:   {_val('alert_date_time', 'Alert Date & Time (ET)')}")
                 lines.append("")
 
                 # Legacy nested schema fields
@@ -2545,7 +2554,8 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
     agent_alerts = extract_page_change(before_html, after_html, target_context)
     # Keep "No Meaningful Change" for docs mode (still need to identify library items from the
     # result); filter it only for alerts-only reruns where it would produce no rows.
-    agent_alerts_for_rows = [a for a in agent_alerts if a.get("alert_type") != "No Meaningful Change"]
+    from bubble.page_change_agent import _is_no_meaningful_change
+    agent_alerts_for_rows = [a for a in agent_alerts if not _is_no_meaningful_change(a)]
 
     if not agent_alerts_for_rows and rerun_mode == "alerts":
         log.warning("rerun: agent returned no meaningful output — writing empty result")

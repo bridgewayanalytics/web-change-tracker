@@ -293,6 +293,49 @@ def _load_org_tree() -> str:
         return ""
 
 
+_ALERT_TYPE_PROP_NAMES = frozenset({"alert_type", "Alert Type1", "Alert Type"})
+
+_NMC_VALUE = "No Meaningful Change"
+
+
+def _ensure_no_meaningful_change_in_enum(schema: dict) -> dict:
+    """Walk the schema and add 'No Meaningful Change' to the alert-type enum if absent.
+
+    Bubble never writes this value; adding it at runtime lets the agent signal
+    a no-change result so the storage filter can drop the row.
+    """
+    def _patch(node: dict) -> dict:
+        if not isinstance(node, dict):
+            return node
+        if node.get("type") == "object" and "properties" in node:
+            patched_props = {}
+            for name, prop in node["properties"].items():
+                if isinstance(prop, dict) and name in _ALERT_TYPE_PROP_NAMES:
+                    enum = prop.get("enum")
+                    if isinstance(enum, list) and _NMC_VALUE not in enum:
+                        prop = {**prop, "enum": list(enum) + [_NMC_VALUE]}
+                patched_props[name] = _patch(prop) if isinstance(prop, dict) else prop
+            node = {**node, "properties": patched_props}
+        if "items" in node and isinstance(node["items"], dict):
+            node = {**node, "items": _patch(node["items"])}
+        return node
+
+    return _patch(schema)
+
+
+def _get_alert_type(alert: dict) -> str:
+    """Return the alert type value regardless of whether the schema uses snake_case or label names."""
+    for name in _ALERT_TYPE_PROP_NAMES:
+        v = alert.get(name)
+        if v:
+            return v
+    return ""
+
+
+def _is_no_meaningful_change(alert: dict) -> bool:
+    return _get_alert_type(alert) == _NMC_VALUE
+
+
 def _get_output_json_schema() -> dict | None:
     """Return the structured output schema from DynamoDB, sanitized for OpenAI, or None if not set."""
     cfg = _load_dynamo_config()
@@ -300,7 +343,8 @@ def _get_output_json_schema() -> dict | None:
     if not isinstance(schema, dict):
         return None
     schema = _ensure_alerts_wrapper(schema)
-    return _sanitize_schema_for_openai(schema)
+    schema = _sanitize_schema_for_openai(schema)
+    return _ensure_no_meaningful_change_in_enum(schema)
 
 
 def _get_output_json_schema_name() -> str:
@@ -418,7 +462,6 @@ def _unwrap_alerts(result: dict) -> list[dict]:
     """
     If the agent output has a top-level ``alerts`` array, return that list.
     Otherwise wrap the single dict in a one-element list.
-    Filters out "No Meaningful Change" entries.
     """
     alerts = result.get("alerts")
     if isinstance(alerts, list) and alerts:
@@ -483,9 +526,10 @@ def extract_page_change(
             f"=== AFTER (current version) ===\n{after_html}\n\n"
             f"Return your analysis as a JSON object matching exactly this schema:\n"
             f"{output_schema}\n"
-            "alert_type must be one of: 'New Agenda', 'New Materials', 'New Agenda & Materials', "
-            "'Updated Agenda', 'Updated Materials', 'Updated Agenda & Materials', 'New Meeting', "
-            "'Updated Meeting', 'New Request for Comment', 'Updated Request for Comment', "
+            "The alert type field must be one of: 'New Agenda', 'New Materials', "
+            "'New Agenda & Materials', 'Updated Agenda', 'Updated Materials', "
+            "'Updated Agenda & Materials', 'New Meeting', 'Updated Meeting', "
+            "'New Request for Comment', 'Updated Request for Comment', "
             "'New Effective Date', 'Updated Effective Date', "
             "'New or Updated Report or Other Resource', "
             "'Alert not relevant - the change was limited to carrousel or reordering of content', "

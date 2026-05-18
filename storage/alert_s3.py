@@ -284,8 +284,9 @@ def store_run_alerts(
         else:
             agent_alerts = raw_output
 
-        # Filter out "No Meaningful Change" alerts
-        agent_alerts = [a for a in agent_alerts if a.get("alert_type") != "No Meaningful Change"]
+        # Filter out "No Meaningful Change" alerts (handles both alert_type and Alert Type1 keys)
+        from bubble.page_change_agent import _is_no_meaningful_change
+        agent_alerts = [a for a in agent_alerts if not _is_no_meaningful_change(a)]
         if not agent_alerts:
             continue
 
@@ -313,18 +314,19 @@ def store_run_alerts(
 
         # Structured alert rows (alerts.json) — one per alert
         for agent_output in agent_alerts:
+            from bubble.page_change_agent import _get_alert_type
             row: dict = {
                 "run_id": run_id,
                 "run_timestamp": run_timestamp_iso,
                 "target_id": target_id,
                 "source_url": source_url,
                 "agent_call_id": agent_call_id,
-                "alert_type": agent_output.get("alert_type") or "",
-                "alert_title": agent_output.get("alert_title") or "",
-                "alert_description": agent_output.get("alert_description") or "",
-                "alert_url": agent_output.get("alert_url"),
-                "organization": agent_output.get("organization"),
-                "alert_date_time": agent_output.get("alert_date_time"),
+                "alert_type": _get_alert_type(agent_output),
+                "alert_title": agent_output.get("alert_title") or agent_output.get("Alert Title") or "",
+                "alert_description": agent_output.get("alert_description") or agent_output.get("Alert Description") or "",
+                "alert_url": agent_output.get("alert_url") or agent_output.get("Alert URL"),
+                "organization": agent_output.get("organization") or agent_output.get("Organization"),
+                "alert_date_time": agent_output.get("alert_date_time") or agent_output.get("Alert Date & Time (ET)"),
                 "events": agent_output.get("events") or [],
                 "library_items": agent_output.get("library_items") or [],
                 "agenda_items": agent_output.get("agenda_items") or [],
