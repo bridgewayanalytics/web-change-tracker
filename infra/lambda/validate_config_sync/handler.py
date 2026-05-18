@@ -77,6 +77,25 @@ def _ser_str_map(m):
     return {"M": {k: {"S": v} for k, v in m.items()}}
 
 
+def _ser_val(val):
+    """Recursively serialize a plain Python value to DynamoDB typed form."""
+    if val is None:
+        return {"NULL": True}
+    if isinstance(val, bool):
+        return {"BOOL": val}
+    if isinstance(val, int):
+        return {"N": str(val)}
+    if isinstance(val, float):
+        return {"N": str(val)}
+    if isinstance(val, str):
+        return {"S": val}
+    if isinstance(val, list):
+        return {"L": [_ser_val(v) for v in val]}
+    if isinstance(val, dict):
+        return {"M": {k: _ser_val(v) for k, v in val.items()}}
+    return {"S": str(val)}
+
+
 # ---------------------------------------------------------------------------
 # Extraction helpers
 # ---------------------------------------------------------------------------
@@ -90,6 +109,15 @@ def _extract_required_keys(image):
     if not isinstance(schema, dict):
         return []
     return schema.get("required", [])
+
+
+def _extract_full_schema(image):
+    """Deserialize and return the full output_json_schema dict, or None."""
+    raw = image.get("output_json_schema")
+    if not raw:
+        return None
+    schema = _deser(raw)
+    return schema if isinstance(schema, dict) else None
 
 
 def _extract_labels(image):
@@ -165,6 +193,56 @@ def _fix_label_count(labels, required_keys):
             labels.append(label)
 
     return labels
+
+
+def _remove_garbage_schema_keys(schema):
+    """Remove garbage property keys from a JSON Schema object (and its required array).
+
+    ChatKit's label-extraction regex can pick up instruction text (e.g.
+    'If the organization is not in org_tree.txt...') as a fake field name.
+    GPT-4.1 then creates a schema property for it.  This function removes
+    those properties from the schema in-place, keeping the schema valid.
+
+    Works on both flat schemas and schemas wrapped in an alerts array.
+    Returns (cleaned_schema, list_of_removed_keys).
+    """
+    def _clean_object_schema(obj):
+        if not isinstance(obj, dict) or obj.get("type") != "object":
+            return obj, []
+        properties = obj.get("properties", {})
+        required = obj.get("required", [])
+        removed = []
+        clean_props = {}
+        for key, val in properties.items():
+            # Convert snake_case key to spaced form for garbage detection
+            readable = key.replace("_", " ")
+            if _is_garbage_label(readable) or _is_garbage_label(key):
+                removed.append(key)
+            else:
+                clean_props[key] = val
+        if not removed:
+            return obj, []
+        clean_required = [k for k in required if k not in removed]
+        cleaned = {**obj, "properties": clean_props, "required": clean_required}
+        return cleaned, removed
+
+    if not isinstance(schema, dict):
+        return schema, []
+
+    # Handle alerts-array wrapper
+    props = schema.get("properties", {})
+    if "alerts" in props:
+        alerts_prop = props["alerts"]
+        items = alerts_prop.get("items") if isinstance(alerts_prop, dict) else None
+        if isinstance(items, dict):
+            cleaned_items, removed = _clean_object_schema(items)
+            if removed:
+                new_alerts = {**alerts_prop, "items": cleaned_items}
+                return {**schema, "properties": {**props, "alerts": new_alerts}}, removed
+        return schema, []
+
+    # Flat schema
+    return _clean_object_schema(schema)
 
 
 def _detect_renames(prev_keys, current_keys, existing_aliases):
@@ -243,6 +321,22 @@ def handler(event, context):
             log.info("No output_json_schema.required for %s — skipping", config_key)
             continue
 
+        # 0. Remove garbage schema property keys (ChatKit may generate fake props
+        #    from instruction text via its label-extraction regex)
+        full_schema = _extract_full_schema(new_image)
+        cleaned_schema = None
+        if full_schema:
+            cleaned_schema, schema_garbage = _remove_garbage_schema_keys(full_schema)
+            if schema_garbage:
+                garbage_set = set(schema_garbage)
+                required_keys = [k for k in required_keys if k not in garbage_set]
+                corrections.append(
+                    f"Removed {len(schema_garbage)} garbage schema key(s): "
+                    + ", ".join(repr(k[:60]) for k in schema_garbage)
+                )
+            else:
+                cleaned_schema = None  # nothing changed, no write needed
+
         # 1. Remove garbage labels
         cleaned_labels, garbage = _remove_garbage_labels(labels)
         if garbage:
@@ -286,6 +380,12 @@ def handler(event, context):
             expr_parts.append("#aliases = :aliases")
             expr_names["#aliases"] = "field_key_aliases"
             expr_values[":aliases"] = _ser_str_map(aliases)
+
+            # Update schema if garbage properties were removed
+            if cleaned_schema is not None:
+                expr_parts.append("#schema = :schema")
+                expr_names["#schema"] = "output_json_schema"
+                expr_values[":schema"] = _ser_val(cleaned_schema)
 
         if keys_changed or rename_changes:
             # Update previous keys baseline
