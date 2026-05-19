@@ -59,7 +59,7 @@
 --- The International Association of Insurance Supervisors (IAIS)
 --- The International Auditing and Assurance Standards Board (IAASB)
 --- U.K. House of Lords
--- NAIC
+-- National Association of Insurance Commissioners
 --- Capital Markets & Investment Analysis Office (NAIC CM&IAO)
 ---- Capital Markets Bureau (NAIC CMB)
 ---- Center for Insurance Policy and Research (NAIC CIP&R)
