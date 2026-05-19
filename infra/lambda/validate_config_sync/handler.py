@@ -54,7 +54,9 @@ INITIAL_REGISTRIES = {
         "organization", "alert_datetime_et", "event_title",
         "event_start_datetime_et", "event_end_datetime_et", "event_duration",
         "event_is_full_day", "event_url", "event_call_in_number_and_access_code",
-        "agenda_items", "library_item_preliminary_title", "library_item_url",
+        "agenda_items",
+        "agenda_item_title_official", "agenda_item_standardized_id", "agenda_item_official_id",
+        "library_item_preliminary_title", "library_item_url",
         "library_items_file_name", "art_newsreel_relevance",
     ],
     "chat:document-data-extraction": [
@@ -298,36 +300,40 @@ def _update_column_registry(registry, new_labels, config_key):
     """
     Update registry by position using new_labels from output_requested_values.
     - Existing positions: keep stable ID, update label if changed.
-    - New positions: only allowed up to len(INITIAL_REGISTRIES[config_key]).
-      Never generates synthetic IDs — extra labels beyond the established column
-      count are silently ignored to prevent corruption from stale Bubble syncs.
+    - New positions: derive stable snake_case ID from label (frozen at creation).
+    - Removed positions: registry shrinks automatically.
     Returns (updated_registry, changed).
     """
     initial_ids = INITIAL_REGISTRIES.get(config_key, [])
-    # Cap: never grow registry beyond the established column count
-    max_cols = len(registry) if registry else len(initial_ids)
-    new_labels = new_labels[:max_cols]
-
     updated = []
     changed = False
+    existing_ids = {e["id"] for e in registry}
 
     for i, label in enumerate(new_labels):
         if i < len(registry):
+            # Existing column: keep stable ID, update label if changed
             entry = dict(registry[i])
             if entry.get("label") != label:
                 entry["label"] = label
                 changed = True
             updated.append(entry)
         else:
-            # Bootstrapping new column (registry shorter than initial_ids)
+            # New column: use hardcoded initial ID if available, else derive from label
             if i < len(initial_ids):
                 new_id = initial_ids[i]
-                updated.append({"id": new_id, "label": label})
-                changed = True
-            # else: silently ignore — max_cols cap above should prevent reaching here
+            else:
+                base_id = _label_to_id(label)
+                new_id = base_id
+                suffix = 1
+                while new_id in existing_ids:
+                    new_id = f"{base_id}_{suffix}"
+                    suffix += 1
+            existing_ids.add(new_id)
+            updated.append({"id": new_id, "label": label})
+            changed = True
 
     if len(registry) > len(new_labels):
-        changed = True  # columns were removed
+        changed = True  # columns were removed (updated is already shorter)
 
     return updated, changed
 
@@ -353,6 +359,19 @@ def _normalize_schema_with_registry(schema, registry):
         new_required = []
         new_props = {}
         changed = False
+
+        # Deduplicate required before positional processing — duplicates cause
+        # the positional fallback to assign wrong schemas to later registry fields
+        seen_keys = set()
+        deduped = []
+        for key in required:
+            if key not in seen_keys:
+                seen_keys.add(key)
+                deduped.append(key)
+        if len(deduped) < len(required):
+            changed = True
+        required = deduped
+
         for i, key in enumerate(required):
             stable = label_to_id.get(key) or (key if key in id_set else None)
             # Positional fallback: if key is unknown, use registry stable ID at same position
@@ -373,6 +392,15 @@ def _normalize_schema_with_registry(schema, registry):
             src_key = key if key in properties else stable if stable in properties else None
             if src_key:
                 new_props[stable] = properties[src_key]
+
+        # Ensure every registry field is present — add missing ones with string fallback
+        present = set(new_required)
+        for entry in registry:
+            if entry["id"] not in present:
+                new_required.append(entry["id"])
+                new_props[entry["id"]] = new_props.get(entry["id"]) or {"type": "string"}
+                changed = True
+
         if not changed:
             return obj, False
         return {**obj, "properties": new_props, "required": new_required}, True
@@ -424,6 +452,10 @@ def handler(event, context):
 
         # Extract current state
         required_keys = _extract_required_keys(new_image)
+        # Deduplicate required_keys immediately — duplicates from GPT-4.1 inflate the
+        # count, causing _fix_label_count to pad labels rather than trim them, which
+        # then causes _update_column_registry to append fake new columns.
+        required_keys = list(dict.fromkeys(required_keys))
         labels = _extract_labels(new_image)
         registry = (
             _extract_column_registry(new_image)
