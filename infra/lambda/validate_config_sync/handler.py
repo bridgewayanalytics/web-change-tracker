@@ -298,10 +298,16 @@ def _update_column_registry(registry, new_labels, config_key):
     """
     Update registry by position using new_labels from output_requested_values.
     - Existing positions: keep stable ID, update label if changed.
-    - New positions: generate ID from label (or use INITIAL_REGISTRIES if available).
+    - New positions: only allowed up to len(INITIAL_REGISTRIES[config_key]).
+      Never generates synthetic IDs — extra labels beyond the established column
+      count are silently ignored to prevent corruption from stale Bubble syncs.
     Returns (updated_registry, changed).
     """
     initial_ids = INITIAL_REGISTRIES.get(config_key, [])
+    # Cap: never grow registry beyond the established column count
+    max_cols = len(registry) if registry else len(initial_ids)
+    new_labels = new_labels[:max_cols]
+
     updated = []
     changed = False
 
@@ -313,20 +319,12 @@ def _update_column_registry(registry, new_labels, config_key):
                 changed = True
             updated.append(entry)
         else:
-            # New column: use initial registry if available, else derive from label
+            # Bootstrapping new column (registry shorter than initial_ids)
             if i < len(initial_ids):
                 new_id = initial_ids[i]
-            else:
-                new_id = _label_to_id(label)
-                # Ensure uniqueness
-                existing = {e["id"] for e in updated}
-                base = new_id
-                suffix = 2
-                while new_id in existing:
-                    new_id = f"{base}_{suffix}"
-                    suffix += 1
-            updated.append({"id": new_id, "label": label})
-            changed = True
+                updated.append({"id": new_id, "label": label})
+                changed = True
+            # else: silently ignore — max_cols cap above should prevent reaching here
 
     if len(registry) > len(new_labels):
         changed = True  # columns were removed
@@ -368,7 +366,9 @@ def _normalize_schema_with_registry(schema, registry):
             if stable and stable != key:
                 changed = True
             elif not stable:
-                stable = key
+                # Key not in registry at all — drop it to prevent schema bloat
+                changed = True
+                continue
             new_required.append(stable)
             src_key = key if key in properties else stable if stable in properties else None
             if src_key:
