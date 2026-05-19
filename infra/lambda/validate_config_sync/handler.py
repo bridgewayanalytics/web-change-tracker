@@ -54,10 +54,8 @@ INITIAL_REGISTRIES = {
         "organization", "alert_datetime_et", "event_title",
         "event_start_datetime_et", "event_end_datetime_et", "event_duration",
         "event_is_full_day", "event_url", "event_call_in_number_and_access_code",
-        "agenda_item_title_and_chronicle_topics", "agenda_item_title_official",
-        "agenda_item_standardized_id", "agenda_item_official_id",
-        "library_item_preliminary_title", "library_item_url",
-        "library_items_file_name", "is_alert_relevant_for_art_newsreel",
+        "agenda_items", "library_item_preliminary_title", "library_item_url",
+        "library_items_file_name", "art_newsreel_relevance",
     ],
     "chat:document-data-extraction": [
         "number", "data_extraction_datetime", "document_description",
@@ -357,14 +355,21 @@ def _normalize_schema_with_registry(schema, registry):
         new_required = []
         new_props = {}
         changed = False
-        for key in required:
+        for i, key in enumerate(required):
             stable = label_to_id.get(key) or (key if key in id_set else None)
+            # Positional fallback: if key is unknown, use registry stable ID at same position
+            if not stable and i < len(registry):
+                pos_id = registry[i]["id"]
+                if pos_id != key:
+                    stable = pos_id
+                    changed = True
+                else:
+                    stable = key
             if stable and stable != key:
                 changed = True
             elif not stable:
-                stable = key  # unknown key, keep as-is
+                stable = key
             new_required.append(stable)
-            # Move property definition under stable ID
             src_key = key if key in properties else stable if stable in properties else None
             if src_key:
                 new_props[stable] = properties[src_key]
