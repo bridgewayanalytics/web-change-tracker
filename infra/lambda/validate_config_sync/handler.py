@@ -4,7 +4,9 @@ DynamoDB Streams Lambda: auto-validate Bubble syncs to chatkit_production_config
 Triggered on every write to the config table. Detects and corrects:
 1. Label count mismatches (output_requested_values vs output_json_schema.required)
 2. Garbage labels (instruction text leaked into column headers)
-3. Field key renames (updates field_key_aliases + _previous_required_keys)
+3. Garbage schema property keys (ChatKit generates fake props from instruction text)
+4. Column registry (stable snake_case IDs, immutable across renames)
+5. Schema normalization (rewrites output_json_schema property keys to stable IDs)
 
 Writes corrections back in-place. Uses _last_validated_at timestamp to prevent
 infinite trigger loops (Lambda's own correction write re-triggers the stream).
@@ -12,6 +14,7 @@ infinite trigger loops (Lambda's own correction write re-triggers the stream).
 
 import json
 import logging
+import re
 import time
 from datetime import datetime, timezone
 
@@ -42,6 +45,29 @@ GARBAGE_PHRASES = [
     "provide the",
     "vector store",
 ]
+
+# Initial stable snake_case IDs for each config, ordered by column position.
+# Used to bootstrap _column_registry on first sync.
+INITIAL_REGISTRIES = {
+    "chat:web-tracking-agent": [
+        "alert_type", "alert_title", "alert_description", "alert_url",
+        "organization", "alert_datetime_et", "event_title",
+        "event_start_datetime_et", "event_end_datetime_et", "event_duration",
+        "event_is_full_day", "event_url", "event_call_in_number_and_access_code",
+        "agenda_item_title_and_chronicle_topics", "agenda_item_title_official",
+        "agenda_item_standardized_id", "agenda_item_official_id",
+        "library_item_preliminary_title", "library_item_url",
+        "library_items_file_name", "is_alert_relevant_for_art_newsreel",
+    ],
+    "chat:document-data-extraction": [
+        "number", "data_extraction_datetime", "document_description",
+        "organization_or_publisher", "agenda_items", "agenda_items_official",
+        "agenda_items_standardized_id", "agenda_items_official_id",
+        "existing_or_new_agenda_item", "date_published",
+        "meeting_or_last_comment_date", "document_type", "document_title",
+        "existing_updated_or_new_document", "newsreel_relevance",
+    ],
+}
 
 dynamo = boto3.client("dynamodb")
 
@@ -96,6 +122,11 @@ def _ser_val(val):
     return {"S": str(val)}
 
 
+def _ser_registry(registry):
+    """Serialize registry list of {id, label} dicts to DynamoDB L type."""
+    return {"L": [{"M": {"id": {"S": e["id"]}, "label": {"S": e.get("label", "")}}} for e in registry]}
+
+
 # ---------------------------------------------------------------------------
 # Extraction helpers
 # ---------------------------------------------------------------------------
@@ -145,6 +176,17 @@ def _extract_str_map(image, field):
         return {}
     result = _deser(raw)
     return result if isinstance(result, dict) else {}
+
+
+def _extract_column_registry(image):
+    """Extract _column_registry as list of {id, label} dicts."""
+    raw = image.get("_column_registry")
+    if not raw:
+        return []
+    result = _deser(raw)
+    if not isinstance(result, list):
+        return []
+    return [r for r in result if isinstance(r, dict) and "id" in r]
 
 
 # ---------------------------------------------------------------------------
@@ -245,31 +287,104 @@ def _remove_garbage_schema_keys(schema):
     return _clean_object_schema(schema)
 
 
-def _detect_renames(prev_keys, current_keys, existing_aliases):
-    """Detect positional key renames and update aliases.
+def _label_to_id(label):
+    """Normalize a human-readable label to a stable snake_case ID."""
+    s = label.lower()
+    s = re.sub(r'[^a-z0-9\s]', ' ', s)
+    s = re.sub(r'\s+', '_', s.strip())
+    s = re.sub(r'_+', '_', s)
+    return s.strip('_') or 'field'
 
-    Returns (updated_aliases, list_of_changes).
-    Same logic as /api/schema detectAndStoreAliases.
+
+def _update_column_registry(registry, new_labels, config_key):
     """
-    aliases = dict(existing_aliases)
-    changes = []
+    Update registry by position using new_labels from output_requested_values.
+    - Existing positions: keep stable ID, update label if changed.
+    - New positions: generate ID from label (or use INITIAL_REGISTRIES if available).
+    Returns (updated_registry, changed).
+    """
+    initial_ids = INITIAL_REGISTRIES.get(config_key, [])
+    updated = []
+    changed = False
 
-    if not prev_keys:
-        return aliases, changes
+    for i, label in enumerate(new_labels):
+        if i < len(registry):
+            entry = dict(registry[i])
+            if entry.get("label") != label:
+                entry["label"] = label
+                changed = True
+            updated.append(entry)
+        else:
+            # New column: use initial registry if available, else derive from label
+            if i < len(initial_ids):
+                new_id = initial_ids[i]
+            else:
+                new_id = _label_to_id(label)
+                # Ensure uniqueness
+                existing = {e["id"] for e in updated}
+                base = new_id
+                suffix = 2
+                while new_id in existing:
+                    new_id = f"{base}_{suffix}"
+                    suffix += 1
+            updated.append({"id": new_id, "label": label})
+            changed = True
 
-    length = min(len(prev_keys), len(current_keys))
-    for i in range(length):
-        if prev_keys[i] != current_keys[i]:
-            old_key = prev_keys[i]
-            new_key = current_keys[i]
-            # Chain to ultimate original
-            ultimate = aliases.get(old_key, old_key)
-            aliases[new_key] = ultimate
-            # Remove old entry if it existed
-            aliases.pop(old_key, None)
-            changes.append(f"{old_key} -> {new_key}")
+    if len(registry) > len(new_labels):
+        changed = True  # columns were removed
 
-    return aliases, changes
+    return updated, changed
+
+
+def _normalize_schema_with_registry(schema, registry):
+    """
+    Rewrite output_json_schema using stable IDs from registry as property keys,
+    replacing Bubble's human-readable label-as-key names.
+    Works on both flat schemas and schemas wrapped in an alerts array.
+    Returns normalized schema dict (or original if no change needed).
+    """
+    if not isinstance(schema, dict) or not registry:
+        return schema
+
+    label_to_id = {e["label"]: e["id"] for e in registry}
+    id_set = {e["id"] for e in registry}
+
+    def _normalize_object(obj):
+        if not isinstance(obj, dict) or obj.get("type") != "object":
+            return obj, False
+        properties = obj.get("properties", {})
+        required = obj.get("required", [])
+        new_required = []
+        new_props = {}
+        changed = False
+        for key in required:
+            stable = label_to_id.get(key) or (key if key in id_set else None)
+            if stable and stable != key:
+                changed = True
+            elif not stable:
+                stable = key  # unknown key, keep as-is
+            new_required.append(stable)
+            # Move property definition under stable ID
+            src_key = key if key in properties else stable if stable in properties else None
+            if src_key:
+                new_props[stable] = properties[src_key]
+        if not changed:
+            return obj, False
+        return {**obj, "properties": new_props, "required": new_required}, True
+
+    # Handle alerts array wrapper
+    props = schema.get("properties", {})
+    if "alerts" in props:
+        alerts_prop = props["alerts"]
+        if isinstance(alerts_prop, dict) and isinstance(alerts_prop.get("items"), dict):
+            new_items, changed = _normalize_object(alerts_prop["items"])
+            if changed:
+                return {**schema, "properties": {**props, "alerts": {**alerts_prop, "items": new_items}}}
+        return schema
+
+    # Flat schema
+    new_schema, changed = _normalize_object(schema)
+    return new_schema if changed else schema
 
 
 # ---------------------------------------------------------------------------
@@ -302,40 +417,31 @@ def handler(event, context):
 
         corrections = []
 
-        # Extract current state.
-        # _previous_required_keys and field_key_aliases are Lambda-managed fields
-        # that Bubble's PutItem wipes on every sync. Fall back to old_image so
-        # rename detection survives Bubble overwrites.
+        # Extract current state
         required_keys = _extract_required_keys(new_image)
         labels = _extract_labels(new_image)
-        prev_keys = (
-            _extract_str_list(new_image, "_previous_required_keys")
-            or _extract_str_list(old_image, "_previous_required_keys")
-        )
-        aliases = (
-            _extract_str_map(new_image, "field_key_aliases")
-            or _extract_str_map(old_image, "field_key_aliases")
+        registry = (
+            _extract_column_registry(new_image)
+            or _extract_column_registry(old_image)
         )
 
         if not required_keys:
             log.info("No output_json_schema.required for %s — skipping", config_key)
             continue
 
-        # 0. Remove garbage schema property keys (ChatKit may generate fake props
-        #    from instruction text via its label-extraction regex)
+        # 0. Remove garbage schema property keys
         full_schema = _extract_full_schema(new_image)
         cleaned_schema = None
         if full_schema:
-            cleaned_schema, schema_garbage = _remove_garbage_schema_keys(full_schema)
+            schema_candidate, schema_garbage = _remove_garbage_schema_keys(full_schema)
             if schema_garbage:
                 garbage_set = set(schema_garbage)
                 required_keys = [k for k in required_keys if k not in garbage_set]
+                full_schema = schema_candidate
                 corrections.append(
                     f"Removed {len(schema_garbage)} garbage schema key(s): "
                     + ", ".join(repr(k[:60]) for k in schema_garbage)
                 )
-            else:
-                cleaned_schema = None  # nothing changed, no write needed
 
         # 1. Remove garbage labels
         cleaned_labels, garbage = _remove_garbage_labels(labels)
@@ -352,14 +458,21 @@ def handler(event, context):
             labels = _fix_label_count(labels, required_keys)
             corrections.append(f"Fixed label count: {old_count} -> {len(required_keys)}")
 
-        # 3. Detect key renames
-        new_aliases, rename_changes = _detect_renames(prev_keys, required_keys, aliases)
-        if rename_changes:
-            aliases = new_aliases
-            corrections.append(f"Detected renames: {', '.join(rename_changes)}")
+        # 3. Update column registry (stable IDs)
+        updated_registry, registry_changed = _update_column_registry(registry, labels, config_key)
+        if registry_changed:
+            registry = updated_registry
+            corrections.append(f"Updated column registry ({len(registry)} columns)")
 
-        # Always update _previous_required_keys if they changed
-        keys_changed = prev_keys != required_keys
+        # 4. Normalize output_json_schema to use stable IDs
+        if full_schema and registry:
+            normalized = _normalize_schema_with_registry(full_schema, registry)
+            if normalized is not full_schema:
+                cleaned_schema = normalized
+                corrections.append("Normalized schema to use stable column IDs")
+
+        # Always update registry if it changed
+        keys_changed = registry_changed
 
         if not corrections and not keys_changed:
             log.info("No corrections needed for %s", config_key)
@@ -376,27 +489,25 @@ def handler(event, context):
             expr_names["#labels"] = "output_requested_values"
             expr_values[":labels"] = _ser_str_list(labels)
 
-            # Update aliases
-            expr_parts.append("#aliases = :aliases")
-            expr_names["#aliases"] = "field_key_aliases"
-            expr_values[":aliases"] = _ser_str_map(aliases)
-
-            # Update schema if garbage properties were removed
+            # Update schema if changed (garbage removal or normalization)
             if cleaned_schema is not None:
                 expr_parts.append("#schema = :schema")
                 expr_names["#schema"] = "output_json_schema"
                 expr_values[":schema"] = _ser_val(cleaned_schema)
 
-        if keys_changed or rename_changes:
-            # Update previous keys baseline
-            expr_parts.append("#prev = :prev")
-            expr_names["#prev"] = "_previous_required_keys"
-            expr_values[":prev"] = _ser_str_list(required_keys)
+        # Always write registry if changed
+        if keys_changed or corrections:
+            expr_parts.append("#registry = :registry")
+            expr_names["#registry"] = "_column_registry"
+            expr_values[":registry"] = _ser_registry(registry)
 
         # Debounce timestamp
         expr_parts.append("#validated = :validated")
         expr_names["#validated"] = "_last_validated_at"
         expr_values[":validated"] = {"S": datetime.now(timezone.utc).isoformat()}
+
+        if not expr_parts:
+            continue
 
         update_expr = "SET " + ", ".join(expr_parts)
 
@@ -410,7 +521,5 @@ def handler(event, context):
             )
             if corrections:
                 log.info("Corrected %s: %s", config_key, "; ".join(corrections))
-            if keys_changed and not rename_changes:
-                log.info("Updated _previous_required_keys baseline for %s (%d keys)", config_key, len(required_keys))
         except Exception:
             log.exception("Failed to write corrections for %s", config_key)
