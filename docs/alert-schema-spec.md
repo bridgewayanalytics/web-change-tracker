@@ -111,7 +111,7 @@ for each Agenda Item"* — you need to know which topics belong to which item.
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "status":             { "type": "string", "enum": ["New", "Existing"] },
+      "status":             { "type": "string", "enum": ["New", "Existing", "N/A"] },
       "agenda_item_title":  { "type": "string" },
       "chronicle_topics":   { "type": "array", "items": { "type": "string" } }
     },
