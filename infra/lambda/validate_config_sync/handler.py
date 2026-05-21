@@ -343,22 +343,26 @@ def _normalize_schema_with_registry(schema, registry):
     Rewrite output_json_schema using stable IDs from registry as property keys,
     replacing Bubble's human-readable label-as-key names.
     Works on both flat schemas and schemas wrapped in an alerts array.
-    Returns normalized schema dict (or original if no change needed).
+    Returns (normalized_schema, detected_renames) where detected_renames is a
+    dict mapping unstable_key -> stable_id for any keys that were remapped.
+    The caller should invert this to {stable_id: unstable_key} before writing to
+    _field_aliases, so the dashboard can resolve old rows stored under the unstable key.
     """
     if not isinstance(schema, dict) or not registry:
-        return schema
+        return schema, {}
 
     label_to_id = {e["label"]: e["id"] for e in registry}
     id_set = {e["id"] for e in registry}
 
     def _normalize_object(obj):
         if not isinstance(obj, dict) or obj.get("type") != "object":
-            return obj, False
+            return obj, False, {}
         properties = obj.get("properties", {})
         required = obj.get("required", [])
         new_required = []
         new_props = {}
         changed = False
+        detected = {}  # unstable_key -> stable_id
 
         # Deduplicate required before positional processing — duplicates cause
         # the positional fallback to assign wrong schemas to later registry fields
@@ -384,6 +388,7 @@ def _normalize_schema_with_registry(schema, registry):
                     stable = key
             if stable and stable != key:
                 changed = True
+                detected[key] = stable  # record: old_key -> stable_id
             elif not stable:
                 # Key not in registry at all — drop it to prevent schema bloat
                 changed = True
@@ -402,22 +407,22 @@ def _normalize_schema_with_registry(schema, registry):
                 changed = True
 
         if not changed:
-            return obj, False
-        return {**obj, "properties": new_props, "required": new_required}, True
+            return obj, False, {}
+        return {**obj, "properties": new_props, "required": new_required}, True, detected
 
     # Handle alerts array wrapper
     props = schema.get("properties", {})
     if "alerts" in props:
         alerts_prop = props["alerts"]
         if isinstance(alerts_prop, dict) and isinstance(alerts_prop.get("items"), dict):
-            new_items, changed = _normalize_object(alerts_prop["items"])
+            new_items, changed, detected = _normalize_object(alerts_prop["items"])
             if changed:
-                return {**schema, "properties": {**props, "alerts": {**alerts_prop, "items": new_items}}}
-        return schema
+                return {**schema, "properties": {**props, "alerts": {**alerts_prop, "items": new_items}}}, detected
+        return schema, {}
 
     # Flat schema
-    new_schema, changed = _normalize_object(schema)
-    return new_schema if changed else schema
+    new_schema, changed, detected = _normalize_object(schema)
+    return (new_schema if changed else schema), detected
 
 
 # ---------------------------------------------------------------------------
@@ -449,6 +454,9 @@ def handler(event, context):
                 pass
 
         corrections = []
+
+        # Load existing _field_aliases (stable_id -> old_key, for dashboard resolveCell)
+        field_aliases = _extract_str_map(new_image, "_field_aliases")
 
         # Extract current state
         required_keys = _extract_required_keys(new_image)
@@ -503,10 +511,21 @@ def handler(event, context):
 
         # 4. Normalize output_json_schema to use stable IDs
         if full_schema and registry:
-            normalized = _normalize_schema_with_registry(full_schema, registry)
+            normalized, detected_renames = _normalize_schema_with_registry(full_schema, registry)
             if normalized is not full_schema:
                 cleaned_schema = normalized
                 corrections.append("Normalized schema to use stable column IDs")
+            if detected_renames:
+                # Invert to {stable_id: old_key} so dashboard resolveCell can walk backward
+                new_aliases = {stable: old for old, stable in detected_renames.items()}
+                # Merge with existing (don't overwrite chains already recorded)
+                merged = {**new_aliases, **field_aliases}  # existing takes priority for stable chains
+                if merged != field_aliases:
+                    field_aliases = merged
+                    corrections.append(
+                        f"Recorded {len(detected_renames)} field alias(es): "
+                        + ", ".join(f"{old}->{stable}" for old, stable in detected_renames.items())
+                    )
 
         # Always update registry if it changed
         keys_changed = registry_changed
@@ -537,6 +556,12 @@ def handler(event, context):
             expr_parts.append("#registry = :registry")
             expr_names["#registry"] = "_column_registry"
             expr_values[":registry"] = _ser_registry(registry)
+
+        # Write field aliases if we have any (dashboard uses these for zero-code renames)
+        if field_aliases:
+            expr_parts.append("#aliases = :aliases")
+            expr_names["#aliases"] = "_field_aliases"
+            expr_values[":aliases"] = _ser_str_map(field_aliases)
 
         # Debounce timestamp
         expr_parts.append("#validated = :validated")
