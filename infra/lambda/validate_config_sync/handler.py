@@ -69,6 +69,108 @@ INITIAL_REGISTRIES = {
     ],
 }
 
+STRUCTURAL_SCHEMAS: dict = {
+    "organization": {
+        "type": "array",
+        "description": "Organization",
+        "items": {"type": "string"},
+    },
+    "agenda_item_title_chronicle_topics": {
+        "type": "array",
+        "description": "Agenda Item Title & Chronicle Topics",
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "status": {"type": "string", "enum": ["New", "Existing", "N/A"]},
+                "agenda_item_title": {"type": "string"},
+                "chronicle_topics": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["status", "agenda_item_title", "chronicle_topics"],
+        },
+    },
+    "agenda_item_title_official": {
+        "type": "array",
+        "description": "Agenda Item Title - Official",
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "status": {"type": "string", "enum": ["New", "Existing", "N/A"]},
+                "official_title": {"type": "string"},
+            },
+            "required": ["status", "official_title"],
+        },
+    },
+    "agenda_item_standardized_id": {
+        "type": "array",
+        "description": "Agenda Item - Standardized ID",
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "status": {"type": "string", "enum": ["New", "Existing", "N/A"]},
+                "standardized_id": {"type": "string"},
+            },
+            "required": ["status", "standardized_id"],
+        },
+    },
+    "agenda_item_official_id": {
+        "type": "array",
+        "description": "Agenda Item - Official ID",
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "status": {"type": "string", "enum": ["New", "Existing", "N/A"]},
+                "official_id": {"type": "string"},
+            },
+            "required": ["status", "official_id"],
+        },
+    },
+    "library_item_preliminary_title": {
+        "type": "object",
+        "description": "Library Item Preliminary Title",
+        "additionalProperties": False,
+        "properties": {
+            "status": {"type": "string", "enum": ["New", "Updated", "Existing", "Old", "N/A"]},
+            "title": {"type": "string"},
+        },
+        "required": ["status", "title"],
+    },
+    "is_the_alert_relevant_for_an_art_newsreel_article": {
+        "type": "object",
+        "description": "Is the Alert Relevant for an ART Newsreel article?",
+        "additionalProperties": False,
+        "properties": {
+            "status": {"type": "string", "enum": ["Yes", "No", "Additional review needed"]},
+            "details": {"type": "string"},
+        },
+        "required": ["status", "details"],
+    },
+    # document-data-extraction structural fields
+    "organization_or_publisher": {
+        "type": "object",
+        "description": "Organization or Publisher",
+        "additionalProperties": False,
+        "properties": {
+            "status": {"type": "string", "enum": ["Listed", "NEW ORGANIZATION"]},
+            "name": {"type": "string"},
+        },
+        "required": ["status", "name"],
+    },
+    "is_the_document_relevant_for_a_newsreel_article": {
+        "type": "object",
+        "description": "Is the document relevant for a Newsreel Article?",
+        "additionalProperties": False,
+        "properties": {
+            "status": {"type": "string", "enum": ["Yes", "No", "Additional review needed"]},
+            "explanation_or_reference": {"type": "string"},
+        },
+        "required": ["status", "explanation_or_reference"],
+    },
+}
+
 dynamo = boto3.client("dynamodb")
 
 
@@ -425,6 +527,58 @@ def _normalize_schema_with_registry(schema, registry):
     return (new_schema if changed else schema), detected
 
 
+def _enforce_field_types(schema):
+    """Enforce correct types on all fields after key normalization.
+
+    Structural fields are overwritten with STRUCTURAL_SCHEMAS definitions.
+    Everything else is forced to {"type": "string"} if it isn't already.
+    Works on both flat schemas and alerts-wrapped schemas.
+    Returns (corrected_schema, corrections_list).
+    """
+    def _enforce_on_object(obj):
+        if not isinstance(obj, dict) or obj.get("type") != "object":
+            return obj, []
+        props = dict(obj.get("properties", {}))
+        required = obj.get("required", [])
+        fixes = []
+        changed = False
+        for field_id in required:
+            correct = STRUCTURAL_SCHEMAS.get(field_id)
+            if correct is not None:
+                if props.get(field_id) != correct:
+                    props[field_id] = correct
+                    fixes.append(f"enforced structural type on {field_id}")
+                    changed = True
+            else:
+                current = props.get(field_id, {})
+                if current.get("type") != "string":
+                    props[field_id] = {
+                        "type": "string",
+                        "description": current.get("description", field_id),
+                    }
+                    fixes.append(f"forced string type on {field_id} (was {current.get('type', '?')})")
+                    changed = True
+        if not changed:
+            return obj, []
+        return {**obj, "properties": props}, fixes
+
+    if not isinstance(schema, dict):
+        return schema, []
+
+    # Handle alerts wrapper
+    s_props = schema.get("properties", {})
+    if "alerts" in s_props:
+        alerts_prop = s_props["alerts"]
+        if isinstance(alerts_prop, dict) and isinstance(alerts_prop.get("items"), dict):
+            new_items, fixes = _enforce_on_object(alerts_prop["items"])
+            if fixes:
+                new_alerts = {**alerts_prop, "items": new_items}
+                return {**schema, "properties": {**s_props, "alerts": new_alerts}}, fixes
+        return schema, []
+
+    return _enforce_on_object(schema)
+
+
 # ---------------------------------------------------------------------------
 # Handler
 # ---------------------------------------------------------------------------
@@ -526,6 +680,14 @@ def handler(event, context):
                         f"Recorded {len(detected_renames)} field alias(es): "
                         + ", ".join(f"{old}->{stable}" for old, stable in detected_renames.items())
                     )
+
+        # 5. Enforce correct field types
+        schema_to_check = cleaned_schema or full_schema
+        if schema_to_check:
+            type_enforced, type_fixes = _enforce_field_types(schema_to_check)
+            if type_fixes:
+                cleaned_schema = type_enforced
+                corrections.append("Type enforcement: " + "; ".join(type_fixes))
 
         # Always update registry if it changed
         keys_changed = registry_changed
