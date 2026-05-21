@@ -51,13 +51,13 @@ GARBAGE_PHRASES = [
 INITIAL_REGISTRIES = {
     "chat:web-tracking-agent": [
         "alert_type", "alert_title", "alert_description", "alert_url",
-        "organization", "alert_datetime_et", "event_title",
-        "event_start_datetime_et", "event_end_datetime_et", "event_duration",
-        "event_is_full_day", "event_url", "event_call_in_number_and_access_code",
-        "agenda_items",
+        "organization", "alert_date_time", "event_title",
+        "event_start_date_time", "event_end_date_time", "event_duration",
+        "event_is_full_day", "event_url", "event_call_in_number_access_code",
+        "agenda_item_title_chronicle_topics",
         "agenda_item_title_official", "agenda_item_standardized_id", "agenda_item_official_id",
         "library_item_preliminary_title", "library_item_url",
-        "library_items_file_name", "art_newsreel_relevance",
+        "library_items_file_name", "is_the_alert_relevant_for_an_art_newsreel_article",
     ],
     "chat:document-data-extraction": [
         "number", "data_extraction_datetime", "document_description",
