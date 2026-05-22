@@ -293,7 +293,7 @@ def _load_org_tree() -> str:
         return ""
 
 
-_ALERT_TYPE_PROP_NAMES = frozenset({"alert_type", "Alert Type1", "Alert Type"})
+_ALERT_TYPE_PROP_NAMES = frozenset({"alert_type", "Alert Type"})
 
 _NMC_VALUE = "No Meaningful Change"
 
@@ -558,7 +558,10 @@ def extract_page_change(
                                 "You are a JSON formatter. Format the web change analysis below "
                                 "into a JSON object that strictly matches the required schema. "
                                 "Use only the data provided — do not invent values. "
-                                "For fields not mentioned in the analysis, use \"N/A\"."
+                                "For string fields not mentioned in the analysis, use \"N/A\". "
+                                "For array fields, always include at least one entry — never output an empty array. "
+                                "If there are no applicable items for an array field, output exactly one entry "
+                                "where status is \"N/A\" and all other content fields are \"N/A\"."
                             ),
                         },
                         {"role": "user", "content": raw},
@@ -594,9 +597,47 @@ def extract_page_change(
             return []
 
         alerts = _unwrap_alerts(result)
-        # Stamp each alert with the agent_call_id
+
+        # Ground-truth contradiction check: find document URLs that are new in after_html.
+        # If new docs exist in the HTML, the agent cannot correctly classify as non-relevant.
+        # This fires even when step 2 faithfully echoed step 1's "not relevant" verdict and
+        # set all library fields to N/A — the HTML is authoritative.
+        _NOT_RELEVANT_TYPES = frozenset({
+            "Alert not relevant - the change was limited to carrousel or reordering of content",
+            "No Meaningful Change",
+        })
+        _doc_url_re = re.compile(
+            r'href=["\']([^"\']*\.(?:pdf|docx?|xlsx?|pptx?)[^"\']*)["\']', re.I
+        )
+        _before_doc_urls = set(_doc_url_re.findall(before_html or ""))
+        _after_doc_urls = set(_doc_url_re.findall(after_html or ""))
+        _new_doc_urls = _after_doc_urls - _before_doc_urls
+
         for alert in alerts:
             alert["agent_call_id"] = agent_call_id
+            alert_type = alert.get("alert_type", "")
+            if alert_type not in _NOT_RELEVANT_TYPES:
+                continue
+
+            lib = alert.get("library_item_preliminary_title")
+            lib_is_real = (
+                isinstance(lib, dict)
+                and lib.get("status") not in ("N/A", None, "")
+                and lib.get("title") not in ("N/A", None, "")
+            )
+
+            if lib_is_real or _new_doc_urls:
+                reason = (
+                    f"real library item '{lib.get('title', '')[:40]}'" if lib_is_real
+                    else f"{len(_new_doc_urls)} new doc URL(s) in HTML delta"
+                )
+                log.warning(
+                    "page_change_agent: contradictory output — %s but alert_type='%s'. "
+                    "Correcting to 'New or Updated Report or Other Resource' (call_id=%s).",
+                    reason, alert_type[:60], agent_call_id[:8],
+                )
+                alert["alert_type"] = "New or Updated Report or Other Resource"
+
         log.info("page_change_agent: produced %d alert(s) (call_id=%s)", len(alerts), agent_call_id[:8])
         return alerts
 

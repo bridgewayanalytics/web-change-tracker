@@ -29,6 +29,12 @@ WATCHED_KEYS = frozenset({
     "chat:document-data-extraction",
 })
 
+# These config keys require the output_json_schema to be wrapped in an alerts array.
+# If Bubble sync removes the wrapper, the Lambda re-adds it.
+REQUIRE_ALERTS_WRAPPER = frozenset({
+    "chat:web-tracking-agent",
+})
+
 # If we validated this row within this many seconds, skip (prevents loops)
 DEBOUNCE_SECONDS = 10
 
@@ -233,15 +239,49 @@ def _ser_registry(registry):
 # Extraction helpers
 # ---------------------------------------------------------------------------
 
+def _schema_inner(schema):
+    """Return the inner schema (drilling through alerts wrapper if present)."""
+    if not isinstance(schema, dict):
+        return schema
+    props = schema.get("properties", {})
+    if "alerts" in props:
+        alerts_prop = props.get("alerts", {})
+        if isinstance(alerts_prop, dict):
+            items = alerts_prop.get("items")
+            if isinstance(items, dict):
+                return items
+    return schema
+
+
 def _extract_required_keys(image):
-    """Extract the ordered required keys from output_json_schema."""
+    """Extract the ordered required keys from output_json_schema.
+
+    Drills through the alerts array wrapper if present, returning the
+    inner schema's required fields (not the top-level ["alerts"] key).
+    """
     raw = image.get("output_json_schema")
     if not raw:
         return []
     schema = _deser(raw)
     if not isinstance(schema, dict):
         return []
-    return schema.get("required", [])
+    return _schema_inner(schema).get("required", [])
+
+
+def _wrap_flat_schema_in_alerts(flat_schema):
+    """Wrap a flat schema in an alerts array wrapper for multi-alert support."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "alerts": {
+                "type": "array",
+                "description": "List of alerts detected in the page change",
+                "items": flat_schema,
+            }
+        },
+        "required": ["alerts"],
+    }
 
 
 def _extract_full_schema(image):
@@ -628,9 +668,22 @@ def handler(event, context):
             log.info("No output_json_schema.required for %s — skipping", config_key)
             continue
 
-        # 0. Remove garbage schema property keys
+        # 0a. Restore alerts array wrapper if Bubble sync removed it
         full_schema = _extract_full_schema(new_image)
         cleaned_schema = None
+        if full_schema and config_key in REQUIRE_ALERTS_WRAPPER:
+            props = full_schema.get("properties", {})
+            if "alerts" not in props:
+                # Bubble wrote a flat schema; re-wrap it
+                full_schema = _wrap_flat_schema_in_alerts(full_schema)
+                cleaned_schema = full_schema
+                # required_keys were already extracted from the flat schema (inner fields)
+                corrections.append(
+                    "Re-wrapped flat schema in alerts array — "
+                    "Bubble sync removed wrapper, multi-alert support restored"
+                )
+
+        # 0b. Remove garbage schema property keys
         if full_schema:
             schema_candidate, schema_garbage = _remove_garbage_schema_keys(full_schema)
             if schema_garbage:
