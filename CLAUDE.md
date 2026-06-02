@@ -42,7 +42,9 @@ Website change-tracking system that monitors configured NAIC web pages on a 6-ho
    - N/A guard: items where the library item name is `"N/A"`, `"N/A."`, `"-"`, or `""` are skipped via `_item_has_real_name()` (no extraction attempted)
    - A `## Output Format` JSON suffix is automatically appended to the DynamoDB `instructions` at runtime — do not add JSON format requirements to the DynamoDB config itself
 9. **Alert storage** (`alert_s3.py`) — writes `alerts_table.jsonl`, per-run `alerts.json`, `alerts_table.xlsx` to S3. Excel export serializes list/dict cell values to JSON strings before writing to openpyxl cells.
-10. **Notifier** (SES) — email summary of changes
+10. **Recording matcher** (`bubble/recording_matcher.py`) — after the document agent loop, matches meeting alerts to mp3 recordings in `recordings-bucket-1` S3 bucket. Stamps `recording_s3_key` on matching alerts.
+11. **Transcriber** (`bubble/transcriber.py`) — for alerts that got a `recording_s3_key`, converts the mp3 to a plain-text transcript via OpenAI Whisper and stores it in the artifacts bucket under `transcripts/`. Stamps `transcript_s3_key` on the alert. Idempotent.
+12. **Notifier** (SES) — email summary of changes
 
 ## Rerun mode
 
@@ -62,7 +64,7 @@ Full spec: `docs/rerun-feature.md`
 ## Key directories
 
 - `storage/` — State store (DynamoDB prod / `state.json` dev), S3 for HTML snapshots, alerts, changelogs
-- `bubble/` — RAG agents (`page_change_agent.py`, `document_agent.py`), legacy Bubble.io integration, pgvector client
+- `bubble/` — RAG agents (`page_change_agent.py`, `document_agent.py`), recording matcher, transcriber, newsreel ingest, legacy Bubble.io integration, pgvector client
 - `bubble/pgvector/` — pgvector connection pool and search tool (mirrors ChatKit infrastructure)
 - `scrape/` — HTML content extraction, PDF metadata, page chunking
 - `config/` — RunSpec (CLI > env > defaults), chatkit DynamoDB config loader
@@ -83,7 +85,11 @@ Full spec: `docs/rerun-feature.md`
 - `bubble/page_change_agent.py` — Page change RAG agent (`extract_page_change()`, `_unwrap_alerts()`, `_sanitize_schema_for_openai()`, `get_config_hash()`)
 - `bubble/document_agent.py` — Document matching RAG agent (`extract_document_data()`, two-step pgvector enforcement)
 - `bubble/openai_client.py` — OpenAI Responses API client; `chat_json()` supports both `json_object` and `json_schema` structured outputs
+- `bubble/recording_matcher.py` — `find_recording(event_title, event_start_date_time)` matches alerts to mp3s in `recordings-bucket-1` by date + acronym scoring
+- `bubble/transcriber.py` — `transcribe_recording(recording_s3_key)` converts mp3 → text via Whisper, stores under `transcripts/` in artifacts bucket
+- `bubble/newsreel_ingest.py` — `ingest_for_newsreel(document_url, filename)` pushes relevant docs to ChatKit newsreel-generation knowledge base
 - `storage/alert_s3.py` — Alert storage, flat/nested schema detection, Excel export
+- `infra/lambda/validate_config_sync/handler.py` — DynamoDB Streams Lambda; auto-corrects `chatkit_production_config` on every Bubble sync (label count, garbage keys, schema normalization, column registry)
 
 ## Scripts
 
@@ -244,5 +250,6 @@ python3 scripts/backfill_call_id.py --dry-run  # preview agent_call_id backfill
 
 - **Never change `output_json_schema.required` without updating the dashboard.** The dashboard's `/api/schema` reads `required` to determine column names. If you wrap the schema in an `alerts` array, `required` becomes `["alerts"]` — the dashboard must drill into `alerts.items` to find the inner schema. This is already handled in `/api/schema/route.ts` and `/api/doc-schema/route.ts`.
 - **Never add `--no-cache` to Docker builds** — skips the npm install cache layer and makes builds ~10x slower.
+- **Any write to `chatkit_production_config` triggers the `validate_config_sync` Lambda.** The Lambda rewrites `output_json_schema`, `output_requested_values`, `_column_registry`, and `_field_aliases`. This is intentional (corrects Bubble sync garbage), but be aware: adding/editing columns via the AWS console or Bubble admin will trigger it.
 - **Never use `gpt-5-nano` for reranking** — it causes 400 errors with reasoning parameters. Use `gpt-5.4` with `reasoning_effort=low`.
 - **`library_item_preliminary_title` is a dict in new flat schema** (`{status, title}`), not a string. Code that calls `.strip()` on it will crash — always check type first.
