@@ -56,6 +56,10 @@ locals {
     "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.bubble_api_url_param}",
     "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.bubble_api_key_param}",
   ]
+
+  # ChatKit internal API key for newsreel document ingest
+  chatkit_internal_api_key_param = "/web-change-tracker/prod/chatkit_internal_api_key"
+  chatkit_internal_api_key_arn   = "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.chatkit_internal_api_key_param}"
 }
 
 # -----------------------------------------------------------------------------
@@ -188,6 +192,12 @@ resource "aws_iam_role_policy" "execution_ssm_bubble" {
         Effect   = "Allow"
         Action   = ["ssm:GetParameter", "ssm:GetParameters"]
         Resource = local.bubble_ssm_param_arns
+      },
+      {
+        Sid      = "SSMGetChatkitParams"
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter", "ssm:GetParameters"]
+        Resource = [local.chatkit_internal_api_key_arn]
       },
       {
         Sid      = "KMSDecryptBubble"
@@ -374,8 +384,9 @@ resource "aws_ecs_task_definition" "app" {
 
     # Bubble credentials from SSM; DB credentials from Secrets Manager — never in plaintext env.
     secrets = [
-      { name = "BUBBLE_API_URL",         valueFrom = local.bubble_ssm_param_arns[0] },
-      { name = "BUBBLE_API_KEY",         valueFrom = local.bubble_ssm_param_arns[1] },
+      { name = "BUBBLE_API_URL",              valueFrom = local.bubble_ssm_param_arns[0] },
+      { name = "BUBBLE_API_KEY",              valueFrom = local.bubble_ssm_param_arns[1] },
+      { name = "CHATKIT_INTERNAL_API_KEY",    valueFrom = local.chatkit_internal_api_key_arn },
       { name = "DATABASE_IP",            valueFrom = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:bridgeway/database-KubYXW:DATABASE_IP::" },
       { name = "DATABASE_NAME",          valueFrom = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:bridgeway/database-KubYXW:DATABASE_NAME::" },
       { name = "DATABASE_USERNAME",      valueFrom = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:bridgeway/database-KubYXW:DATABASE_USERNAME::" },

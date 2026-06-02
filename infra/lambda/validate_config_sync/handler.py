@@ -84,6 +84,7 @@ STRUCTURAL_SCHEMAS: dict = {
     "agenda_item_title_chronicle_topics": {
         "type": "array",
         "description": "Agenda Item Title & Chronicle Topics",
+        "minItems": 1,
         "items": {
             "type": "object",
             "additionalProperties": False,
@@ -98,6 +99,7 @@ STRUCTURAL_SCHEMAS: dict = {
     "agenda_item_title_official": {
         "type": "array",
         "description": "Agenda Item Title - Official",
+        "minItems": 1,
         "items": {
             "type": "object",
             "additionalProperties": False,
@@ -111,6 +113,7 @@ STRUCTURAL_SCHEMAS: dict = {
     "agenda_item_standardized_id": {
         "type": "array",
         "description": "Agenda Item - Standardized ID",
+        "minItems": 1,
         "items": {
             "type": "object",
             "additionalProperties": False,
@@ -124,6 +127,7 @@ STRUCTURAL_SCHEMAS: dict = {
     "agenda_item_official_id": {
         "type": "array",
         "description": "Agenda Item - Official ID",
+        "minItems": 1,
         "items": {
             "type": "object",
             "additionalProperties": False,
@@ -440,24 +444,42 @@ def _label_to_id(label):
 
 def _update_column_registry(registry, new_labels, config_key):
     """
-    Update registry by position using new_labels from output_requested_values.
-    - Existing positions: keep stable ID, update label if changed.
-    - New positions: derive stable snake_case ID from label (frozen at creation).
-    - Removed positions: registry shrinks automatically.
+    Update registry using new_labels from output_requested_values.
+    Matching priority:
+    1. Exact label match against existing registry entries — reorder-safe: a field
+       stays bound to its stable ID even if Bubble moved it to a different position.
+    2. Positional assignment for unmatched labels — covers field renames (old label
+       gone, new label not yet in registry; stable ID is inherited by position).
+    3. New entry — genuinely new field, stable ID derived from label or INITIAL_REGISTRIES.
     Returns (updated_registry, changed).
     """
     initial_ids = INITIAL_REGISTRIES.get(config_key, [])
-    updated = []
-    changed = False
     existing_ids = {e["id"] for e in registry}
 
+    # Pass 1: match incoming labels to registry entries by exact label text.
+    existing_by_label = {e["label"]: e for e in registry}
+    matched_at: dict = {}   # new_labels index → registry entry
+    matched_ids: set = set()
     for i, label in enumerate(new_labels):
-        if i < len(registry):
-            # Existing column: keep stable ID, update label if changed
-            entry = dict(registry[i])
+        entry = existing_by_label.get(label)
+        if entry is not None and entry["id"] not in matched_ids:
+            matched_at[i] = dict(entry)
+            matched_ids.add(entry["id"])
+
+    # Unmatched registry entries (renamed or removed), preserved in original order
+    unmatched_registry = [e for e in registry if e["id"] not in matched_ids]
+    unmatched_idx = 0
+
+    updated = []
+    for i, label in enumerate(new_labels):
+        if i in matched_at:
+            updated.append(matched_at[i])
+        elif unmatched_idx < len(unmatched_registry):
+            # Positional: inherit the stable ID of the next unmatched registry entry
+            entry = dict(unmatched_registry[unmatched_idx])
+            unmatched_idx += 1
             if entry.get("label") != label:
                 entry["label"] = label
-                changed = True
             updated.append(entry)
         else:
             # New column: use hardcoded initial ID if available, else derive from label
@@ -472,11 +494,8 @@ def _update_column_registry(registry, new_labels, config_key):
                     suffix += 1
             existing_ids.add(new_id)
             updated.append({"id": new_id, "label": label})
-            changed = True
 
-    if len(registry) > len(new_labels):
-        changed = True  # columns were removed (updated is already shorter)
-
+    changed = updated != registry
     return updated, changed
 
 
@@ -519,8 +538,10 @@ def _normalize_schema_with_registry(schema, registry):
         required = deduped
 
         for i, key in enumerate(required):
-            stable = label_to_id.get(key) or (key if key in id_set else None)
-            # Positional fallback: if key is unknown, use registry stable ID at same position
+            # Priority 1: key IS already a stable ID (Bubble writes snake_case which matches)
+            # Priority 2: key matches a human-readable label (rare, but handles edge cases)
+            # Priority 3: positional fallback for completely unrecognized keys
+            stable = (key if key in id_set else None) or label_to_id.get(key)
             if not stable and i < len(registry):
                 pos_id = registry[i]["id"]
                 if pos_id != key:

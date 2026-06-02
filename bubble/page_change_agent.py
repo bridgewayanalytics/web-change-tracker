@@ -226,6 +226,8 @@ def _sanitize_schema_node(node: object) -> object:
         if key == "oneOf":
             # Replace with plain string — agent will output strings
             return {"type": "string"}
+        if key in ("minItems", "maxItems"):
+            continue  # not supported in OpenAI Structured Outputs strict mode
         if key == "format" and val not in _OPENAI_SUPPORTED_FORMATS:
             continue  # drop unsupported format values (e.g. "uri")
         if key == "properties" and isinstance(val, dict):
@@ -597,6 +599,26 @@ def extract_page_change(
             return []
 
         alerts = _unwrap_alerts(result)
+
+        # Backfill empty agenda arrays. The schema has no minItems constraint so the model
+        # can legally output [] when it finds nothing, but per instructions it must always
+        # include at least one N/A entry. This guard enforces that invariant in code.
+        _AGENDA_ARRAY_NA: dict[str, dict] = {
+            "agenda_item_title_chronicle_topics": {
+                "status": "N/A", "agenda_item_title": "N/A", "chronicle_topics": [],
+            },
+            "agenda_item_title_official": {"status": "N/A", "official_title": "N/A"},
+            "agenda_item_standardized_id": {"status": "N/A", "standardized_id": "N/A"},
+            "agenda_item_official_id": {"status": "N/A", "official_id": "N/A"},
+        }
+        for _alert in alerts:
+            for _field, _na_entry in _AGENDA_ARRAY_NA.items():
+                if isinstance(_alert.get(_field), list) and len(_alert[_field]) == 0:
+                    _alert[_field] = [_na_entry]
+                    log.warning(
+                        "page_change_agent: backfilled empty %s → [N/A] (call_id=%s)",
+                        _field, agent_call_id[:8],
+                    )
 
         # Ground-truth contradiction check: find document URLs that are new in after_html.
         # If new docs exist in the HTML, the agent cannot correctly classify as non-relevant.

@@ -1923,8 +1923,33 @@ def _build_bubble_payloads(
                         doc_result.get("topic_ids"),
                         doc_result.get("agenda_item_ids"),
                     )
+                    relevance = doc_result.get("newsreel_relevance")
+                    if isinstance(relevance, dict) and relevance.get("status") == "Yes":
+                        from bubble.newsreel_ingest import ingest_for_newsreel
+                        ingest_for_newsreel(document_url=url, filename=name)
         if doc_results:
             ev["__doc_extraction"] = doc_results
+
+    # Match meeting alerts to audio recordings in S3
+    try:
+        from bubble.recording_matcher import find_recording as _find_recording
+        for ev in change_events:
+            for alert in (ev.get("__agent_output") or []):
+                title = alert.get("event_title") or ""
+                dt = alert.get("event_start_date_time") or ""
+                if not title or title.strip().upper() in ("N/A", "N/A.", "-", ""):
+                    continue
+                if not dt or dt.strip().upper() in ("N/A", "N/A.", "-", ""):
+                    continue
+                key = _find_recording(title, dt)
+                if key:
+                    alert["recording_s3_key"] = key
+                    from bubble.transcriber import transcribe_recording as _transcribe
+                    t_key = _transcribe(key)
+                    if t_key:
+                        alert["transcript_s3_key"] = t_key
+    except Exception as _rec_exc:
+        log.warning("recording_matcher: non-fatal error: %s", _rec_exc)
 
     resources = build_resource_payload(change_events)
     calendar_items = build_calendar_item_payload(change_events)
@@ -2665,6 +2690,10 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
                 doc_result = extract_document_data(name, url)
                 if doc_result:
                     doc_extractions.append({"item": item, "extraction": doc_result})
+                    relevance = doc_result.get("newsreel_relevance")
+                    if isinstance(relevance, dict) and relevance.get("status") == "Yes":
+                        from bubble.newsreel_ingest import ingest_for_newsreel
+                        ingest_for_newsreel(document_url=url, filename=name)
 
     config_hash = get_config_hash()
     rerun_timestamp = datetime.now(timezone.utc).isoformat()
