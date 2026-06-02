@@ -44,6 +44,7 @@ Website change-tracking system that monitors configured NAIC web pages on a 6-ho
 9. **Alert storage** (`alert_s3.py`) — writes `alerts_table.jsonl`, per-run `alerts.json`, `alerts_table.xlsx` to S3. Excel export serializes list/dict cell values to JSON strings before writing to openpyxl cells.
 10. **Recording matcher** (`bubble/recording_matcher.py`) — after the document agent loop, matches meeting alerts to mp3 recordings in `recordings-bucket-1` S3 bucket. Stamps `recording_s3_key` on matching alerts.
 11. **Transcriber** (`bubble/transcriber.py`) — for alerts that got a `recording_s3_key`, converts the mp3 to a plain-text transcript via OpenAI Whisper and stores it in the artifacts bucket under `transcripts/`. Stamps `transcript_s3_key` on the alert. Idempotent.
+12. **Transcript chunker** (`bubble/transcript_chunker.py`) — for alerts that got a transcript, an LLM agent segments the transcript by agenda item and outputs a JSONL file. Each line is one chunk carrying full NAIC metadata (agenda item, official title, standardized ID, official ID, chronicle topics, organization, event context, library item, etc.). Stored at `transcripts/chunks/` in the artifacts bucket. Stamps `transcript_chunks_s3_key` on the alert. Idempotent.
 12. **Notifier** (SES) — email summary of changes
 
 ## Rerun mode
@@ -87,6 +88,7 @@ Full spec: `docs/rerun-feature.md`
 - `bubble/openai_client.py` — OpenAI Responses API client; `chat_json()` supports both `json_object` and `json_schema` structured outputs
 - `bubble/recording_matcher.py` — `find_recording(event_title, event_start_date_time)` matches alerts to mp3s in `recordings-bucket-1` by date + acronym scoring
 - `bubble/transcriber.py` — `transcribe_recording(recording_s3_key)` converts mp3 → text via Whisper, stores under `transcripts/` in artifacts bucket
+- `bubble/transcript_chunker.py` — `chunk_transcript(alert, run_id, target_id)` splits a transcript into agenda-item-aligned chunks with rich metadata, stores JSONL at `transcripts/chunks/` in artifacts bucket
 - `bubble/newsreel_ingest.py` — `ingest_for_newsreel(document_url, filename)` pushes relevant docs to ChatKit newsreel-generation knowledge base
 - `storage/alert_s3.py` — Alert storage, flat/nested schema detection, Excel export
 - `infra/lambda/validate_config_sync/handler.py` — DynamoDB Streams Lambda; auto-corrects `chatkit_production_config` on every Bubble sync (label count, garbage keys, schema normalization, column registry)

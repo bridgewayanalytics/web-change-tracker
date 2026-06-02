@@ -1817,6 +1817,7 @@ def _build_bubble_payloads(
     bubble_enrich: bool = False,
     no_ai: bool = False,
     bubble_snapshot: dict | None = None,
+    run_id: str = "",
 ) -> tuple[list[dict], list[dict], dict[str, list[dict]]]:
     """Build Bubble Resource and Calendar Item payloads. Optionally run AI enrichment and reference enrichment."""
     from bubble.payload import (
@@ -1930,10 +1931,13 @@ def _build_bubble_payloads(
         if doc_results:
             ev["__doc_extraction"] = doc_results
 
-    # Match meeting alerts to audio recordings in S3
+    # Match meeting alerts to audio recordings, transcribe, and chunk by agenda item
     try:
         from bubble.recording_matcher import find_recording as _find_recording
+        from bubble.transcriber import transcribe_recording as _transcribe
+        from bubble.transcript_chunker import chunk_transcript as _chunk_transcript
         for ev in change_events:
+            ev_target_id = ev.get("target_id", "")
             for alert in (ev.get("__agent_output") or []):
                 title = alert.get("event_title") or ""
                 dt = alert.get("event_start_date_time") or ""
@@ -1941,13 +1945,16 @@ def _build_bubble_payloads(
                     continue
                 if not dt or dt.strip().upper() in ("N/A", "N/A.", "-", ""):
                     continue
-                key = _find_recording(title, dt)
-                if key:
-                    alert["recording_s3_key"] = key
-                    from bubble.transcriber import transcribe_recording as _transcribe
-                    t_key = _transcribe(key)
-                    if t_key:
-                        alert["transcript_s3_key"] = t_key
+                rec_key = _find_recording(title, dt)
+                if not rec_key:
+                    continue
+                alert["recording_s3_key"] = rec_key
+                t_key = _transcribe(rec_key)
+                if t_key:
+                    alert["transcript_s3_key"] = t_key
+                    chunks_key = _chunk_transcript(alert, run_id=run_id, target_id=ev_target_id)
+                    if chunks_key:
+                        alert["transcript_chunks_s3_key"] = chunks_key
     except Exception as _rec_exc:
         log.warning("recording_matcher: non-fatal error: %s", _rec_exc)
 
@@ -3100,6 +3107,7 @@ def main() -> None:
         bubble_enrich=run_spec.bubble_enrich_enabled,
         no_ai=args.no_ai,
         bubble_snapshot=bubble_snapshot,
+        run_id=run_id,
     )
 
     # Upload alerts to S3 (same bucket as bubble reports, under alerts/ prefix).
