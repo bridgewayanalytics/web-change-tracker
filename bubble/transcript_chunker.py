@@ -176,44 +176,26 @@ def _call_chunker_agent(transcript_text: str, agenda_items: list[dict]) -> list[
     return chunks if isinstance(chunks, list) else None
 
 
-def _build_base_metadata(alert: dict, run_id: str, target_id: str) -> dict:
-    """Extract all non-agenda, non-chunk metadata from the alert."""
+def _build_base_metadata(alert: dict) -> dict:
+    """Extract semantically meaningful metadata from the alert for stamping on every chunk."""
     lib = alert.get("library_item_preliminary_title")
     lib_title = lib.get("title") if isinstance(lib, dict) else None
 
     return {
         # Event context
-        "event_title":            alert.get("event_title"),
-        "event_start_date_time":  alert.get("event_start_date_time"),
-        "event_end_date_time":    alert.get("event_end_date_time"),
-        "event_duration":         alert.get("event_duration"),
-        "event_is_full_day":      alert.get("event_is_full_day"),
-        "event_url":              alert.get("event_url"),
-        "event_call_in_number_access_code": alert.get("event_call_in_number_access_code"),
+        "event_title":           alert.get("event_title"),
+        "event_start_date_time": alert.get("event_start_date_time"),
+        "event_duration":        alert.get("event_duration"),
+        "event_url":             alert.get("event_url"),
         # Organization + alert classification
-        "organization":           alert.get("organization"),
-        "alert_type":             alert.get("alert_type"),
-        "alert_title":            alert.get("alert_title"),
-        "alert_description":      alert.get("alert_description"),
-        "alert_url":              alert.get("alert_url"),
-        "alert_date_time":        alert.get("alert_date_time"),
+        "organization":          alert.get("organization"),
+        "alert_type":            alert.get("alert_type"),
+        "alert_title":           alert.get("alert_title"),
+        "alert_description":     alert.get("alert_description"),
+        "alert_url":             alert.get("alert_url"),
         # Associated library item (if any)
-        "library_item_title":     lib_title,
-        "library_item_status":    lib.get("status") if isinstance(lib, dict) else None,
-        "library_item_url":       alert.get("library_item_url"),
-        "library_items_file_name": alert.get("library_items_file_name"),
-        # Newsreel relevance
-        "is_alert_relevant_for_art_newsreel": (
-            alert.get("is_alert_relevant_for_art_newsreel", {}).get("status")
-            if isinstance(alert.get("is_alert_relevant_for_art_newsreel"), dict)
-            else alert.get("is_alert_relevant_for_art_newsreel")
-        ),
-        # Source references
-        "recording_s3_key":       alert.get("recording_s3_key"),
-        "transcript_s3_key":      alert.get("transcript_s3_key"),
-        "agent_call_id":          alert.get("agent_call_id"),
-        "run_id":                 run_id,
-        "target_id":              target_id,
+        "library_item_title":    lib_title,
+        "library_item_url":      alert.get("library_item_url"),
     }
 
 
@@ -252,7 +234,7 @@ def chunk_transcript(alert: dict, run_id: str, target_id: str) -> str | None:
         return None
 
     agenda_items = _build_agenda_items(alert)
-    base_metadata = _build_base_metadata(alert, run_id, target_id)
+    base_metadata = _build_base_metadata(alert)
 
     log.info(
         "transcript_chunker: segmenting transcript (%d chars, %d agenda items, run=%s)",
