@@ -1955,6 +1955,11 @@ def _build_bubble_payloads(
                     chunks_key = _chunk_transcript(alert, run_id=run_id, target_id=ev_target_id)
                     if chunks_key:
                         alert["transcript_chunks_s3_key"] = chunks_key
+                        from bubble.newsreel_ingest import ingest_transcript_chunks as _ingest_chunks
+                        _ingest_chunks(
+                            s3_bucket=os.environ.get("CHANGELOG_BUCKET", ""),
+                            s3_key=chunks_key,
+                        )
     except Exception as _rec_exc:
         log.warning("recording_matcher: non-fatal error: %s", _rec_exc)
 

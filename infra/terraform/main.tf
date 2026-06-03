@@ -379,7 +379,8 @@ resource "aws_ecs_task_definition" "app" {
       { name = "BUBBLE_TOPIC_TREE", value = "Chronicles" },
       { name = "BUBBLE_ARTIFACT_BUCKET", value = aws_s3_bucket.artifacts.id },
       { name = "HTML_SNAPSHOT_BUCKET", value = aws_s3_bucket.artifacts.id },
-      { name = "BUBBLE_ALERTS_ENABLED", value = "true" }
+      { name = "BUBBLE_ALERTS_ENABLED", value = "true" },
+      { name = "INGEST_API_URL", value = "https://api.bridgewayanalytics.com" }
     ]
 
     # Bubble credentials from SSM; DB credentials from Secrets Manager — never in plaintext env.
