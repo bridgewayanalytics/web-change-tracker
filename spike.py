@@ -1926,8 +1926,7 @@ def _build_bubble_payloads(
                     )
                     relevance = doc_result.get("newsreel_relevance")
                     if isinstance(relevance, dict) and relevance.get("status") == "Yes":
-                        from bubble.newsreel_ingest import ingest_for_newsreel
-                        ingest_for_newsreel(document_url=url, filename=name)
+                        doc_result["ingest_status"] = "pending"
         if doc_results:
             ev["__doc_extraction"] = doc_results
 
@@ -1955,11 +1954,7 @@ def _build_bubble_payloads(
                     chunks_key = _chunk_transcript(alert, run_id=run_id, target_id=ev_target_id)
                     if chunks_key:
                         alert["transcript_chunks_s3_key"] = chunks_key
-                        from bubble.newsreel_ingest import ingest_transcript_chunks as _ingest_chunks
-                        _ingest_chunks(
-                            s3_bucket=os.environ.get("CHANGELOG_BUCKET", ""),
-                            s3_key=chunks_key,
-                        )
+                        alert["ingest_status"] = "pending"
     except Exception as _rec_exc:
         log.warning("recording_matcher: non-fatal error: %s", _rec_exc)
 
@@ -2704,8 +2699,7 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
                     doc_extractions.append({"item": item, "extraction": doc_result})
                     relevance = doc_result.get("newsreel_relevance")
                     if isinstance(relevance, dict) and relevance.get("status") == "Yes":
-                        from bubble.newsreel_ingest import ingest_for_newsreel
-                        ingest_for_newsreel(document_url=url, filename=name)
+                        doc_result["ingest_status"] = "pending"
 
     config_hash = get_config_hash()
     rerun_timestamp = datetime.now(timezone.utc).isoformat()
@@ -2919,6 +2913,84 @@ def _run_smoke_bubble_resolvers() -> int:
     return 1 if hard_fail else 0
 
 
+def _run_manual_chunk(agent_call_id: str, transcript_s3_key: str) -> None:
+    """
+    Chunk a manually uploaded transcript and mark the alert row pending for ingest.
+
+    Triggered via ECS RunTask override with:
+      MANUAL_CHUNK_AGENT_CALL_ID  — agent_call_id of the alert row to update
+      MANUAL_CHUNK_TRANSCRIPT_S3_KEY — S3 key of the uploaded .txt transcript
+
+    Reads the alert row from alerts_table.jsonl to get event/agenda metadata,
+    runs chunk_transcript(), writes the JSONL to S3, then patches the row with
+    transcript_chunks_s3_key and ingest_status: "pending".
+    """
+    import boto3
+    log.info("manual_chunk: starting for agent_call_id=%s transcript=%s", agent_call_id, transcript_s3_key)
+
+    bucket = (
+        os.environ.get("CHANGELOG_BUCKET", "").strip()
+        or os.environ.get("BUBBLE_ARTIFACT_BUCKET", "").strip()
+    )
+    if not bucket:
+        log.error("manual_chunk: CHANGELOG_BUCKET not set")
+        raise SystemExit(1)
+
+    s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+
+    # Find the alert row by agent_call_id
+    alert_row: dict | None = None
+    try:
+        body = s3.get_object(Bucket=bucket, Key="alerts/alerts_table.jsonl")["Body"].read().decode("utf-8")
+        for line in body.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+                if row.get("agent_call_id") == agent_call_id:
+                    alert_row = row
+                    break
+            except Exception:
+                pass
+    except Exception as exc:
+        log.error("manual_chunk: could not read alerts_table.jsonl: %s", exc)
+        raise SystemExit(1)
+
+    if not alert_row:
+        log.error("manual_chunk: no row found for agent_call_id=%s", agent_call_id)
+        raise SystemExit(1)
+
+    # Override the transcript_s3_key on the alert so chunk_transcript uses the manual file
+    alert_row["transcript_s3_key"] = transcript_s3_key
+    alert_row["manual_transcript_s3_key"] = transcript_s3_key
+
+    run_id = alert_row.get("run_id") or "manual"
+    target_id = alert_row.get("target_id") or "manual"
+
+    from bubble.transcript_chunker import chunk_transcript as _chunk_transcript
+    chunks_key = _chunk_transcript(alert_row, run_id=run_id, target_id=target_id)
+    if not chunks_key:
+        log.error("manual_chunk: chunking failed for agent_call_id=%s", agent_call_id)
+        raise SystemExit(1)
+
+    log.info("manual_chunk: chunks written to s3://%s/%s", bucket, chunks_key)
+
+    from storage.alert_s3 import patch_jsonl_row
+    patched = patch_jsonl_row(
+        jsonl_key="alerts/alerts_table.jsonl",
+        match_fields={"agent_call_id": agent_call_id},
+        update_fields={
+            "transcript_s3_key": transcript_s3_key,
+            "manual_transcript_s3_key": transcript_s3_key,
+            "transcript_chunks_s3_key": chunks_key,
+            "ingest_status": "pending",
+        },
+        bucket=bucket,
+    )
+    log.info("manual_chunk: patched %d row(s) for agent_call_id=%s", patched, agent_call_id)
+
+
 def main() -> None:
     args = parse_args()
 
@@ -2979,6 +3051,14 @@ def main() -> None:
         rerun_mode = os.environ.get("RERUN_MODE", "alerts").strip()
         rerun_library_item_url = os.environ.get("RERUN_LIBRARY_ITEM_URL", "").strip()
         _run_rerun(rerun_run_id, rerun_target_id, rerun_mode=rerun_mode, rerun_library_item_url=rerun_library_item_url)
+        return
+
+    # Manual chunk mode: chunk a manually uploaded transcript and mark it pending for ingest.
+    # Triggered via MANUAL_CHUNK_AGENT_CALL_ID + MANUAL_CHUNK_TRANSCRIPT_S3_KEY env vars.
+    manual_chunk_call_id = os.environ.get("MANUAL_CHUNK_AGENT_CALL_ID", "").strip()
+    manual_chunk_transcript_key = os.environ.get("MANUAL_CHUNK_TRANSCRIPT_S3_KEY", "").strip()
+    if manual_chunk_call_id and manual_chunk_transcript_key:
+        _run_manual_chunk(manual_chunk_call_id, manual_chunk_transcript_key)
         return
 
     from datetime import datetime, timezone

@@ -230,6 +230,76 @@ def _build_doc_extraction_rows(
     return rows
 
 
+def patch_jsonl_row(
+    jsonl_key: str,
+    match_fields: dict,
+    update_fields: dict,
+    bucket: str | None = None,
+) -> int:
+    """
+    Patch rows in a JSONL file in S3 where all match_fields match.
+
+    Downloads the file, updates matching rows in-place, re-uploads.
+    Returns the number of rows patched. Never raises — logs warnings on failure.
+
+    Example:
+        patch_jsonl_row(
+            "alerts/alerts_table.jsonl",
+            {"agent_call_id": "abc123"},
+            {"ingest_status": "approved"},
+        )
+    """
+    if bucket is None:
+        bucket = _get_bucket()
+    if not bucket:
+        log.warning("patch_jsonl_row: no bucket configured")
+        return 0
+
+    try:
+        client = _s3_client()
+        try:
+            body = client.get_object(Bucket=bucket, Key=jsonl_key)["Body"].read().decode("utf-8")
+        except client.exceptions.NoSuchKey:
+            log.warning("patch_jsonl_row: %s not found in bucket %s", jsonl_key, bucket)
+            return 0
+
+        patched = 0
+        out_lines: list[str] = []
+        for line in body.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except Exception:
+                out_lines.append(line)
+                continue
+
+            if all(row.get(k) == v for k, v in match_fields.items()):
+                row.update(update_fields)
+                patched += 1
+
+            out_lines.append(json.dumps(row, ensure_ascii=False))
+
+        if patched == 0:
+            log.warning("patch_jsonl_row: no rows matched %s in %s", match_fields, jsonl_key)
+            return 0
+
+        combined = "\n".join(out_lines).encode("utf-8")
+        client.put_object(
+            Bucket=bucket,
+            Key=jsonl_key,
+            Body=combined,
+            ContentType="application/x-ndjson",
+        )
+        log.info("patch_jsonl_row: patched %d row(s) in s3://%s/%s", patched, bucket, jsonl_key)
+        return patched
+
+    except Exception as exc:
+        log.warning("patch_jsonl_row: failed to patch %s: %s", jsonl_key, exc)
+        return 0
+
+
 def store_run_alerts(
     change_events: list[dict],
     run_id: str,

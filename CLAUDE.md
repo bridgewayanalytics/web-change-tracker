@@ -44,8 +44,9 @@ Website change-tracking system that monitors configured NAIC web pages on a 6-ho
 9. **Alert storage** (`alert_s3.py`) — writes `alerts_table.jsonl`, per-run `alerts.json`, `alerts_table.xlsx` to S3. Excel export serializes list/dict cell values to JSON strings before writing to openpyxl cells.
 10. **Recording matcher** (`bubble/recording_matcher.py`) — after the document agent loop, matches meeting alerts to mp3 recordings in `recordings-bucket-1` S3 bucket. Stamps `recording_s3_key` on matching alerts.
 11. **Transcriber** (`bubble/transcriber.py`) — for alerts that got a `recording_s3_key`, converts the mp3 to a plain-text transcript via OpenAI Whisper and stores it in the artifacts bucket under `transcripts/`. Stamps `transcript_s3_key` on the alert. Idempotent.
-12. **Transcript chunker** (`bubble/transcript_chunker.py`) — for alerts that got a transcript, an LLM agent segments the transcript by agenda item and outputs a JSONL file. Each line is one chunk carrying full NAIC metadata (agenda item, official title, standardized ID, official ID, chronicle topics, organization, event context, library item, etc.). Stored at `transcripts/chunks/` in the artifacts bucket. Stamps `transcript_chunks_s3_key` on the alert. Idempotent.
-12. **Notifier** (SES) — email summary of changes
+12. **Transcript chunker** (`bubble/transcript_chunker.py`) — for alerts that got a transcript, an LLM agent segments the transcript by agenda item and outputs a JSONL file. Each line is one chunk carrying full NAIC metadata (agenda item, official title, standardized ID, official ID, chronicle topics, organization, event context, library item, etc.). Stored at `transcripts/chunks/` in the artifacts bucket. Stamps `transcript_chunks_s3_key` and `ingest_status: "pending"` on the alert. Idempotent.
+13. **Ingest gate** — no auto-ingest into the newsreel knowledge base. `ingest_status` field controls lifecycle: `null` (not eligible), `"pending"` (awaiting dashboard approval), `"approved"` (ingested), `"rejected"` (dismissed). Dashboard shows approve/edit/reject buttons per row. See `storage/ingest_actions.py`.
+14. **Notifier** (SES) — email summary of changes
 
 ## Rerun mode
 
@@ -79,7 +80,7 @@ Full spec: `docs/rerun-feature.md`
 
 ## Key entry points
 
-- `spike.py` — Main pipeline orchestrator (normal mode + rerun mode)
+- `spike.py` — Main pipeline orchestrator (normal mode + rerun mode + manual_chunk mode)
 - `targets.json` — Target URL config with extract rules per URL
 - `config/run_spec.py` — RunSpec: single source of truth for runtime behavior
 - `config/chatkit_config.py` — Loads agent config from DynamoDB `chatkit_production_config`
@@ -90,7 +91,8 @@ Full spec: `docs/rerun-feature.md`
 - `bubble/transcriber.py` — `transcribe_recording(recording_s3_key)` converts mp3 → text via Whisper, stores under `transcripts/` in artifacts bucket
 - `bubble/transcript_chunker.py` — `chunk_transcript(alert, run_id, target_id)` splits a transcript into agenda-item-aligned chunks with rich metadata, stores JSONL at `transcripts/chunks/` in artifacts bucket
 - `bubble/newsreel_ingest.py` — `ingest_for_newsreel(document_url, filename)` pushes relevant docs to ChatKit newsreel-generation knowledge base
-- `storage/alert_s3.py` — Alert storage, flat/nested schema detection, Excel export
+- `storage/alert_s3.py` — Alert storage, flat/nested schema detection, Excel export, `patch_jsonl_row()` utility
+- `storage/ingest_actions.py` — Ingest gate: `approve_transcript_ingest()`, `approve_document_ingest()`, `ingest_manual_document_url()`, `reject_ingest()`, `generate_presigned_url()`, `generate_presigned_upload_url()`
 - `infra/lambda/validate_config_sync/handler.py` — DynamoDB Streams Lambda; auto-corrects `chatkit_production_config` on every Bubble sync (label count, garbage keys, schema normalization, column registry)
 
 ## Scripts
@@ -217,6 +219,10 @@ python3 scripts/backfill_call_id.py --dry-run  # preview agent_call_id backfill
 - `RERUN_TARGET_ID` — target_id to re-evaluate (set by ECS RunTask override)
 - `RERUN_MODE` — controls which agents run during rerun: `"alerts"` (page_change_agent only), `"docs"` (document_agent only), `"both"` (default). Set by ECS RunTask override from the dashboard.
 
+**Manual chunk mode (manually uploaded transcripts):**
+- `MANUAL_CHUNK_AGENT_CALL_ID` — agent_call_id of the alert row to update
+- `MANUAL_CHUNK_TRANSCRIPT_S3_KEY` — S3 key of the uploaded .txt transcript file
+
 **Email:**
 - `SEND_EMAIL=true`, `FROM_EMAIL`, `TO_EMAILS`, `SES_REGION`
 
@@ -255,3 +261,6 @@ python3 scripts/backfill_call_id.py --dry-run  # preview agent_call_id backfill
 - **Any write to `chatkit_production_config` triggers the `validate_config_sync` Lambda.** The Lambda rewrites `output_json_schema`, `output_requested_values`, `_column_registry`, and `_field_aliases`. This is intentional (corrects Bubble sync garbage), but be aware: adding/editing columns via the AWS console or Bubble admin will trigger it.
 - **Never use `gpt-5-nano` for reranking** — it causes 400 errors with reasoning parameters. Use `gpt-5.4` with `reasoning_effort=low`.
 - **`library_item_preliminary_title` is a dict in new flat schema** (`{status, title}`), not a string. Code that calls `.strip()` on it will crash — always check type first.
+- **Never auto-ingest to the newsreel knowledge base.** Both `ingest_for_newsreel()` (documents) and `ingest_transcript_chunks()` (transcripts) must only be called via the ingest gate (`storage/ingest_actions.py` approve functions), never directly from `spike.py`. The gate sets `ingest_status: "pending"` first; the dashboard user approves.
+- **`ingest_status` flows verbatim** — set on the alert dict or doc_result dict before `store_run_alerts()` is called; `_build_rows_for_single_alert()` and `_build_doc_extraction_rows()` store it automatically. Do not add special-case handling in the row builders.
+- **`patch_jsonl_row()` is not atomic** — it downloads, patches, and re-uploads the full JSONL. Concurrent writes can clobber each other. Acceptable for dashboard use (one user at a time), but not for high-concurrency batch writes.
