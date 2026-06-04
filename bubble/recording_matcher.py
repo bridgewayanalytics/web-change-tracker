@@ -56,7 +56,10 @@ def _acronym_score(abbreviation: str, title: str) -> float:
     if not abbrev_alpha:
         return 0.0
 
-    title_words = [w for w in re.split(r"[\s\-&/,]+", title) if w]
+    # Strip leading/trailing non-word chars from each token so "(GOES)" → "GOES"
+    raw_words = re.split(r"[\s\-&/,()]+", title)
+    title_words = [re.sub(r"^[^A-Za-z]+|[^A-Za-z]+$", "", w) for w in raw_words if w]
+    title_words = [w for w in title_words if w]
     initials = "".join(w[0].upper() for w in title_words)
 
     if abbrev_alpha == initials:
@@ -73,9 +76,17 @@ def _acronym_score(abbreviation: str, title: str) -> float:
     else:
         return 0.9
 
-    # Token overlap: abbreviation segments vs title word prefixes
+    # Abbreviation tokens appearing verbatim in title words (e.g. "GOES" in "(GOES)")
     abbrev_tokens = [t.upper() for t in re.split(r"[-_]", abbreviation) if t]
     title_upper = [w.upper() for w in title_words]
+    exact_hits = sum(1 for tok in abbrev_tokens if tok in title_upper)
+    if exact_hits == len(abbrev_tokens):
+        return 0.85
+    if exact_hits > 0:
+        # At least one token matched verbatim — partial acronym match
+        return 0.5 + 0.3 * exact_hits / len(abbrev_tokens)
+
+    # Token overlap: abbreviation segments vs title word prefixes
     matched = sum(
         1 for tok in abbrev_tokens
         if any(tw.startswith(tok) or tok.startswith(tw[:3]) for tw in title_upper)
