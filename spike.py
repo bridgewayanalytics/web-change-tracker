@@ -2991,6 +2991,104 @@ def _run_manual_chunk(agent_call_id: str, transcript_s3_key: str) -> None:
     log.info("manual_chunk: patched %d row(s) for agent_call_id=%s", patched, agent_call_id)
 
 
+def _run_manual_doc(agent_call_id: str) -> None:
+    """
+    Run document extraction on a manually added document row and update it with results.
+
+    Triggered via ECS RunTask override with:
+      MANUAL_DOC_AGENT_CALL_ID — agent_call_id of the stub row in document_extractions_table.jsonl
+
+    Reads the stub row (written by /api/ingest/add-document), runs extract_document_data(),
+    then patches the row with the extracted fields and ingest_status: "pending".
+    """
+    import boto3
+    log.info("manual_doc: starting for agent_call_id=%s", agent_call_id)
+
+    bucket = (
+        os.environ.get("CHANGELOG_BUCKET", "").strip()
+        or os.environ.get("BUBBLE_ARTIFACT_BUCKET", "").strip()
+    )
+    if not bucket:
+        log.error("manual_doc: CHANGELOG_BUCKET not set")
+        raise SystemExit(1)
+
+    s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+    doc_key = "alerts/document_extractions_table.jsonl"
+
+    stub_row: dict | None = None
+    try:
+        body = s3.get_object(Bucket=bucket, Key=doc_key)["Body"].read().decode("utf-8")
+        for line in body.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+                if row.get("agent_call_id") == agent_call_id:
+                    stub_row = row
+                    break
+            except Exception:
+                pass
+    except Exception as exc:
+        log.error("manual_doc: could not read %s: %s", doc_key, exc)
+        raise SystemExit(1)
+
+    if not stub_row:
+        log.error("manual_doc: no row found for agent_call_id=%s", agent_call_id)
+        raise SystemExit(1)
+
+    document_name = str(stub_row.get("library_item_file_name") or stub_row.get("library_item_title") or "")
+    document_url = str(stub_row.get("library_item_url") or stub_row.get("source_url") or "")
+    manual_doc_s3_key = str(stub_row.get("manual_doc_s3_key") or "")
+
+    # For S3-uploaded files, generate a presigned URL so the agent can fetch the PDF
+    if manual_doc_s3_key and not document_url:
+        try:
+            document_url = s3.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": bucket, "Key": manual_doc_s3_key},
+                ExpiresIn=900,
+            )
+            log.info("manual_doc: generated presigned URL for %s", manual_doc_s3_key)
+        except Exception as exc:
+            log.warning("manual_doc: could not generate presigned URL: %s", exc)
+
+    if not document_name or not document_url:
+        log.error("manual_doc: missing document_name or document_url in stub row")
+        raise SystemExit(1)
+
+    log.info("manual_doc: extracting '%s' from %s", document_name[:60], document_url[:80])
+
+    from bubble.document_agent import extract_document_data
+    result = extract_document_data(document_name=document_name, document_url=document_url)
+
+    if not result:
+        log.error("manual_doc: extraction returned empty result for agent_call_id=%s", agent_call_id)
+        raise SystemExit(1)
+
+    log.info("manual_doc: extracted %d field(s) for agent_call_id=%s", len(result), agent_call_id)
+
+    update_fields = {
+        **result,
+        "run_id": stub_row.get("run_id") or "manual",
+        "ingest_status": "pending",
+        # Preserve stub metadata
+        "library_item_url": document_url if not manual_doc_s3_key else stub_row.get("library_item_url", ""),
+        "library_item_file_name": document_name,
+        "manual_doc_s3_key": manual_doc_s3_key,
+        "source_url": str(stub_row.get("source_url") or ""),
+    }
+
+    from storage.alert_s3 import patch_jsonl_row
+    patched = patch_jsonl_row(
+        jsonl_key=doc_key,
+        match_fields={"agent_call_id": agent_call_id},
+        update_fields=update_fields,
+        bucket=bucket,
+    )
+    log.info("manual_doc: patched %d row(s) for agent_call_id=%s", patched, agent_call_id)
+
+
 def main() -> None:
     args = parse_args()
 
@@ -3059,6 +3157,13 @@ def main() -> None:
     manual_chunk_transcript_key = os.environ.get("MANUAL_CHUNK_TRANSCRIPT_S3_KEY", "").strip()
     if manual_chunk_call_id and manual_chunk_transcript_key:
         _run_manual_chunk(manual_chunk_call_id, manual_chunk_transcript_key)
+        return
+
+    # Manual doc mode: run document extraction on a manually added document row.
+    # Triggered via MANUAL_DOC_AGENT_CALL_ID env var.
+    manual_doc_call_id = os.environ.get("MANUAL_DOC_AGENT_CALL_ID", "").strip()
+    if manual_doc_call_id:
+        _run_manual_doc(manual_doc_call_id)
         return
 
     from datetime import datetime, timezone
