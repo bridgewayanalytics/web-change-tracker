@@ -95,43 +95,46 @@ def _build_agenda_items(alert: dict) -> list[dict]:
 
 def _call_chunker_agent(transcript_text: str, agenda_items: list[dict]) -> list[dict] | None:
     """
-    Ask an LLM to segment the transcript by agenda item.
-    Returns a list of {agenda_item_index: int, text: str}, or None on failure.
-    agenda_item_index == -1 means general/unattributed content.
+    Ask an LLM to segment the transcript.
+
+    With agenda items: assigns each portion to a known agenda item by index.
+    Without agenda items: infers discussion sections directly from the transcript.
+
+    Returns a list of chunk dicts, or None on failure.
+    - With agenda: {agenda_item_index: int, text: str}  (index -1 = unattributed)
+    - Without agenda: {topic_title: str, chronicle_topics: [str], text: str}
     """
     from bubble.openai_client import chat_json
 
     if agenda_items:
-        agenda_summary = "\n".join(
-            f"{i + 1}. {item['agenda_item_title']}"
-            f" | official: {item['agenda_item_official_title']}"
-            f" | std_id: {item['agenda_item_standardized_id']}"
-            f" | topics: {', '.join(item['chronicle_topics']) or 'none'}"
-            for i, item in enumerate(agenda_items)
-        )
+        return _call_chunker_agent_with_agenda(transcript_text, agenda_items)
     else:
-        agenda_summary = "No structured agenda items identified — label all content as General Discussion."
+        return _call_chunker_agent_infer_topics(transcript_text)
+
+
+def _call_chunker_agent_with_agenda(transcript_text: str, agenda_items: list[dict]) -> list[dict] | None:
+    from bubble.openai_client import chat_json
+
+    agenda_summary = "\n".join(
+        f"{i + 1}. {item['agenda_item_title']}"
+        f" | official: {item['agenda_item_official_title']}"
+        f" | std_id: {item['agenda_item_standardized_id']}"
+        f" | topics: {', '.join(item['chronicle_topics']) or 'none'}"
+        for i, item in enumerate(agenda_items)
+    )
 
     system_prompt = (
         "You are a meeting transcript segmentation expert. "
-        "You receive a meeting transcript and an agenda item list. "
         "Split the transcript into chunks aligned to the agenda items being discussed. "
         "\n\nRules:"
         "\n- Assign each portion of the transcript to the agenda item being discussed at that point."
-        "\n- If a portion does not clearly belong to any agenda item (opening remarks, roll call, "
-        "procedural discussion, closing), assign it agenda_item_index -1 (General Discussion)."
-        f"\n- Keep each chunk under {_MAX_WORDS_PER_CHUNK} words. If an agenda item discussion is "
-        "longer, split it into multiple sequential chunks with the same agenda_item_index."
+        "\n- Opening remarks, roll call, procedural discussion, and closing: use agenda_item_index -1."
+        f"\n- Keep each chunk under {_MAX_WORDS_PER_CHUNK} words. Split long discussions into "
+        "multiple sequential chunks with the same agenda_item_index."
         "\n- Preserve the exact transcript text — do not paraphrase, summarize, or omit anything."
         "\n- Output a JSON object with a 'chunks' array. "
         'Each element: {"agenda_item_index": <int>, "text": <string>}.'
-        "\n- agenda_item_index is 0-based matching the agenda list (0 = first item). "
-        "Use -1 for general/unattributed content."
-    )
-
-    user_content = (
-        f"## Agenda Items\n{agenda_summary}"
-        f"\n\n## Transcript\n{transcript_text}"
+        "\n- agenda_item_index is 0-based (0 = first agenda item). Use -1 for unattributed content."
     )
 
     output_schema = {
@@ -158,12 +161,78 @@ def _call_chunker_agent(transcript_text: str, agenda_items: list[dict]) -> list[
         result = chat_json(
             [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
+                {"role": "user", "content": f"## Agenda Items\n{agenda_summary}\n\n## Transcript\n{transcript_text}"},
             ],
             model="gpt-5.4",
             reasoning_effort="low",
             json_schema=output_schema,
             json_schema_name="transcript_chunks",
+            json_schema_strict=True,
+        )
+    except Exception as exc:
+        log.warning("transcript_chunker: agent call failed: %s", exc)
+        return None
+
+    if not isinstance(result, dict):
+        return None
+    chunks = result.get("chunks")
+    return chunks if isinstance(chunks, list) else None
+
+
+def _call_chunker_agent_infer_topics(transcript_text: str) -> list[dict] | None:
+    """
+    When there are no structured agenda items, infer discussion sections from the transcript.
+    Returns chunks with topic_title and chronicle_topics inferred from content.
+    """
+    from bubble.openai_client import chat_json
+
+    system_prompt = (
+        "You are a meeting transcript segmentation expert for NAIC (insurance regulatory) meetings. "
+        "No structured agenda was available — infer meaningful discussion sections from the content. "
+        "\n\nRules:"
+        "\n- Identify distinct topics actually being discussed in the transcript."
+        "\n- Give each section a short, descriptive topic_title (e.g. 'Model Governance Framework', "
+        "'Annual Calibration Review', 'Public Comments', 'Roll Call / Introductions')."
+        "\n- For chronicle_topics, list relevant NAIC/insurance regulatory topics discussed "
+        "(e.g. 'Economic Scenario Generators', 'Risk-Based Capital', 'Valuation', 'Model Governance'). "
+        "Leave empty [] if the section is purely procedural (roll call, hold music, closing)."
+        f"\n- Keep each chunk under {_MAX_WORDS_PER_CHUNK} words. Split longer sections into "
+        "multiple sequential chunks with the same topic_title."
+        "\n- Preserve the exact transcript text — do not paraphrase, summarize, or omit anything."
+        "\n- Output a JSON object with a 'chunks' array."
+    )
+
+    output_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "chunks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "topic_title": {"type": "string"},
+                        "chronicle_topics": {"type": "array", "items": {"type": "string"}},
+                        "text": {"type": "string"},
+                    },
+                    "required": ["topic_title", "chronicle_topics", "text"],
+                },
+            }
+        },
+        "required": ["chunks"],
+    }
+
+    try:
+        result = chat_json(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"## Transcript\n{transcript_text}"},
+            ],
+            model="gpt-5.4",
+            reasoning_effort="low",
+            json_schema=output_schema,
+            json_schema_name="transcript_chunks_inferred",
             json_schema_strict=True,
         )
     except Exception as exc:
@@ -247,6 +316,7 @@ def chunk_transcript(alert: dict, run_id: str, target_id: str) -> str | None:
         return None
 
     agenda_by_index = {item["index"]: item for item in agenda_items}
+    inferred_mode = not agenda_items  # chunks have topic_title/chronicle_topics directly
     lines = []
 
     for chunk_index, raw in enumerate(raw_chunks):
@@ -254,23 +324,33 @@ def chunk_transcript(alert: dict, run_id: str, target_id: str) -> str | None:
         if not text:
             continue
 
-        agenda_idx = raw.get("agenda_item_index", -1)
-        ai = agenda_by_index.get(agenda_idx, {})
-
-        row = {
-            **base_metadata,
-            # Chunk position
-            "chunk_index": chunk_index,
-            # Agenda item classification
-            "agenda_item_title":           ai.get("agenda_item_title", "General Discussion"),
-            "agenda_item_status":          ai.get("agenda_item_status", "N/A"),
-            "agenda_item_official_title":  ai.get("agenda_item_official_title", "N/A"),
-            "agenda_item_standardized_id": ai.get("agenda_item_standardized_id", "N/A"),
-            "agenda_item_official_id":     ai.get("agenda_item_official_id", "N/A"),
-            "chronicle_topics":            ai.get("chronicle_topics", []),
-            # Chunk text
-            "text": text,
-        }
+        if inferred_mode:
+            # LLM inferred topics from transcript content
+            row = {
+                **base_metadata,
+                "chunk_index": chunk_index,
+                "agenda_item_title":           raw.get("topic_title", "General Discussion"),
+                "agenda_item_status":          "N/A",
+                "agenda_item_official_title":  "N/A",
+                "agenda_item_standardized_id": "N/A",
+                "agenda_item_official_id":     "N/A",
+                "chronicle_topics":            raw.get("chronicle_topics") or [],
+                "text": text,
+            }
+        else:
+            agenda_idx = raw.get("agenda_item_index", -1)
+            ai = agenda_by_index.get(agenda_idx, {})
+            row = {
+                **base_metadata,
+                "chunk_index": chunk_index,
+                "agenda_item_title":           ai.get("agenda_item_title", "General Discussion"),
+                "agenda_item_status":          ai.get("agenda_item_status", "N/A"),
+                "agenda_item_official_title":  ai.get("agenda_item_official_title", "N/A"),
+                "agenda_item_standardized_id": ai.get("agenda_item_standardized_id", "N/A"),
+                "agenda_item_official_id":     ai.get("agenda_item_official_id", "N/A"),
+                "chronicle_topics":            ai.get("chronicle_topics", []),
+                "text": text,
+            }
         lines.append(json.dumps(row, ensure_ascii=False))
 
     if not lines:
