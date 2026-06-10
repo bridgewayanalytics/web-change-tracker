@@ -46,7 +46,8 @@ Website change-tracking system that monitors configured NAIC web pages on a 6-ho
 11. **Transcriber** (`bubble/transcriber.py`) — for alerts that got a `recording_s3_key`, converts the mp3 to a plain-text transcript via OpenAI Whisper and stores it in the artifacts bucket under `transcripts/`. Stamps `transcript_s3_key` on the alert. Idempotent.
 12. **Transcript chunker** (`bubble/transcript_chunker.py`) — for alerts that got a transcript, an LLM agent segments the transcript by agenda item and outputs a JSONL file. Each line is one chunk carrying full NAIC metadata (agenda item, official title, standardized ID, official ID, chronicle topics, organization, event context, library item, etc.). Stored at `transcripts/chunks/` in the artifacts bucket. Stamps `transcript_chunks_s3_key` and `ingest_status: "pending"` on the alert. Idempotent.
 13. **Ingest gate** — no auto-ingest into the newsreel knowledge base. `ingest_status` field controls lifecycle: `null` (not eligible), `"pending"` (awaiting dashboard approval), `"approved"` (ingested), `"rejected"` (dismissed). Dashboard shows approve/edit/reject buttons per row. See `storage/ingest_actions.py`.
-14. **Notifier** (SES) — email summary of changes
+14. **Bubble sync classifier** (`bubble/bubble_sync_classifier.py`) — after the recording/transcript pipeline, runs `classify_alert()` on every alert and stamps `bubble_action` on applicable rows. Pure function, no API calls. Maps `alert_type` → `{event, library_item, agenda_items}` with full field previews (event_preview, library_item_preview, agenda_item_previews). Irrelevant alerts (No Meaningful Change, carousel) get no field set.
+15. **Notifier** (SES) — email summary of changes
 
 ## Rerun mode
 
@@ -91,6 +92,8 @@ Full spec: `docs/rerun-feature.md`
 - `bubble/transcriber.py` — `transcribe_recording(recording_s3_key)` converts mp3 → text via Whisper, stores under `transcripts/` in artifacts bucket
 - `bubble/transcript_chunker.py` — `chunk_transcript(alert, run_id, target_id)` splits a transcript into agenda-item-aligned chunks with rich metadata, stores JSONL at `transcripts/chunks/` in artifacts bucket
 - `bubble/newsreel_ingest.py` — `ingest_for_newsreel(document_url, filename)` pushes relevant docs to ChatKit newsreel-generation knowledge base
+- `bubble/bubble_sync_classifier.py` — `classify_alert(alert) → BubbleSyncPlan` pure classifier; stamps `bubble_action` on applicable alerts. No I/O. See `bubble_action` field docs below.
+- `bubble/bubble_sync.py` — `sync_alert(agent_call_id)` stubbed Bubble sync executor; patches `bubble_sync_status: "synced"`. Replace TODO block with real Bubble API calls once schemas are confirmed.
 - `storage/alert_s3.py` — Alert storage, flat/nested schema detection, Excel export, `patch_jsonl_row()` utility
 - `storage/ingest_actions.py` — Ingest gate: `approve_transcript_ingest()`, `approve_document_ingest()`, `ingest_manual_document_url()`, `reject_ingest()`, `generate_presigned_url()`, `generate_presigned_upload_url()`
 - `infra/lambda/validate_config_sync/handler.py` — DynamoDB Streams Lambda; auto-corrects `chatkit_production_config` on every Bubble sync (label count, garbage keys, schema normalization, column registry)
@@ -105,6 +108,7 @@ Full spec: `docs/rerun-feature.md`
 | `scripts/rebuild_alerts_table.py` | Rebuild `alerts_table.jsonl` from stored `agent_output.json` files (no agent re-run, useful for dedup/schema fixes) |
 | `scripts/wrap_schema_alerts.py` | Wrap flat DynamoDB `output_json_schema` in `alerts` array wrapper for multi-alert support |
 | `scripts/backfill_call_id.py` | One-time backfill of `agent_call_id` on existing JSONL rows (groups by `run_id` + `target_id`) |
+| `scripts/backfill_bubble_action.py` | Backfill `bubble_action` on existing `alerts_table.jsonl` rows using the classifier (idempotent, `--force` to re-classify) |
 
 ## Agent configuration (DynamoDB)
 
@@ -233,6 +237,39 @@ python3 scripts/backfill_call_id.py --dry-run  # preview agent_call_id backfill
 
 **Bubble (legacy):**
 - `BUBBLE_API_URL`, `BUBBLE_API_KEY`, `AI_ENRICHMENT_ENABLED`
+
+## Bubble sync fields
+
+### `bubble_action` (set by classifier, stored on alert dict)
+
+```json
+{
+  "bubble_action": {
+    "event": "create" | "update" | null,
+    "library_item": "create" | "update" | null,
+    "agenda_items": true | false,
+    "event_preview": { "title", "start_datetime", "end_datetime", "group", "url", "call_in", "match_key" },
+    "library_item_preview": { "title", "url", "filename", "type", "group" },
+    "agenda_item_previews": [{ "title", "chronicle_topics" }],
+    "notes": "<alert_type>"
+  }
+}
+```
+
+Only set when `applicable=True`. Absent on No Meaningful Change / carousel alerts.
+The `match_key` (`"{primary_org} | {date}"`) is how existing Events are looked up in Bubble.
+
+### `bubble_sync_status`
+
+| Value | Meaning |
+|-------|---------|
+| absent/null | Not yet synced (or not applicable) |
+| `"synced"` | Stub: set immediately on dashboard confirm. Real: after successful Bubble API call. |
+| `"error"` | Executor raised an exception |
+
+Dashboard shows "Sync to Bubble" button on rows with `bubble_action` set and no `bubble_sync_status`. Clicking opens a preview modal (CREATE/UPDATE cards) before confirming. After confirm, `bubble_sync_status: "synced"` is patched on the row.
+
+**To wire in real Bubble API calls:** replace the `TODO` block in `bubble/bubble_sync.py:sync_alert()` with actual API calls. The `event_preview`, `library_item_preview`, and `agenda_item_previews` dicts contain all the field values to send.
 
 ## Conventions
 

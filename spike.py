@@ -1958,6 +1958,18 @@ def _build_bubble_payloads(
     except Exception as _rec_exc:
         log.warning("recording_matcher: non-fatal error: %s", _rec_exc)
 
+    # Stamp bubble_action on each alert — pure classification, no API calls.
+    # Irrelevant alerts (No Meaningful Change, carousel) are skipped.
+    try:
+        from bubble.bubble_sync_classifier import classify_alert as _classify_alert
+        for ev in change_events:
+            for alert in (ev.get("__agent_output") or []):
+                plan = _classify_alert(alert)
+                if plan.applicable:
+                    alert["bubble_action"] = plan.to_dict()
+    except Exception as _cls_exc:
+        log.warning("bubble_sync_classifier: non-fatal error: %s", _cls_exc)
+
     resources = build_resource_payload(change_events)
     calendar_items = build_calendar_item_payload(change_events)
 
