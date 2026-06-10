@@ -93,7 +93,34 @@ def _lib_title(alert: dict) -> str:
     return _str(raw)
 
 
-def _build_event_preview(alert: dict) -> dict:
+# What changes on the Event record for each alert_type when action=update
+_EVENT_UPDATE_CHANGES: dict[str, list[str]] = {
+    "Updated Meeting":              ["Update date/time, location, or call-in details"],
+    "New Agenda":                   ["Link new agenda document", "Append agenda items"],
+    "New Materials":                ["Link new materials document"],
+    "New Agenda & Materials":       ["Link new agenda/materials documents", "Append agenda items"],
+    "Updated Agenda":               ["Update existing agenda document reference", "Update agenda items"],
+    "Updated Materials":            ["Update existing materials document reference"],
+    "Updated Agenda & Materials":   ["Update existing documents", "Update agenda items"],
+    "New Request for Comment":      ["Link RFC document to event"],
+    "Updated Request for Comment":  ["Update RFC document reference"],
+    "New Effective Date":           ["Link adopted guideline document"],
+    "Updated Effective Date":       ["Update guideline document reference"],
+    "New or Updated Report or Other Resource": ["Link document or resource"],
+    "Other":                        ["Update event record"],
+}
+
+# What changes on the Library Item record for each alert_type when action=update
+_LIB_UPDATE_CHANGES: dict[str, list[str]] = {
+    "Updated Materials":            ["Replace file/URL with new version"],
+    "Updated Agenda":               ["Replace file/URL with new version"],
+    "Updated Agenda & Materials":   ["Replace file/URL with new version"],
+    "Updated Request for Comment":  ["Replace document with new version"],
+    "Updated Effective Date":       ["Replace document with new version"],
+}
+
+
+def _build_event_preview(alert: dict, alert_type: str, event_action: str | None) -> dict:
     title = _str(alert.get("event_title"))
     start = _str(alert.get("event_start_date_time"))
     end = _str(alert.get("event_end_date_time"))
@@ -106,6 +133,8 @@ def _build_event_preview(alert: dict) -> dict:
     primary_org = org[0] if org else _str(alert.get("alert_url") or "")
     match_key = f"{primary_org} | {date_part}" if primary_org or date_part else ""
 
+    what_changes = _EVENT_UPDATE_CHANGES.get(alert_type, []) if event_action == "update" else []
+
     return {
         "title": title if not _is_na(title) else "",
         "start_datetime": start if not _is_na(start) else "",
@@ -114,15 +143,18 @@ def _build_event_preview(alert: dict) -> dict:
         "url": url if not _is_na(url) else "",
         "call_in": call_in if not _is_na(call_in) else "",
         "match_key": match_key,
+        "what_changes": what_changes,
     }
 
 
-def _build_library_item_preview(alert: dict, alert_type: str) -> dict:
+def _build_library_item_preview(alert: dict, alert_type: str, lib_action: str | None) -> dict:
     title = _lib_title(alert)
     url = _str(alert.get("library_item_url"))
     filename = _str(alert.get("library_items_file_name"))
     org = _org_list(alert)
     item_type = _LIBRARY_ITEM_TYPE.get(alert_type, "Document")
+
+    what_changes = _LIB_UPDATE_CHANGES.get(alert_type, ["Update metadata and references"]) if lib_action == "update" else []
 
     return {
         "title": title if not _is_na(title) else "",
@@ -130,6 +162,7 @@ def _build_library_item_preview(alert: dict, alert_type: str) -> dict:
         "filename": filename if not _is_na(filename) else "",
         "type": item_type,
         "group": org,
+        "what_changes": what_changes,
     }
 
 
@@ -194,8 +227,8 @@ def classify_alert(alert: dict) -> BubbleSyncPlan:
         event_action=ev_action,  # type: ignore[arg-type]
         library_item_action=lib_action,  # type: ignore[arg-type]
         create_agenda_items=agenda,
-        event_preview=_build_event_preview(alert),
-        library_item_preview=_build_library_item_preview(alert, alert_type) if lib_action else {},
+        event_preview=_build_event_preview(alert, alert_type, ev_action),
+        library_item_preview=_build_library_item_preview(alert, alert_type, lib_action) if lib_action else {},
         agenda_item_previews=_build_agenda_previews(alert) if agenda else [],
         notes=alert_type,
     )
