@@ -9,8 +9,20 @@ bubble_action field structure (stored on alert dict when applicable=True):
   "event": "create" | "update" | null,
   "library_item": "create" | "update" | null,
   "agenda_items": true | false,
-  "event_preview": { title, start_datetime, end_datetime, group, url, call_in, match_key },
-  "library_item_preview": { title, url, filename, type, group },
+  "event_preview": {
+    title, start_datetime, end_datetime, group, url, call_in, match_key,
+    what_changes,           # kept for backward compat with old stored rows
+    fields,                 # display names → values  (for modal FieldTable)
+    field_ids,              # Bubble field IDs → values (for executor; org names, not IDs)
+    match_search,           # for UPDATE: {"org": ..., "date": "YYYY-MM-DD"}
+  },
+  "library_item_preview": {
+    title, url, filename, type, group,
+    what_changes,           # kept for backward compat
+    fields,                 # display names → values
+    field_ids,              # Bubble field IDs → values
+    match_search,           # for UPDATE: {"url": ..., "title": ...}
+  },
   "agenda_item_previews": [{ title, chronicle_topics }],
   "notes": <alert_type string>
 }
@@ -62,6 +74,22 @@ _LIBRARY_ITEM_TYPE: dict[str, str] = {
     "Other":                                    "Document",
 }
 
+# For UPDATE calendaritem, the Agenda field label to show in the modal
+_EVENT_AGENDA_LINK_LABEL: dict[str, str] = {
+    "New Agenda":                               "→ Link new agenda document",
+    "New Materials":                            "→ Link new materials document",
+    "New Agenda & Materials":                   "→ Link new agenda/materials documents",
+    "Updated Agenda":                           "→ Update agenda document reference",
+    "Updated Materials":                        "→ Update materials document reference",
+    "Updated Agenda & Materials":               "→ Update agenda/materials document references",
+    "New Request for Comment":                  "→ Link new RFC document",
+    "Updated Request for Comment":              "→ Update RFC document reference",
+    "New Effective Date":                       "→ Link adopted guideline document",
+    "Updated Effective Date":                   "→ Update guideline document reference",
+    "New or Updated Report or Other Resource":  "→ Link document or resource",
+    "Other":                                    "→ Update document reference",
+}
+
 _NA_VALUES = frozenset({"n/a", "n/a.", "-", "", "none"})
 
 
@@ -93,7 +121,7 @@ def _lib_title(alert: dict) -> str:
     return _str(raw)
 
 
-# What changes on the Event record for each alert_type when action=update
+# what_changes kept for backward compat with old stored rows that lack the fields/field_ids keys
 _EVENT_UPDATE_CHANGES: dict[str, list[str]] = {
     "Updated Meeting":              ["Update date/time, location, or call-in details"],
     "New Agenda":                   ["Link new agenda document", "Append agenda items"],
@@ -110,7 +138,6 @@ _EVENT_UPDATE_CHANGES: dict[str, list[str]] = {
     "Other":                        ["Update event record"],
 }
 
-# What changes on the Library Item record for each alert_type when action=update
 _LIB_UPDATE_CHANGES: dict[str, list[str]] = {
     "Updated Materials":            ["Replace file/URL with new version"],
     "Updated Agenda":               ["Replace file/URL with new version"],
@@ -127,15 +154,91 @@ def _build_event_preview(alert: dict, alert_type: str, event_action: str | None)
     org = _org_list(alert)
     url = _str(alert.get("event_url"))
     call_in = _str(alert.get("event_call_in_number_access_code"))
+    is_full_day = _str(alert.get("event_is_full_day")).lower() == "full day"
 
-    # Match key: first org + date portion of start datetime
     date_part = start[:10] if len(start) >= 10 else start
-    primary_org = org[0] if org else _str(alert.get("alert_url") or "")
-    match_key = f"{primary_org} | {date_part}" if primary_org or date_part else ""
+    primary_org = org[0] if org else ""
+    match_key = f"{primary_org} | {date_part}" if (primary_org or date_part) else ""
 
+    # backward-compat
     what_changes = _EVENT_UPDATE_CHANGES.get(alert_type, []) if event_action == "update" else []
 
+    # -- Compute fields, field_ids, match_search per action type --
+    if event_action == "create":
+        fields: dict[str, str] = {}
+        if not _is_na(title):
+            fields["Title"] = title
+        if not _is_na(start):
+            fields["Start"] = start
+        if not _is_na(end):
+            fields["End"] = end
+        if org:
+            fields["Groups"] = ", ".join(org)
+        if not _is_na(call_in):
+            fields["Call-in"] = call_in
+        fields["Timezone"] = "America/New_York"
+
+        field_ids: dict = {}
+        if not _is_na(title):
+            field_ids["title_text"] = title
+        if not _is_na(start):
+            field_ids["date_date"] = start
+        if not _is_na(end):
+            field_ids["length_end_time_date"] = end
+        if is_full_day:
+            field_ids["full_day_boolean"] = True
+        if org:
+            field_ids["orgs__list_custom_organization"] = org  # names; executor resolves to IDs
+        if not _is_na(call_in):
+            field_ids["phone_number_and_access_code_text"] = call_in
+        field_ids["timezone_code_text"] = "America/New_York"
+
+        match_search: dict = {}
+
+    elif event_action == "update":
+        match_search = {}
+        if primary_org or date_part:
+            match_search = {"org": primary_org, "date": date_part}
+
+        if alert_type == "Updated Meeting":
+            # Update date/time, call-in, and potentially title/orgs
+            fields = {}
+            if not _is_na(title):
+                fields["Title"] = title
+            if not _is_na(start):
+                fields["Start"] = start
+            if not _is_na(end):
+                fields["End"] = end
+            if org:
+                fields["Groups"] = ", ".join(org)
+            if not _is_na(call_in):
+                fields["Call-in"] = call_in
+
+            field_ids = {}
+            if not _is_na(title):
+                field_ids["title_text"] = title
+            if not _is_na(start):
+                field_ids["date_date"] = start
+            if not _is_na(end):
+                field_ids["length_end_time_date"] = end
+            if org:
+                field_ids["orgs__list_custom_organization"] = org
+            if not _is_na(call_in):
+                field_ids["phone_number_and_access_code_text"] = call_in
+            field_ids["timezone_code_text"] = "America/New_York"
+        else:
+            # Only change is linking/updating a library item — executor handles this dynamically
+            link_label = _EVENT_AGENDA_LINK_LABEL.get(alert_type, "→ Update document reference")
+            fields = {"Agenda": link_label}
+            field_ids = {}  # relevant_resources_list_custom_resource filled by executor after lib item
+
+    else:
+        fields = {}
+        field_ids = {}
+        match_search = {}
+
     return {
+        # Existing keys — kept for backward compat with old stored JSONL rows
         "title": title if not _is_na(title) else "",
         "start_datetime": start if not _is_na(start) else "",
         "end_datetime": end if not _is_na(end) else "",
@@ -144,6 +247,10 @@ def _build_event_preview(alert: dict, alert_type: str, event_action: str | None)
         "call_in": call_in if not _is_na(call_in) else "",
         "match_key": match_key,
         "what_changes": what_changes,
+        # New keys
+        "fields": fields,
+        "field_ids": field_ids,
+        "match_search": match_search,
     }
 
 
@@ -154,15 +261,71 @@ def _build_library_item_preview(alert: dict, alert_type: str, lib_action: str | 
     org = _org_list(alert)
     item_type = _LIBRARY_ITEM_TYPE.get(alert_type, "Document")
 
+    # backward-compat
     what_changes = _LIB_UPDATE_CHANGES.get(alert_type, ["Update metadata and references"]) if lib_action == "update" else []
 
+    if lib_action == "create":
+        fields: dict[str, str] = {}
+        if not _is_na(title):
+            fields["Name"] = title
+        if not _is_na(url):
+            fields["URL"] = url
+        if not _is_na(filename):
+            fields["File"] = filename
+        fields["Type"] = item_type
+        if org:
+            fields["Organizations"] = ", ".join(org)
+        fields["Status"] = "Active"
+
+        field_ids: dict = {}
+        if not _is_na(title):
+            field_ids["name_text"] = title
+        if not _is_na(url):
+            field_ids["url_text"] = url
+        if not _is_na(filename):
+            field_ids["file_name_text"] = filename
+        if org:
+            field_ids["organizations_list_custom_organization"] = org  # names; executor resolves to IDs
+        field_ids["status_option_status"] = "Active"
+
+        match_search: dict = {}
+
+    elif lib_action == "update":
+        fields = {}
+        if not _is_na(url):
+            fields["URL"] = url
+        if not _is_na(filename):
+            fields["File"] = filename
+
+        field_ids = {}
+        if not _is_na(url):
+            field_ids["url_text"] = url
+        if not _is_na(filename):
+            field_ids["file_name_text"] = filename
+
+        match_search = {}
+        if not _is_na(url):
+            match_search["url"] = url
+        if not _is_na(title):
+            match_search["title"] = title
+
+    else:
+        fields = {}
+        field_ids = {}
+        match_search = {}
+
     return {
+        # Existing keys — backward compat
         "title": title if not _is_na(title) else "",
         "url": url if not _is_na(url) else "",
         "filename": filename if not _is_na(filename) else "",
         "type": item_type,
         "group": org,
         "what_changes": what_changes,
+        # New keys
+        "fields": fields,
+        "field_ids": field_ids,
+        "match_search": match_search,
     }
 
 

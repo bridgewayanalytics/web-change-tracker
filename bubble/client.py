@@ -316,6 +316,10 @@ class BubbleClient:
     _WRITE_ALLOWLIST: set[tuple[str, str]] = {
         ("Alert", "create"),
         ("Calendar Item", "patch_alerts"),
+        ("calendaritem", "create"),
+        ("calendaritem", "sync"),
+        ("libraryitem", "create"),
+        ("libraryitem", "sync"),
     }
 
     def _assert_write_allowed(self, type_name: str, operation: str) -> None:

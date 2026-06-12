@@ -93,7 +93,7 @@ Full spec: `docs/rerun-feature.md`
 - `bubble/transcript_chunker.py` — `chunk_transcript(alert, run_id, target_id)` splits a transcript into agenda-item-aligned chunks with rich metadata, stores JSONL at `transcripts/chunks/` in artifacts bucket
 - `bubble/newsreel_ingest.py` — `ingest_for_newsreel(document_url, filename)` pushes relevant docs to ChatKit newsreel-generation knowledge base
 - `bubble/bubble_sync_classifier.py` — `classify_alert(alert) → BubbleSyncPlan` pure classifier; stamps `bubble_action` on applicable alerts. No I/O. See `bubble_action` field docs below.
-- `bubble/bubble_sync.py` — `sync_alert(agent_call_id)` stubbed Bubble sync executor; patches `bubble_sync_status: "synced"`. Replace TODO block with real Bubble API calls once schemas are confirmed.
+- `bubble/bubble_sync.py` — `sync_alert(agent_call_id)` real Bubble sync executor: resolves org names → IDs, CREATE/UPDATE libraryitem + calendaritem using `field_ids` from preview, links them via `relevant_resources_list_custom_resource`. Triggered via ECS RunTask from dashboard route.
 - `storage/alert_s3.py` — Alert storage, flat/nested schema detection, Excel export, `patch_jsonl_row()` utility
 - `storage/ingest_actions.py` — Ingest gate: `approve_transcript_ingest()`, `approve_document_ingest()`, `ingest_manual_document_url()`, `reject_ingest()`, `generate_presigned_url()`, `generate_presigned_upload_url()`
 - `infra/lambda/validate_config_sync/handler.py` — DynamoDB Streams Lambda; auto-corrects `chatkit_production_config` on every Bubble sync (label count, garbage keys, schema normalization, column registry)
@@ -248,8 +248,21 @@ python3 scripts/backfill_call_id.py --dry-run  # preview agent_call_id backfill
     "event": "create" | "update" | null,
     "library_item": "create" | "update" | null,
     "agenda_items": true | false,
-    "event_preview": { "title", "start_datetime", "end_datetime", "group", "url", "call_in", "match_key" },
-    "library_item_preview": { "title", "url", "filename", "type", "group" },
+    "event_preview": {
+      "title", "start_datetime", "end_datetime", "group", "url", "call_in",
+      "match_key",                        // "{org} | {date}" — kept for compat
+      "what_changes",                     // list of strings — kept for compat
+      "fields": {"Title": "...", ...},    // display names → values for modal FieldTable
+      "field_ids": {"title_text": ...},   // Bubble API field IDs → values for executor (org names, not IDs)
+      "match_search": {"org": "...", "date": "YYYY-MM-DD"}  // UPDATE lookup criteria
+    },
+    "library_item_preview": {
+      "title", "url", "filename", "type", "group",
+      "what_changes",                     // kept for compat
+      "fields": {"Name": "...", ...},     // display names → values
+      "field_ids": {"name_text": ...},    // Bubble API field IDs → values
+      "match_search": {"url": "...", "title": "..."}  // UPDATE lookup criteria
+    },
     "agenda_item_previews": [{ "title", "chronicle_topics" }],
     "notes": "<alert_type>"
   }
@@ -259,17 +272,28 @@ python3 scripts/backfill_call_id.py --dry-run  # preview agent_call_id backfill
 Only set when `applicable=True`. Absent on No Meaningful Change / carousel alerts.
 The `match_key` (`"{primary_org} | {date}"`) is how existing Events are looked up in Bubble.
 
+The `fields` dict in each preview contains display-name → value pairs shown in the modal FieldTable.
+The `field_ids` dict contains Bubble API field IDs → values used by the executor. Org names in `orgs__list_custom_organization` / `organizations_list_custom_organization` are plain text; the executor resolves them to Bubble `_id` values at write time.
+The `match_search` dict is used by the executor to find existing records before UPDATE: `{"org": ..., "date": "YYYY-MM-DD"}` for calendaritem; `{"url": ..., "title": ...}` for libraryitem.
+
 ### `bubble_sync_status`
 
 | Value | Meaning |
 |-------|---------|
 | absent/null | Not yet synced (or not applicable) |
-| `"synced"` | Stub: set immediately on dashboard confirm. Real: after successful Bubble API call. |
-| `"error"` | Executor raised an exception |
+| `"syncing"` | ECS task started; Bubble API calls in progress |
+| `"synced"` | Successful Bubble API call |
+| `"error"` | Executor raised an exception (`bubble_sync_error` has details) |
 
-Dashboard shows "Sync to Bubble" button on rows with `bubble_action` set and no `bubble_sync_status`. Clicking opens a preview modal (CREATE/UPDATE cards) before confirming. After confirm, `bubble_sync_status: "synced"` is patched on the row.
+Dashboard shows "Sync to Bubble" button on rows with `bubble_action` set and no `bubble_sync_status`. Clicking opens a preview modal showing exact field values (CREATE/UPDATE cards) before confirming. After confirm, `/api/bubble/sync` fires an ECS RunTask (same cluster as reruns) that runs `bubble_sync.sync_alert(agent_call_id)`.
 
-**To wire in real Bubble API calls:** replace the `TODO` block in `bubble/bubble_sync.py:sync_alert()` with actual API calls. The `event_preview`, `library_item_preview`, and `agenda_item_previews` dicts contain all the field values to send.
+**Executor sequence in `bubble_sync.py`:**
+1. Resolve org display names → Bubble `_id` values (list all organizations)
+2. If `library_item == "create"`: POST to `libraryitem` with `field_ids`; capture returned ID
+3. If `library_item == "update"`: find by `match_search` (URL then title), PATCH with `field_ids`
+4. If `event == "create"`: POST to `calendaritem` with `field_ids`; set `relevant_resources_list_custom_resource` to library item ID if present
+5. If `event == "update"`: find by `match_search` (org + date), PATCH with `field_ids` + library item link
+6. Patch JSONL with `bubble_sync_status: "synced"`, `bubble_event_id`, `bubble_library_item_id`
 
 ## Conventions
 
