@@ -1970,6 +1970,31 @@ def _build_bubble_payloads(
     except Exception as _cls_exc:
         log.warning("bubble_sync_classifier: non-fatal error: %s", _cls_exc)
 
+    # Enrich bubble_action library_item CREATE previews with doc extraction metadata.
+    # Adds description_text, date_date, type___text_text from the document agent output
+    # so the modal preview and executor payload both include these fields.
+    try:
+        from bubble.bubble_sync_classifier import enrich_with_doc_extraction as _enrich_ba
+        for ev in change_events:
+            doc_extractions = ev.get("__doc_extraction") or []
+            if not doc_extractions:
+                continue
+            url_to_extraction: dict = {}
+            for entry in doc_extractions:
+                item_url = str((entry.get("item") or {}).get("url") or "").strip()
+                if item_url:
+                    url_to_extraction[item_url] = entry.get("extraction") or {}
+            for alert in (ev.get("__agent_output") or []):
+                ba = alert.get("bubble_action")
+                if not ba:
+                    continue
+                lib_url = str(alert.get("library_item_url") or "").strip()
+                extraction = url_to_extraction.get(lib_url)
+                if extraction:
+                    _enrich_ba(ba, extraction)
+    except Exception as _enrich_exc:
+        log.warning("bubble_action_doc_enrich: non-fatal error: %s", _enrich_exc)
+
     resources = build_resource_payload(change_events)
     calendar_items = build_calendar_item_payload(change_events)
 

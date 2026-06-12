@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 log = logging.getLogger(__name__)
 
 _ALERTS_TABLE_KEY = "alerts/alerts_table.jsonl"
+_DOC_EXTRACTIONS_KEY = "alerts/document_extractions_table.jsonl"
 
 
 def _get_bucket() -> str:
@@ -56,6 +57,29 @@ def _find_row(agent_call_id: str, bucket: str) -> dict | None:
                 pass
     except Exception as exc:
         log.warning("bubble_sync: could not read alerts table: %s", exc)
+    return None
+
+
+def _find_doc_extraction(agent_call_id: str, bucket: str) -> dict | None:
+    """
+    Look up the document_extractions_table.jsonl row matching agent_call_id.
+    Returns the extraction dict if found, None otherwise.
+    """
+    import json
+    try:
+        body = _s3_client().get_object(Bucket=bucket, Key=_DOC_EXTRACTIONS_KEY)["Body"].read().decode("utf-8")
+        for line in body.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+                if row.get("agent_call_id") == agent_call_id:
+                    return row
+            except Exception:
+                pass
+    except Exception as exc:
+        log.debug("bubble_sync: could not read doc extractions: %s", exc)
     return None
 
 
@@ -205,6 +229,15 @@ def sync_alert(agent_call_id: str) -> dict:
     lib_action = plan.get("library_item")
     ep = plan.get("event_preview") or {}
     lp = plan.get("library_item_preview") or {}
+
+    # Enrich library item CREATE payload with doc extraction metadata if not already present.
+    # Covers rows where spike.py didn't run the enrichment (old rows, backfilled rows).
+    if lib_action == "create":
+        doc_row = _find_doc_extraction(agent_call_id, bucket)
+        if doc_row:
+            from bubble.bubble_sync_classifier import enrich_with_doc_extraction
+            enrich_with_doc_extraction(plan, doc_row)
+            lp = plan.get("library_item_preview") or {}
 
     # Org name → ID (shared; org names appear in both event and lib previews)
     org_names: list[str] = ep.get("group") or lp.get("group") or []

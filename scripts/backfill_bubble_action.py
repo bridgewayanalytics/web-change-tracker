@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 _DEFAULT_BUCKET = "web-change-tracker-prod-artifacts-815039343351"
 BUCKET = os.environ.get("CHANGELOG_BUCKET") or os.environ.get("BUBBLE_ARTIFACT_BUCKET") or _DEFAULT_BUCKET
 ALERTS_KEY = "alerts/alerts_table.jsonl"
+DOC_EXTRACTIONS_KEY = "alerts/document_extractions_table.jsonl"
 
 
 def s3_client():
@@ -50,18 +51,44 @@ def save_rows(client, rows: list[dict]) -> None:
     client.put_object(Bucket=BUCKET, Key=ALERTS_KEY, Body=combined, ContentType="application/x-ndjson")
 
 
+def load_doc_extractions(client) -> dict[str, dict]:
+    """Load document_extractions_table.jsonl and return a dict keyed by agent_call_id."""
+    try:
+        body = client.get_object(Bucket=BUCKET, Key=DOC_EXTRACTIONS_KEY)["Body"].read().decode("utf-8")
+    except Exception as exc:
+        log.warning("Could not load doc extractions (skipping enrichment): %s", exc)
+        return {}
+    result: dict[str, dict] = {}
+    for line in body.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+            call_id = row.get("agent_call_id") or ""
+            if call_id and call_id not in result:
+                result[call_id] = row
+        except Exception:
+            pass
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--force", action="store_true", help="Re-classify even rows that already have bubble_action")
     args = parser.parse_args()
 
-    from bubble.bubble_sync_classifier import classify_alert
+    from bubble.bubble_sync_classifier import classify_alert, enrich_with_doc_extraction
 
     client = s3_client()
     log.info("Loading %s from s3://%s", ALERTS_KEY, BUCKET)
     rows = load_rows(client)
     log.info("Loaded %d rows", len(rows))
+
+    log.info("Loading doc extractions from s3://%s/%s", BUCKET, DOC_EXTRACTIONS_KEY)
+    doc_by_call_id = load_doc_extractions(client)
+    log.info("Loaded %d doc extraction rows", len(doc_by_call_id))
 
     counts: Counter = Counter()
     changed = 0
@@ -73,7 +100,12 @@ def main() -> None:
 
         plan = classify_alert(row)
         if plan.applicable:
-            row["bubble_action"] = plan.to_dict()
+            ba = plan.to_dict()
+            call_id = row.get("agent_call_id") or ""
+            doc_row = doc_by_call_id.get(call_id)
+            if doc_row:
+                enrich_with_doc_extraction(ba, doc_row)
+            row["bubble_action"] = ba
             counts[f"set:{row.get('alert_type', '?')}"] += 1
             changed += 1
         else:

@@ -371,6 +371,57 @@ class BubbleSyncPlan:
         }
 
 
+_DOC_NA = frozenset({"", "n/a", "n/a.", "-", "none", "null"})
+
+
+def enrich_with_doc_extraction(bubble_action: dict, extraction: dict) -> None:
+    """
+    Merge relevant document-agent fields into bubble_action.library_item_preview
+    when a library item is being CREATEd.
+
+    Sets description_text, date_date, and type___text_text from:
+      extraction["document_description"] → description_text
+      extraction["date_published"]        → date_date
+      extraction["document_type"]         → type___text_text
+
+    Only sets a field if it is not already present in field_ids (avoids overwriting
+    classifier-derived values). Mutates bubble_action in place.
+
+    Called from spike.py (at pipeline time, using in-memory extraction) and from
+    bubble_sync.py (at executor time, using S3-loaded extraction as fallback).
+    """
+    if bubble_action.get("library_item") != "create":
+        return
+    lp = bubble_action.get("library_item_preview")
+    if not isinstance(lp, dict):
+        return
+
+    fields = dict(lp.get("fields") or {})
+    field_ids = dict(lp.get("field_ids") or {})
+
+    def _val(key: str) -> str:
+        v = str(extraction.get(key) or "").strip()
+        return "" if v.lower() in _DOC_NA else v
+
+    description = _val("document_description")
+    date_pub = _val("date_published")
+    doc_type = _val("document_type")
+
+    if description and "description_text" not in field_ids:
+        # Truncate very long descriptions to avoid Bubble field limits
+        fields["Description"] = description[:500] + ("…" if len(description) > 500 else "")
+        field_ids["description_text"] = description[:2000]
+    if date_pub and "date_date" not in field_ids:
+        fields["Date"] = date_pub
+        field_ids["date_date"] = date_pub
+    if doc_type and "type___text_text" not in field_ids:
+        fields["Doc Type"] = doc_type
+        field_ids["type___text_text"] = doc_type
+
+    lp["fields"] = fields
+    lp["field_ids"] = field_ids
+
+
 def classify_alert(alert: dict) -> BubbleSyncPlan:
     """
     Classify an alert dict into a BubbleSyncPlan.
