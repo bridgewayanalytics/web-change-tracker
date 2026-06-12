@@ -1,8 +1,12 @@
 # Bubble Sync Flow — Alert → Action Mapping
 
+> **Status (June 2026):** Implemented. `bubble/bubble_sync_classifier.py` maps
+> alert types to actions and builds exact field previews. `bubble/bubble_sync.py`
+> executes real Bubble API calls (CREATE/UPDATE calendaritem + libraryitem).
+> The dashboard fires an ECS RunTask on confirm; see `CLAUDE.md` for full details.
+
 This document maps how each type of web-change alert translates into actions
-in the Bubble data model. Its purpose is to align the team on what needs to be
-built before we wire up the actual Bubble API calls.
+in the Bubble data model.
 
 ---
 

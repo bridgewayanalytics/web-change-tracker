@@ -109,6 +109,8 @@ Full spec: `docs/rerun-feature.md`
 | `scripts/wrap_schema_alerts.py` | Wrap flat DynamoDB `output_json_schema` in `alerts` array wrapper for multi-alert support |
 | `scripts/backfill_call_id.py` | One-time backfill of `agent_call_id` on existing JSONL rows (groups by `run_id` + `target_id`) |
 | `scripts/backfill_bubble_action.py` | Backfill `bubble_action` on existing `alerts_table.jsonl` rows using the classifier (idempotent, `--force` to re-classify) |
+| `scripts/backfill_recordings.py` | Backfill `recording_s3_key` on alerts that have `event_title`+`event_start_date_time` but no recording match yet. Two-pass: standard find_recording() then filename-based fallback for rows where event date is N/A. |
+| `scripts/backfill_transcripts.py` | Backfill `transcript_s3_key` + `transcript_chunks_s3_key` on alerts that have a `recording_s3_key` but haven't been transcribed/chunked. Groups by `agent_call_id` to transcribe once per recording. `--local` flag uses local Whisper model. |
 
 ## Agent configuration (DynamoDB)
 
