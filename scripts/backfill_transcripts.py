@@ -1,9 +1,11 @@
 """
-Backfill transcript_s3_key and transcript_chunks_s3_key on alerts that have
-a recording_s3_key but haven't been transcribed/chunked yet.
+Backfill transcript_s3_key on alerts that have a recording_s3_key but no transcript yet.
 
-Groups rows by agent_call_id so each recording is transcribed once, then all
-rows in the group are stamped with the transcript + chunks keys.
+Transcribes each recording via Whisper, submits the transcript to the newsreel
+knowledge base via presigned URL, and stamps transcript_s3_key + ingest_status=approved.
+
+Groups rows by agent_call_id so each recording is transcribed and ingested once,
+then all rows in the group are stamped.
 
 Usage:
     AWS_PROFILE=bridgeway python scripts/backfill_transcripts.py [--dry-run] [--limit N] [--local]
@@ -12,7 +14,6 @@ Options:
     --dry-run   Print what would be done without writing to S3 or calling APIs
     --limit N   Only process the first N unique recordings (default: all)
     --local     Use local openai-whisper model instead of the Whisper API
-                (useful when the OpenAI project lacks audio model access)
 """
 
 import argparse
@@ -109,9 +110,7 @@ def transcribe_local(client, recording_key: str, transcript_key: str) -> str | N
 
 
 def main():
-    from bubble.transcript_chunker import chunk_transcript
-
-    parser = argparse.ArgumentParser(description="Backfill transcripts and chunks on alerts")
+    parser = argparse.ArgumentParser(description="Backfill transcripts on alerts")
     parser.add_argument("--dry-run", action="store_true", help="Print what would be done without writing")
     parser.add_argument("--limit", type=int, default=0, help="Max unique recordings to process (0=all)")
     parser.add_argument("--local", action="store_true", help="Use local Whisper model instead of API")
@@ -120,20 +119,27 @@ def main():
     os.environ.setdefault("CHANGELOG_BUCKET", BUCKET)
     os.environ.setdefault("BUBBLE_ARTIFACT_BUCKET", BUCKET)
 
+    import boto3
+    ssm = boto3.client("ssm", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+
     # Fetch OpenAI key from SSM if not already in env
     if not os.environ.get("OPENAI_API_KEY", "").strip():
-        import boto3
         try:
-            ssm = boto3.client("ssm", region_name=os.environ.get("AWS_REGION", "us-east-1"))
-            result = ssm.get_parameter(
-                Name="/web-change-tracker/prod/openai_api_key",
-                WithDecryption=True,
-            )
+            result = ssm.get_parameter(Name="/web-change-tracker/prod/openai_api_key", WithDecryption=True)
             os.environ["OPENAI_API_KEY"] = result["Parameter"]["Value"].strip()
             log.info("Loaded OpenAI API key from SSM")
         except Exception as e:
             log.error("Could not fetch OpenAI key from SSM: %s", e)
             sys.exit(1)
+
+    # Fetch ChatKit internal API key from SSM if not already in env
+    if not os.environ.get("CHATKIT_INTERNAL_API_KEY", "").strip():
+        try:
+            result = ssm.get_parameter(Name="/web-change-tracker/prod/chatkit_internal_api_key", WithDecryption=True)
+            os.environ["CHATKIT_INTERNAL_API_KEY"] = result["Parameter"]["Value"].strip()
+            log.info("Loaded ChatKit internal API key from SSM")
+        except Exception as e:
+            log.warning("Could not fetch ChatKit internal API key from SSM: %s — ingest will be skipped", e)
 
     client = s3_client()
     log.info("Loading %s from s3://%s", ALERTS_KEY, BUCKET)
@@ -173,7 +179,7 @@ def main():
 
         if args.dry_run:
             mode = "local Whisper" if args.local else "Whisper API"
-            log.info("  [dry-run] would transcribe via %s + chunk", mode)
+            log.info("  [dry-run] would transcribe via %s → ingest to newsreel KB", mode)
             continue
 
         # Step 1: Transcribe
@@ -185,32 +191,32 @@ def main():
             transcript_key = transcribe_recording(recording_key)
 
         if not transcript_key:
-            log.warning("  Transcription failed — skipping chunking")
+            log.warning("  Transcription failed — skipping ingest")
             continue
 
         log.info("  Transcript: %s", transcript_key)
         transcript_count += 1
 
-        # Stamp transcript key on all rows in this group
+        # Step 2: Ingest transcript to newsreel KB via presigned URL
+        try:
+            from storage.ingest_actions import generate_presigned_url
+            from bubble.newsreel_ingest import ingest_for_newsreel
+            presigned_url = generate_presigned_url(transcript_key, expires_in=3600)
+            filename = transcript_key.split("/")[-1] or "transcript.txt"
+            ingest_for_newsreel(document_url=presigned_url, filename=filename)
+            log.info("  Ingested to newsreel KB as '%s'", filename)
+            ingest_ok = True
+        except Exception as exc:
+            log.warning("  Newsreel ingest failed: %s", exc)
+            ingest_ok = False
+
+        # Stamp transcript key + ingest_status on all rows in this group
         for row_i, _ in group_rows:
             rows[row_i]["transcript_s3_key"] = transcript_key
+            if ingest_ok and not rows[row_i].get("ingest_status"):
+                rows[row_i]["ingest_status"] = "approved"
 
-        # Step 2: Chunk
-        chunk_alert = dict(representative)
-        chunk_alert["transcript_s3_key"] = transcript_key
-        chunks_key = chunk_transcript(chunk_alert, run_id, target_id)
-
-        if not chunks_key:
-            log.warning("  Chunking failed or skipped")
-        else:
-            log.info("  Chunks: %s", chunks_key)
-            chunk_count += 1
-            for row_i, _ in group_rows:
-                rows[row_i]["transcript_chunks_s3_key"] = chunks_key
-                if not rows[row_i].get("ingest_status"):
-                    rows[row_i]["ingest_status"] = "pending"
-
-    log.info("Transcribed: %d  Chunked: %d", transcript_count, chunk_count)
+    log.info("Transcribed: %d", transcript_count)
 
     if args.dry_run:
         log.info("Dry run — nothing written.")
