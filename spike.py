@@ -3023,6 +3023,101 @@ def _run_manual_chunk(agent_call_id: str, transcript_s3_key: str) -> None:
     log.info("manual_chunk: patched %d row(s) for agent_call_id=%s", patched, agent_call_id)
 
 
+def _run_recording_ingest(recording_s3_key: str) -> None:
+    """
+    Process a new recording: transcribe, ingest to newsreel KB, stamp matching alerts.
+
+    Triggered via RECORDING_S3_KEY env var set by the recording_ingest_trigger Lambda.
+    Fully automatic — no human approval step.
+
+    Steps:
+      1. Transcribe the mp3 via Whisper (idempotent — skips if transcript already exists)
+      2. Generate a presigned URL for the transcript and submit to the newsreel KB
+      3. Scan alerts_table.jsonl for alert rows with a matching date/org that have no
+         transcript yet; stamp recording_s3_key, transcript_s3_key, ingest_status="approved"
+    """
+    import boto3
+    from bubble.transcriber import transcribe_recording
+    from bubble.newsreel_ingest import ingest_for_newsreel
+    from storage.ingest_actions import generate_presigned_url
+    from storage.alert_s3 import patch_jsonl_row
+    from bubble.recording_matcher import _extract_date, _extract_abbreviation, _acronym_score
+
+    log.info("recording_ingest: starting for s3://recordings-bucket-1/%s", recording_s3_key)
+
+    bucket = os.environ.get("CHANGELOG_BUCKET", "").strip()
+    if not bucket:
+        log.error("recording_ingest: CHANGELOG_BUCKET not set")
+        raise SystemExit(1)
+
+    # Step 1: Transcribe
+    transcript_key = transcribe_recording(recording_s3_key)
+    if not transcript_key:
+        log.error("recording_ingest: transcription failed for %s", recording_s3_key)
+        raise SystemExit(1)
+    log.info("recording_ingest: transcript at s3://%s/%s", bucket, transcript_key)
+
+    # Step 2: Submit to newsreel knowledge base via presigned URL
+    presigned_url = generate_presigned_url(transcript_key, expires_in=3600)
+    filename = transcript_key.split("/")[-1] or "transcript.txt"
+    ingest_for_newsreel(document_url=presigned_url, filename=filename)
+    log.info("recording_ingest: submitted to newsreel KB as '%s'", filename)
+
+    # Step 3: Find alert rows matching this recording and stamp them
+    rec_date = _extract_date(recording_s3_key)
+    rec_abbrev = _extract_abbreviation(recording_s3_key)
+    log.info("recording_ingest: searching for alerts with date=%s abbrev=%s", rec_date, rec_abbrev)
+
+    matching_call_ids: list[tuple[str, float, str]] = []  # (agent_call_id, score, event_title)
+    if rec_date:
+        try:
+            s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+            body = s3.get_object(Bucket=bucket, Key="alerts/alerts_table.jsonl")["Body"].read().decode("utf-8")
+            seen: set[str] = set()
+            for line in body.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                if row.get("transcript_s3_key"):
+                    continue  # already processed
+                event_dt = row.get("event_start_date_time", "")
+                if not isinstance(event_dt, str) or not event_dt.startswith(rec_date):
+                    continue
+                event_title = row.get("event_title", "")
+                if not isinstance(event_title, str) or event_title.strip().upper() in ("N/A", "N/A.", "-", ""):
+                    continue
+                score = _acronym_score(rec_abbrev, event_title) if rec_abbrev else 0.0
+                if score < 0.3:
+                    continue
+                call_id = row.get("agent_call_id", "")
+                if not call_id or call_id in seen:
+                    continue
+                seen.add(call_id)
+                matching_call_ids.append((call_id, score, event_title))
+        except Exception as exc:
+            log.warning("recording_ingest: could not scan alerts_table.jsonl: %s", exc)
+
+    log.info("recording_ingest: found %d matching alert row(s)", len(matching_call_ids))
+    for call_id, score, title in matching_call_ids:
+        log.info("  agent_call_id=%s score=%.2f title=%r", call_id, score, title)
+        patch_jsonl_row(
+            "alerts/alerts_table.jsonl",
+            {"agent_call_id": call_id},
+            {
+                "recording_s3_key": recording_s3_key,
+                "transcript_s3_key": transcript_key,
+                "ingest_status": "approved",
+            },
+            bucket=bucket,
+        )
+
+    log.info("recording_ingest: done")
+
+
 def _run_manual_doc(agent_call_id: str) -> None:
     """
     Run document extraction on a manually added document row and update it with results.
@@ -3189,6 +3284,13 @@ def main() -> None:
     manual_chunk_transcript_key = os.environ.get("MANUAL_CHUNK_TRANSCRIPT_S3_KEY", "").strip()
     if manual_chunk_call_id and manual_chunk_transcript_key:
         _run_manual_chunk(manual_chunk_call_id, manual_chunk_transcript_key)
+        return
+
+    # Recording ingest mode: transcribe a new recording and auto-ingest it.
+    # Triggered via RECORDING_S3_KEY env var set by the recording_ingest_trigger Lambda.
+    recording_s3_key = os.environ.get("RECORDING_S3_KEY", "").strip()
+    if recording_s3_key:
+        _run_recording_ingest(recording_s3_key)
         return
 
     # Manual doc mode: run document extraction on a manually added document row.
