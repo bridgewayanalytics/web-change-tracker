@@ -188,12 +188,42 @@ def _find_library_item(match_search: dict, client) -> str | None:
     return None
 
 
+def _resolve_chronicle_topic_ids(topic_names: list[str], client) -> list[str]:
+    """Resolve chronicle topic title strings to Bubble _id values."""
+    from bubble.bridgemind import TYPE_CHRONICLE_TOPIC, SPACE_CONSTRAINT
+    if not topic_names:
+        return []
+    name_to_id: dict[str, str] = {}
+    for topic in client.list_all(TYPE_CHRONICLE_TOPIC, constraints=SPACE_CONSTRAINT):
+        t = (topic.get("title_text") or "").strip()
+        tid = topic.get("_id") or ""
+        if t and tid:
+            name_to_id[t] = tid
+    ids = []
+    for name in topic_names:
+        tid = name_to_id.get(name)
+        if tid:
+            ids.append(tid)
+        else:
+            log.warning("bubble_sync: chronicle topic not found in Bubble: %r", name)
+    return ids
+
+
 def _inject_org_ids(field_ids: dict, org_ids: list[str]) -> dict:
     """Replace org name lists with resolved org ID lists in a field_ids dict."""
     out = dict(field_ids)
     for key in ("orgs__list_custom_organization", "organizations_list_custom_organization"):
         if key in out and isinstance(out[key], list):
             out[key] = org_ids
+    return out
+
+
+def _inject_topic_ids(field_ids: dict, topic_ids: list[str]) -> dict:
+    """Replace chronicle topic name lists with resolved topic ID lists in a field_ids dict."""
+    out = dict(field_ids)
+    key = "topics___dt_list_custom_newsreel_update"
+    if key in out and isinstance(out[key], list):
+        out[key] = topic_ids
     return out
 
 
@@ -230,18 +260,26 @@ def sync_alert(agent_call_id: str) -> dict:
     ep = plan.get("event_preview") or {}
     lp = plan.get("library_item_preview") or {}
 
-    # Enrich library item CREATE payload with doc extraction metadata if not already present.
+    # Enrich previews with doc extraction metadata if not already present.
+    # Enrichment adds lib item fields (CREATE only) and chronicle topics on both previews.
     # Covers rows where spike.py didn't run the enrichment (old rows, backfilled rows).
-    if lib_action == "create":
-        doc_row = _find_doc_extraction(agent_call_id, bucket)
-        if doc_row:
-            from bubble.bubble_sync_classifier import enrich_with_doc_extraction
-            enrich_with_doc_extraction(plan, doc_row)
-            lp = plan.get("library_item_preview") or {}
+    doc_row = _find_doc_extraction(agent_call_id, bucket)
+    if doc_row:
+        from bubble.bubble_sync_classifier import enrich_with_doc_extraction
+        enrich_with_doc_extraction(plan, doc_row)
+        ep = plan.get("event_preview") or {}
+        lp = plan.get("library_item_preview") or {}
 
     # Org name → ID (shared; org names appear in both event and lib previews)
     org_names: list[str] = ep.get("group") or lp.get("group") or []
     org_ids = _resolve_org_ids(org_names, client) if org_names else []
+
+    # Chronicle topic name → ID resolution (topics come from doc extraction enrichment)
+    _topic_key = "topics___dt_list_custom_newsreel_update"
+    ep_topic_names = [t for t in ((ep.get("field_ids") or {}).get(_topic_key) or []) if isinstance(t, str)]
+    lp_topic_names = [t for t in ((lp.get("field_ids") or {}).get(_topic_key) or []) if isinstance(t, str)]
+    all_topic_names = list({*ep_topic_names, *lp_topic_names})
+    topic_ids = _resolve_chronicle_topic_ids(all_topic_names, client) if all_topic_names else []
 
     bubble_library_item_id: str | None = None
     bubble_event_id: str | None = None
@@ -249,7 +287,7 @@ def sync_alert(agent_call_id: str) -> dict:
     try:
         # ── Library item ─────────────────────────────────────────────────────
         if lib_action == "create":
-            field_ids = _clean(_inject_org_ids(dict(lp.get("field_ids") or {}), org_ids))
+            field_ids = _clean(_inject_org_ids(_inject_topic_ids(dict(lp.get("field_ids") or {}), topic_ids), org_ids))
             log.info("bubble_sync: CREATE libraryitem fields=%s", list(field_ids.keys()))
             bubble_library_item_id = client.create(TYPE_LIBRARY_ITEM, field_ids)
             log.info("bubble_sync: created libraryitem _id=%s", bubble_library_item_id)
@@ -257,7 +295,7 @@ def sync_alert(agent_call_id: str) -> dict:
         elif lib_action == "update":
             existing_lib_id = _find_library_item(lp.get("match_search") or {}, client)
             if existing_lib_id:
-                field_ids = _clean(dict(lp.get("field_ids") or {}))
+                field_ids = _clean(_inject_topic_ids(dict(lp.get("field_ids") or {}), topic_ids))
                 if field_ids:
                     log.info("bubble_sync: UPDATE libraryitem _id=%s fields=%s", existing_lib_id, list(field_ids.keys()))
                     client.patch(TYPE_LIBRARY_ITEM, existing_lib_id, field_ids, scope="sync")
@@ -267,7 +305,7 @@ def sync_alert(agent_call_id: str) -> dict:
 
         # ── Calendar item ─────────────────────────────────────────────────────
         if event_action == "create":
-            field_ids = _clean(_inject_org_ids(dict(ep.get("field_ids") or {}), org_ids))
+            field_ids = _clean(_inject_org_ids(_inject_topic_ids(dict(ep.get("field_ids") or {}), topic_ids), org_ids))
             if bubble_library_item_id:
                 field_ids["relevant_resources_list_custom_resource"] = [bubble_library_item_id]
             log.info("bubble_sync: CREATE calendaritem fields=%s", list(field_ids.keys()))
@@ -277,7 +315,7 @@ def sync_alert(agent_call_id: str) -> dict:
         elif event_action == "update":
             existing_event_id = _find_calendar_item(ep.get("match_search") or {}, client)
             if existing_event_id:
-                field_ids = _clean(_inject_org_ids(dict(ep.get("field_ids") or {}), org_ids))
+                field_ids = _clean(_inject_org_ids(_inject_topic_ids(dict(ep.get("field_ids") or {}), topic_ids), org_ids))
                 if bubble_library_item_id:
                     field_ids["relevant_resources_list_custom_resource"] = [bubble_library_item_id]
                 if field_ids:

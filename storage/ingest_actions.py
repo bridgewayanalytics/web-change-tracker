@@ -53,11 +53,9 @@ def _find_row(jsonl_key: str, match_fields: dict, bucket: str) -> dict | None:
 
 def approve_transcript_ingest(agent_call_id: str) -> bool:
     """
-    Approve a transcript for ingest: calls ingest-transcript-chunks API, then
-    patches the alert row to ingest_status: "approved".
-
-    Matches on agent_call_id. All alerts sharing the same agent_call_id are patched
-    (normally one row per meeting alert).
+    Approve a transcript for ingest: generates a presigned URL for the transcript
+    txt file and submits it to the newsreel-generation knowledge base via
+    ingest_for_newsreel(), then patches the alert row to ingest_status: "approved".
     """
     bucket = _get_bucket()
     row = _find_row(_ALERTS_TABLE_KEY, {"agent_call_id": agent_call_id}, bucket)
@@ -65,13 +63,16 @@ def approve_transcript_ingest(agent_call_id: str) -> bool:
         log.warning("approve_transcript_ingest: no row for agent_call_id=%s", agent_call_id)
         return False
 
-    chunks_key = row.get("transcript_chunks_s3_key")
-    if not chunks_key:
-        log.warning("approve_transcript_ingest: no transcript_chunks_s3_key for agent_call_id=%s", agent_call_id)
+    transcript_key = row.get("transcript_s3_key") or row.get("manual_transcript_s3_key")
+    if not transcript_key:
+        log.warning("approve_transcript_ingest: no transcript_s3_key for agent_call_id=%s", agent_call_id)
         return False
 
-    from bubble.newsreel_ingest import ingest_transcript_chunks
-    ingest_transcript_chunks(s3_bucket=bucket, s3_key=chunks_key)
+    presigned_url = generate_presigned_url(transcript_key, expires_in=3600)
+    filename = transcript_key.split("/")[-1] or "transcript.txt"
+
+    from bubble.newsreel_ingest import ingest_for_newsreel
+    ingest_for_newsreel(document_url=presigned_url, filename=filename)
 
     from storage.alert_s3 import patch_jsonl_row
     patch_jsonl_row(

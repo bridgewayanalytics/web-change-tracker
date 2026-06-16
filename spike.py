@@ -1930,13 +1930,11 @@ def _build_bubble_payloads(
         if doc_results:
             ev["__doc_extraction"] = doc_results
 
-    # Match meeting alerts to audio recordings, transcribe, and chunk by agenda item
+    # Match meeting alerts to audio recordings and transcribe
     try:
         from bubble.recording_matcher import find_recording as _find_recording
         from bubble.transcriber import transcribe_recording as _transcribe
-        from bubble.transcript_chunker import chunk_transcript as _chunk_transcript
         for ev in change_events:
-            ev_target_id = ev.get("target_id", "")
             for alert in (ev.get("__agent_output") or []):
                 title = alert.get("event_title") or ""
                 dt = alert.get("event_start_date_time") or ""
@@ -1951,10 +1949,7 @@ def _build_bubble_payloads(
                 t_key = _transcribe(rec_key)
                 if t_key:
                     alert["transcript_s3_key"] = t_key
-                    chunks_key = _chunk_transcript(alert, run_id=run_id, target_id=ev_target_id)
-                    if chunks_key:
-                        alert["transcript_chunks_s3_key"] = chunks_key
-                        alert["ingest_status"] = "pending"
+                    alert["ingest_status"] = "pending"
     except Exception as _rec_exc:
         log.warning("recording_matcher: non-fatal error: %s", _rec_exc)
 

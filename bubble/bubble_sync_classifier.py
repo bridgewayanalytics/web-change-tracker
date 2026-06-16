@@ -376,20 +376,44 @@ _DOC_NA = frozenset({"", "n/a", "n/a.", "-", "none", "null"})
 
 def enrich_with_doc_extraction(bubble_action: dict, extraction: dict) -> None:
     """
-    Merge relevant document-agent fields into bubble_action.library_item_preview
-    when a library item is being CREATEd.
+    Merge relevant document-agent fields into bubble_action previews.
 
-    Sets description_text, date_date, and type___text_text from:
+    Event preview (any action): populates topics___dt_list_custom_newsreel_update
+    from agenda_items[*].chronicle_topics in the extraction.
+
+    Library item CREATE preview: sets description_text, date_date, type___text_text,
+    and topics___dt_list_custom_newsreel_update from:
       extraction["document_description"] → description_text
       extraction["date_published"]        → date_date
       extraction["document_type"]         → type___text_text
+      extraction["agenda_items"][*]["chronicle_topics"] → topics (names; executor resolves to IDs)
 
-    Only sets a field if it is not already present in field_ids (avoids overwriting
-    classifier-derived values). Mutates bubble_action in place.
-
-    Called from spike.py (at pipeline time, using in-memory extraction) and from
-    bubble_sync.py (at executor time, using S3-loaded extraction as fallback).
+    Only sets a field if not already present in field_ids. Mutates bubble_action in place.
     """
+    # Collect unique chronicle topic names from doc extraction agenda items
+    topics: list[str] = []
+    seen: set[str] = set()
+    for item in (extraction.get("agenda_items") or []):
+        if not isinstance(item, dict):
+            continue
+        for t in (item.get("chronicle_topics") or []):
+            t_str = str(t).strip()
+            if t_str and t_str.lower() not in _DOC_NA and t_str not in seen:
+                topics.append(t_str)
+                seen.add(t_str)
+
+    # -- Event preview: add topics regardless of create/update --
+    ep = bubble_action.get("event_preview")
+    if isinstance(ep, dict) and topics:
+        ep_field_ids = dict(ep.get("field_ids") or {})
+        ep_fields = dict(ep.get("fields") or {})
+        if "topics___dt_list_custom_newsreel_update" not in ep_field_ids:
+            ep_field_ids["topics___dt_list_custom_newsreel_update"] = topics
+            ep_fields["Topics"] = ", ".join(topics)
+        ep["field_ids"] = ep_field_ids
+        ep["fields"] = ep_fields
+
+    # -- Library item CREATE preview --
     if bubble_action.get("library_item") != "create":
         return
     lp = bubble_action.get("library_item_preview")
@@ -408,7 +432,6 @@ def enrich_with_doc_extraction(bubble_action: dict, extraction: dict) -> None:
     doc_type = _val("document_type")
 
     if description and "description_text" not in field_ids:
-        # Truncate very long descriptions to avoid Bubble field limits
         fields["Description"] = description[:500] + ("…" if len(description) > 500 else "")
         field_ids["description_text"] = description[:2000]
     if date_pub and "date_date" not in field_ids:
@@ -417,6 +440,9 @@ def enrich_with_doc_extraction(bubble_action: dict, extraction: dict) -> None:
     if doc_type and "type___text_text" not in field_ids:
         fields["Doc Type"] = doc_type
         field_ids["type___text_text"] = doc_type
+    if topics and "topics___dt_list_custom_newsreel_update" not in field_ids:
+        fields["Topics"] = ", ".join(topics)
+        field_ids["topics___dt_list_custom_newsreel_update"] = topics
 
     lp["fields"] = fields
     lp["field_ids"] = field_ids

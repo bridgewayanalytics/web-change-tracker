@@ -26,13 +26,21 @@ log = logging.getLogger(__name__)
 
 _CHAT_ID = "document-data-extraction"
 
-# Alert types that indicate new/updated documents and should trigger extraction
+# Alert types that indicate new/updated documents and should trigger extraction.
+# Covers all alert types that result in a library item (create or update).
 DOCUMENT_ALERT_TYPES = frozenset({
+    "New Agenda",
     "New Materials",
     "New Agenda & Materials",
+    "Updated Agenda",
     "Updated Materials",
     "Updated Agenda & Materials",
+    "New Request for Comment",
+    "Updated Request for Comment",
+    "New Effective Date",
+    "Updated Effective Date",
     "New or Updated Report or Other Resource",
+    "Other",
 })
 
 _FALLBACK_SYSTEM_PROMPT = """\
