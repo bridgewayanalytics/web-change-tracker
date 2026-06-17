@@ -315,6 +315,7 @@ def extract_document_data(
     document_name: str,
     document_url: str,
     pdf_text: str | None = None,
+    text_limit: int | None = None,
 ) -> dict:
     """
     Extract structured data from a document using the document-data-extraction agent.
@@ -343,7 +344,7 @@ def extract_document_data(
             f"URL: {document_url}",
         ]
         if pdf_text:
-            lines.append(f"\nDocument content:\n{pdf_text[:_PDF_TEXT_LIMIT]}")
+            lines.append(f"\nDocument content:\n{pdf_text[:(text_limit or _PDF_TEXT_LIMIT)]}")
         user_content = "\n".join(lines)
 
         json_schema = _get_output_json_schema()

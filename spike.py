@@ -1953,6 +1953,54 @@ def _build_bubble_payloads(
     except Exception as _rec_exc:
         log.warning("recording_matcher: non-fatal error: %s", _rec_exc)
 
+    # Extract structured data from meeting transcripts via document agent.
+    # Runs after transcription so transcript_s3_key is already stamped on the alert.
+    try:
+        from bubble.document_agent import extract_document_data as _extract_doc_from_transcript
+        import boto3 as _boto3_tx
+        _tx_bucket = (
+            os.environ.get("CHANGELOG_BUCKET", "").strip()
+            or os.environ.get("BUBBLE_ARTIFACT_BUCKET", "").strip()
+        )
+        _tx_s3 = None
+        for ev in change_events:
+            for alert in (ev.get("__agent_output") or []):
+                t_key = str(alert.get("transcript_s3_key") or "").strip()
+                if not t_key:
+                    continue
+                event_title = str(alert.get("event_title") or "").strip()
+                if not event_title or event_title.upper() in ("N/A", "N/A.", "-"):
+                    continue
+                if not _tx_bucket:
+                    log.warning("transcript_doc_agent: CHANGELOG_BUCKET not set — skipping")
+                    break
+                try:
+                    if _tx_s3 is None:
+                        _tx_s3 = _boto3_tx.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+                    transcript_text = _tx_s3.get_object(Bucket=_tx_bucket, Key=t_key)["Body"].read().decode("utf-8")
+                except Exception as _dl_exc:
+                    log.warning("transcript_doc_agent: failed to download %s: %s", t_key, _dl_exc)
+                    continue
+                doc_name = f"Meeting Transcript: {event_title}"
+                doc_result = _extract_doc_from_transcript(
+                    doc_name, document_url="", pdf_text=transcript_text, text_limit=40_000
+                )
+                if doc_result:
+                    doc_result["extraction_source"] = "transcript"
+                    doc_result["transcript_s3_key"] = t_key
+                    item = {
+                        "preliminary_title": doc_name,
+                        "url": "",
+                        "file_name": t_key.split("/")[-1],
+                    }
+                    ev.setdefault("__doc_extraction", []).append({"item": item, "extraction": doc_result})
+                    log.info(
+                        "transcript_doc_agent: extracted %d field(s) for: %s",
+                        len(doc_result), doc_name[:60],
+                    )
+    except Exception as _tx_exc:
+        log.warning("transcript document extraction: non-fatal error: %s", _tx_exc)
+
     # Stamp bubble_action on each alert — pure classification, no API calls.
     # Irrelevant alerts (No Meaningful Change, carousel) are skipped.
     try:
