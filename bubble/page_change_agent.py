@@ -282,18 +282,6 @@ def _ensure_alerts_wrapper(schema: dict) -> dict:
     }
 
 
-def _load_org_tree() -> str:
-    """Load prompts/org_tree.txt for injection into the user message.
-
-    Returns the full file content, or empty string if the file is missing.
-    """
-    path = Path(__file__).resolve().parent.parent / "prompts" / "org_tree.txt"
-    try:
-        return path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        log.warning("org_tree.txt not found at %s — organization guidance will be omitted", path)
-        return ""
-
 
 _ALERT_TYPE_PROP_NAMES = frozenset({"alert_type", "Alert Type"})
 
@@ -516,9 +504,10 @@ def extract_page_change(
         )
 
         output_schema = _get_output_schema_str()
-        org_tree = _load_org_tree()
+        from bubble.org_tree import get_org_tree
+        org_tree = get_org_tree()
         org_tree_block = (
-            f"=== ORGANIZATION REFERENCE (org_tree.txt) ===\n{org_tree}\n\n"
+            f"=== ORGANIZATION REFERENCE ===\n{org_tree}\n\n"
             if org_tree else ""
         )
         user_content = (
