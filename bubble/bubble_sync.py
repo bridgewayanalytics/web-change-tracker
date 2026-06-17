@@ -232,9 +232,14 @@ def _clean(field_ids: dict) -> dict:
     return {k: v for k, v in field_ids.items() if v is not None and v != "" and v != []}
 
 
-def sync_alert(agent_call_id: str) -> dict:
+def sync_alert(agent_call_id: str, action: str = "all") -> dict:
     """
     Execute Bubble sync for an alert identified by agent_call_id.
+
+    action: "all" (default) | "event" | "library_item"
+      - "all": sync both library item and calendar item
+      - "event": sync calendar item only; links to existing bubble_library_item_id if present on row
+      - "library_item": sync library item only
 
     Returns: { ok: bool, plan: dict | None, bubble_event_id, bubble_library_item_id, error }
     """
@@ -249,6 +254,9 @@ def sync_alert(agent_call_id: str) -> dict:
     plan = row.get("bubble_action")
     if not plan:
         return {"ok": False, "error": "no bubble_action on row — run backfill_bubble_action.py"}
+
+    run_lib = action in ("all", "library_item")
+    run_event = action in ("all", "event")
 
     client = _get_bubble_client()
 
@@ -284,49 +292,59 @@ def sync_alert(agent_call_id: str) -> dict:
     bubble_library_item_id: str | None = None
     bubble_event_id: str | None = None
 
+    # When syncing event-only, carry forward any library item ID already on the row
+    # so we can link it to the calendar item.
+    if action == "event":
+        existing_lib_id = str(row.get("bubble_library_item_id") or "").strip() or None
+        if existing_lib_id:
+            bubble_library_item_id = existing_lib_id
+            log.info("bubble_sync: action=event — linking existing bubble_library_item_id=%s", bubble_library_item_id)
+
     try:
         # ── Library item ─────────────────────────────────────────────────────
-        if lib_action == "create":
-            field_ids = _clean(_inject_org_ids(_inject_topic_ids(dict(lp.get("field_ids") or {}), topic_ids), org_ids))
-            log.info("bubble_sync: CREATE libraryitem fields=%s", list(field_ids.keys()))
-            bubble_library_item_id = client.create(TYPE_LIBRARY_ITEM, field_ids)
-            log.info("bubble_sync: created libraryitem _id=%s", bubble_library_item_id)
+        if run_lib:
+            if lib_action == "create":
+                field_ids = _clean(_inject_org_ids(_inject_topic_ids(dict(lp.get("field_ids") or {}), topic_ids), org_ids))
+                log.info("bubble_sync: CREATE libraryitem fields=%s", list(field_ids.keys()))
+                bubble_library_item_id = client.create(TYPE_LIBRARY_ITEM, field_ids)
+                log.info("bubble_sync: created libraryitem _id=%s", bubble_library_item_id)
 
-        elif lib_action == "update":
-            existing_lib_id = _find_library_item(lp.get("match_search") or {}, client)
-            if existing_lib_id:
-                field_ids = _clean(_inject_topic_ids(dict(lp.get("field_ids") or {}), topic_ids))
-                if field_ids:
-                    log.info("bubble_sync: UPDATE libraryitem _id=%s fields=%s", existing_lib_id, list(field_ids.keys()))
-                    client.patch(TYPE_LIBRARY_ITEM, existing_lib_id, field_ids, scope="sync")
-                bubble_library_item_id = existing_lib_id
-            else:
-                log.warning("bubble_sync: UPDATE libraryitem — no existing record for match_search=%s", lp.get("match_search"))
+            elif lib_action == "update":
+                existing_lib_id = _find_library_item(lp.get("match_search") or {}, client)
+                if existing_lib_id:
+                    field_ids = _clean(_inject_topic_ids(dict(lp.get("field_ids") or {}), topic_ids))
+                    if field_ids:
+                        log.info("bubble_sync: UPDATE libraryitem _id=%s fields=%s", existing_lib_id, list(field_ids.keys()))
+                        client.patch(TYPE_LIBRARY_ITEM, existing_lib_id, field_ids, scope="sync")
+                    bubble_library_item_id = existing_lib_id
+                else:
+                    log.warning("bubble_sync: UPDATE libraryitem — no existing record for match_search=%s", lp.get("match_search"))
 
         # ── Calendar item ─────────────────────────────────────────────────────
-        if event_action == "create":
-            field_ids = _clean(_inject_org_ids(_inject_topic_ids(dict(ep.get("field_ids") or {}), topic_ids), org_ids))
-            if bubble_library_item_id:
-                field_ids["relevant_resources_list_custom_resource"] = [bubble_library_item_id]
-            log.info("bubble_sync: CREATE calendaritem fields=%s", list(field_ids.keys()))
-            bubble_event_id = client.create(TYPE_CALENDAR_ITEM, field_ids)
-            log.info("bubble_sync: created calendaritem _id=%s", bubble_event_id)
-
-        elif event_action == "update":
-            existing_event_id = _find_calendar_item(ep.get("match_search") or {}, client)
-            if existing_event_id:
+        if run_event:
+            if event_action == "create":
                 field_ids = _clean(_inject_org_ids(_inject_topic_ids(dict(ep.get("field_ids") or {}), topic_ids), org_ids))
                 if bubble_library_item_id:
                     field_ids["relevant_resources_list_custom_resource"] = [bubble_library_item_id]
-                if field_ids:
-                    log.info("bubble_sync: UPDATE calendaritem _id=%s fields=%s", existing_event_id, list(field_ids.keys()))
-                    client.patch(TYPE_CALENDAR_ITEM, existing_event_id, field_ids, scope="sync")
-                bubble_event_id = existing_event_id
-            else:
-                log.warning("bubble_sync: UPDATE calendaritem — no existing record for match_search=%s", ep.get("match_search"))
+                log.info("bubble_sync: CREATE calendaritem fields=%s", list(field_ids.keys()))
+                bubble_event_id = client.create(TYPE_CALENDAR_ITEM, field_ids)
+                log.info("bubble_sync: created calendaritem _id=%s", bubble_event_id)
+
+            elif event_action == "update":
+                existing_event_id = _find_calendar_item(ep.get("match_search") or {}, client)
+                if existing_event_id:
+                    field_ids = _clean(_inject_org_ids(_inject_topic_ids(dict(ep.get("field_ids") or {}), topic_ids), org_ids))
+                    if bubble_library_item_id:
+                        field_ids["relevant_resources_list_custom_resource"] = [bubble_library_item_id]
+                    if field_ids:
+                        log.info("bubble_sync: UPDATE calendaritem _id=%s fields=%s", existing_event_id, list(field_ids.keys()))
+                        client.patch(TYPE_CALENDAR_ITEM, existing_event_id, field_ids, scope="sync")
+                    bubble_event_id = existing_event_id
+                else:
+                    log.warning("bubble_sync: UPDATE calendaritem — no existing record for match_search=%s", ep.get("match_search"))
 
     except Exception as exc:
-        log.error("bubble_sync: error for agent_call_id=%s: %s", agent_call_id, exc, exc_info=True)
+        log.error("bubble_sync: error for agent_call_id=%s action=%s: %s", agent_call_id, action, exc, exc_info=True)
         patch_jsonl_row(
             _ALERTS_TABLE_KEY,
             {"agent_call_id": agent_call_id},
@@ -335,23 +353,28 @@ def sync_alert(agent_call_id: str) -> dict:
         )
         return {"ok": False, "error": str(exc), "plan": plan}
 
-    # Patch status and IDs
-    patch_fields: dict = {"bubble_sync_status": "synced"}
+    # Patch status and IDs.
+    # Only set bubble_sync_status="synced" when action=="all" to preserve
+    # the existing full-sync semantics. Individual actions just stamp their IDs.
+    patch_fields: dict = {}
+    if action == "all":
+        patch_fields["bubble_sync_status"] = "synced"
     if bubble_event_id:
         patch_fields["bubble_event_id"] = bubble_event_id
-    if bubble_library_item_id:
+    if bubble_library_item_id and run_lib:
         patch_fields["bubble_library_item_id"] = bubble_library_item_id
 
-    patched = patch_jsonl_row(
-        _ALERTS_TABLE_KEY,
-        {"agent_call_id": agent_call_id},
-        patch_fields,
-        bucket=bucket,
-    )
-    log.info(
-        "bubble_sync: patched %d row(s) for agent_call_id=%s event_id=%s lib_id=%s",
-        patched, agent_call_id, bubble_event_id, bubble_library_item_id,
-    )
+    if patch_fields:
+        patched = patch_jsonl_row(
+            _ALERTS_TABLE_KEY,
+            {"agent_call_id": agent_call_id},
+            patch_fields,
+            bucket=bucket,
+        )
+        log.info(
+            "bubble_sync: patched %d row(s) for agent_call_id=%s action=%s event_id=%s lib_id=%s",
+            patched, agent_call_id, action, bubble_event_id, bubble_library_item_id,
+        )
 
     return {
         "ok": True,
