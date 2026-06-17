@@ -43,7 +43,7 @@ Website change-tracking system that monitors configured NAIC web pages on a 6-ho
    - A `## Output Format` JSON suffix is automatically appended to the DynamoDB `instructions` at runtime — do not add JSON format requirements to the DynamoDB config itself
 9. **Alert storage** (`alert_s3.py`) — writes `alerts_table.jsonl`, per-run `alerts.json`, `alerts_table.xlsx` to S3. Excel export serializes list/dict cell values to JSON strings before writing to openpyxl cells.
 10. **Recording matcher** (`bubble/recording_matcher.py`) — after the document agent loop, matches meeting alerts to mp3 recordings in `recordings-bucket-1` S3 bucket. Stamps `recording_s3_key` on matching alerts.
-11. **Transcriber** (`bubble/transcriber.py`) — for alerts that got a `recording_s3_key`, converts the mp3 to a plain-text transcript via OpenAI Whisper and stores it in the artifacts bucket under `transcripts/`. Stamps `transcript_s3_key` and `ingest_status: "pending"` on the alert. Idempotent.
+11. **Transcriber** (`bubble/transcriber.py`) — for alerts that got a `recording_s3_key`, converts the mp3 to a timestamped transcript via OpenAI Whisper (`verbose_json`, `[HH:MM:SS] text` per segment) and stores it in the artifacts bucket under `transcripts/`. Stamps `transcript_s3_key` and `ingest_status: "pending"` on the alert. Idempotent.
 12. **Ingest gate** — no auto-ingest into the newsreel knowledge base. `ingest_status` field controls lifecycle: `null` (not eligible), `"pending"` (awaiting dashboard approval), `"approved"` (ingested), `"rejected"` (dismissed). Dashboard shows approve/edit/reject buttons per row. See `storage/ingest_actions.py`.
 13. **Bubble sync classifier** (`bubble/bubble_sync_classifier.py`) — after the recording/transcript pipeline, runs `classify_alert()` on every alert and stamps `bubble_action` on applicable rows. Pure function, no API calls. Maps `alert_type` → `{event, library_item, agenda_items}` with full field previews (event_preview, library_item_preview, agenda_item_previews). `enrich_with_doc_extraction()` merges doc extraction metadata into both previews: description/date/type on library item CREATE; chronicle topics (`topics___dt_list_custom_newsreel_update`) on both event and library item previews. Irrelevant alerts (No Meaningful Change, carousel) get no field set.
 15. **Notifier** (SES) — email summary of changes
@@ -71,7 +71,7 @@ Full spec: `docs/rerun-feature.md`
 - `scrape/` — HTML content extraction, PDF metadata, page chunking
 - `config/` — RunSpec (CLI > env > defaults), chatkit DynamoDB config loader
 - `scripts/` — Deploy, backfill, schema management, smoke tests
-- `prompts/` — Prompt context files injected into agent user messages. `org_tree.txt` is the org hierarchy tree (dash-depth format, 140+ orgs) used to guide organization field assignment
+- `prompts/` — Prompt context files injected into agent user messages. `org_tree.txt` is a static fallback org hierarchy tree (dash-depth format, 140+ orgs); live data is fetched from Bubble API via `bubble/org_tree.py`
 - `infra/terraform/` — ECS Fargate, EventBridge, DynamoDB, S3, IAM
 - `tests/` — Unit/integration tests
 - `docs/` — Feature specs (rerun feature)
@@ -88,8 +88,9 @@ Full spec: `docs/rerun-feature.md`
 - `bubble/document_agent.py` — Document matching RAG agent (`extract_document_data()`, two-step pgvector enforcement)
 - `bubble/openai_client.py` — OpenAI Responses API client; `chat_json()` supports both `json_object` and `json_schema` structured outputs
 - `bubble/recording_matcher.py` — `find_recording(event_title, event_start_date_time)` matches alerts to mp3s in `recordings-bucket-1` by date + acronym scoring
-- `bubble/transcriber.py` — `transcribe_recording(recording_s3_key)` converts mp3 → text via Whisper, stores under `transcripts/` in artifacts bucket
+- `bubble/transcriber.py` — `transcribe_recording(recording_s3_key)` converts mp3 → timestamped text via Whisper (`verbose_json` format, `[HH:MM:SS] text` per segment), stores under `transcripts/` in artifacts bucket. `format_with_timestamps(segments)` shared with backfill script.
 - `bubble/newsreel_ingest.py` — `ingest_for_newsreel(document_url, filename)` pushes documents and transcripts (via presigned URL) to ChatKit newsreel-generation knowledge base
+- `bubble/org_tree.py` — `get_org_tree()` fetches the live Bubble org hierarchy (143 orgs) and formats it as dash-depth text for injection into agent context. 30-min in-process cache; falls back to `prompts/org_tree.txt`.
 - `bubble/bubble_sync_classifier.py` — `classify_alert(alert) → BubbleSyncPlan` pure classifier; stamps `bubble_action` on applicable alerts. `enrich_with_doc_extraction(bubble_action, extraction)` merges doc extraction fields (description, date, type, chronicle topics) into previews. No I/O. See `bubble_action` field docs below.
 - `bubble/bubble_sync.py` — `sync_alert(agent_call_id)` real Bubble sync executor: resolves org names → IDs, CREATE/UPDATE libraryitem + calendaritem using `field_ids` from preview, links them via `relevant_resources_list_custom_resource`. Triggered via ECS RunTask from dashboard route.
 - `storage/alert_s3.py` — Alert storage, flat/nested schema detection, Excel export, `patch_jsonl_row()` utility
@@ -156,7 +157,7 @@ New flat schema — all top-level, no nested arrays for event/library/agenda ite
 | `alert_title` | string | |
 | `alert_description` | string | |
 | `alert_url` | string | URL where change was detected |
-| `organization` | `string[]` | Array of org name(s) — guided by `prompts/org_tree.txt` |
+| `organization` | `string[]` | Array of org name(s) — guided by live Bubble org tree (`bubble/org_tree.py`; falls back to `prompts/org_tree.txt`) |
 | `alert_date_time` | string | ISO 8601 Eastern Time |
 | `event_title` | string | "N/A" if no event |
 | `event_start_date_time` | string | ISO 8601 or "N/A" |
@@ -310,7 +311,7 @@ Dashboard shows "Sync to Bubble" button on rows with `bubble_action` set and no 
 - **ModelSettings for reasoning models:** Use `ModelSettings(reasoning=Reasoning(effort="low"))` — NOT `ModelSettings(reasoning_effort="low")` which silently ignores the parameter.
 - Bubble.io integration is currently legacy; Bubble admin UI syncs `output_json_schema` + `output_requested_values` to DynamoDB
 - Debug artifacts go to `debug/` directory (gitignored)
-- `prompts/org_tree.txt` — dash-depth hierarchy of 140+ organizations, sourced from Bubble API. Injected into agent context to guide `organization` field assignment. Regenerate from Bubble API if org structure changes.
+- **Dynamic org tree:** `bubble/org_tree.py` fetches the live Bubble org hierarchy at runtime via `get_org_tree()` (30-min in-process cache, DFS traversal sorted by `Order`, `"-" * level + Name` format). Falls back to `prompts/org_tree.txt` if Bubble is unavailable. Called from `page_change_agent.py` for every agent invocation — org structure changes in Bubble propagate automatically within 30 minutes.
 - **ECS entrypoint.sh:** Supports running arbitrary Python commands via CMD override (e.g., `python scripts/backfill_document_extractions.py`). If `$1` is `python`, the full command is exec'd directly. Default (no args) runs `python spike.py`.
 - **Library item extraction (flat schema):** `spike.py` extracts library items from flat schema fields (`library_item_preliminary_title`, `library_item_url`, `library_items_file_name`) in the normal pipeline, not just from nested `library_items[]` arrays. The backfill script mirrors this logic.
 - **Multi-alert granularity (DynamoDB instructions):** The `web-tracking-agent` instructions explicitly constrain granularity: one row per distinct document/PDF (by URL or filename), one row per distinct event/meeting. Multiple agenda items within the same document go in the `agenda_item_title_and_chronicle_topics` array of that one row — do NOT fan out by agenda item.
