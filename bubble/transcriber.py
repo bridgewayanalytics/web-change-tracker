@@ -30,6 +30,29 @@ def _transcript_key(recording_key: str) -> str:
     return f"{_TRANSCRIPT_PREFIX}{recording_key.removesuffix('.mp3')}.txt"
 
 
+def format_with_timestamps(segments) -> str:
+    """
+    Format Whisper segments as timestamped lines: '[HH:MM:SS] text'.
+
+    Accepts both API (TranscriptionSegment objects) and local-model (dicts).
+    """
+    lines = []
+    for seg in segments:
+        if isinstance(seg, dict):
+            start = float(seg.get("start", 0))
+            text = str(seg.get("text", "")).strip()
+        else:
+            start = float(getattr(seg, "start", 0))
+            text = str(getattr(seg, "text", "")).strip()
+        if not text:
+            continue
+        h = int(start // 3600)
+        m = int((start % 3600) // 60)
+        s = int(start % 60)
+        lines.append(f"[{h:02d}:{m:02d}:{s:02d}] {text}")
+    return "\n".join(lines)
+
+
 def transcribe_recording(recording_s3_key: str) -> str | None:
     """
     Transcribe an mp3 from recordings-bucket-1.
@@ -85,9 +108,13 @@ def transcribe_recording(recording_s3_key: str) -> str | None:
         result = client.audio.transcriptions.create(
             model="whisper-1",
             file=audio_file,
-            response_format="text",
+            response_format="verbose_json",
         )
-        transcript_text = result if isinstance(result, str) else getattr(result, "text", str(result))
+        segments = getattr(result, "segments", None) or []
+        if segments:
+            transcript_text = format_with_timestamps(segments)
+        else:
+            transcript_text = getattr(result, "text", str(result))
     except Exception as exc:
         log.warning("transcriber: Whisper API failed for %s: %s", recording_s3_key, exc)
         return None

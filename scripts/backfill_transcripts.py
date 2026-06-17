@@ -92,7 +92,12 @@ def transcribe_local(client, recording_key: str, transcript_key: str) -> str | N
         model = whisper.load_model("medium")
         log.info("  Transcribing with local Whisper medium model…")
         result = model.transcribe(tmp_path, fp16=False)
-        text = result["text"].strip()
+        segments = result.get("segments", [])
+        if segments:
+            from bubble.transcriber import format_with_timestamps
+            text = format_with_timestamps(segments)
+        else:
+            text = result["text"].strip()
 
         log.info("  Uploading transcript (%d chars) to s3://%s/%s", len(text), BUCKET, transcript_key)
         client.put_object(
