@@ -33,7 +33,7 @@ Website change-tracking system that monitors configured NAIC web pages on a 6-ho
    - **`config_hash`:** MD5 of `system_prompt + model`, computed once per run via `get_config_hash()`. Stored on every alert row. Used by dashboard rerun feature to detect config changes.
    - At runtime, `_sanitize_schema_for_openai()` strips keywords the OpenAI Responses API rejects in strict mode (`$schema`, `oneOf` → replaced with `{"type":"string"}`, unsupported `format` values like `uri`)
    - Falls back to extracting a JSON schema from a ` ```json ``` ` fenced block in `instructions`, then to `_FALLBACK_OUTPUT_SCHEMA` hardcoded in the file
-   - **New flat schema** (as of May 2026): all fields are top-level — no nested `events[]`, `library_items[]`, `agenda_items[]` arrays. Event/agenda/library-item fields are prefixed at the top level (`event_title`, `agenda_item_title_and_chronicle_topics`, `library_item_preliminary_title`, etc.)
+   - **New flat schema** (as of May 2026): all fields are top-level — no nested `events[]`, `library_items[]`, `agenda_items[]` arrays. Event/agenda/library-item fields are prefixed at the top level (`event_title`, `agenda_item_title_chronicle_topics`, `library_item_preliminary_title`, etc.)
 8. **document_agent** — For all alert types that produce a library item (12 types, see `DOCUMENT_ALERT_TYPES` in `document_agent.py`), extracts structured metadata via two paths:
    - Config key: `chat:document-data-extraction` in DynamoDB
    - **When `PGVECTOR_ENABLED=true` + DB creds available (two-step enforcement):** Step 1 — Agents SDK with pgvector tools (`search_knowledge_base`, `list_available_documents`) gathers free-text analysis; Step 2 — `chat_json()` with Structured Outputs reformats the free-text into the exact DynamoDB output schema. This two-step approach ensures pgvector search is actually used while also enforcing strict schema compliance.
@@ -169,14 +169,14 @@ New flat schema — all top-level, no nested arrays for event/library/agenda ite
 | `event_is_full_day` | string | "Full Day" or "N/A" |
 | `event_url` | string | "N/A" if none |
 | `event_call_in_number_access_code` | string | "N/A" if none |
-| `agenda_item_title_and_chronicle_topics` | `[{status, agenda_item_title, chronicle_topics[]}]` | Array (minItems 1) |
+| `agenda_item_title_chronicle_topics` | `[{status, agenda_item_title, chronicle_topics[]}]` | Array (minItems 1) |
 | `agenda_item_title_official` | `[{status, official_title}]` | Array (minItems 1) |
 | `agenda_item_standardized_id` | `[{status, standardized_id}]` | Array (minItems 1) |
 | `agenda_item_official_id` | `[{status, official_id}]` | Array (minItems 1) |
 | `library_item_preliminary_title` | `{status, title}` | Object; status in New/Updated/Existing/N/A |
 | `library_item_url` | string | URL or "N/A" |
 | `library_items_file_name` | string | Filename or "N/A" |
-| `is_alert_relevant_for_art_newsreel` | `{status, reference}` | status in Yes/No/Additional review needed |
+| `is_the_alert_relevant_for_an_art_newsreel_article` | `{status, details}` | status in Yes/No/Additional review needed |
 
 Previous schema (before May 2026) used nested arrays: `events[]`, `library_items[]`, `agenda_items[]`. Old rows in `alerts_table.jsonl` use that format. The dashboard handles both gracefully via `FIELD_ALIASES` in `AlertsTable.tsx`.
 
@@ -317,7 +317,7 @@ Dashboard shows "Sync to Bubble" button on rows with `bubble_action` set and no 
 - **Dynamic org tree:** `bubble/org_tree.py` fetches the live Bubble org hierarchy at runtime via `get_org_tree()` (30-min in-process cache, DFS traversal sorted by `Order`, `"-" * level + Name` format). Falls back to `prompts/org_tree.txt` if Bubble is unavailable. Called from `page_change_agent.py` for every agent invocation — org structure changes in Bubble propagate automatically within 30 minutes.
 - **ECS entrypoint.sh:** Supports running arbitrary Python commands via CMD override (e.g., `python scripts/backfill_document_extractions.py`). If `$1` is `python`, the full command is exec'd directly. Default (no args) runs `python spike.py`.
 - **Library item extraction (flat schema):** `spike.py` extracts library items from flat schema fields (`library_item_preliminary_title`, `library_item_url`, `library_items_file_name`) in the normal pipeline, not just from nested `library_items[]` arrays. The backfill script mirrors this logic.
-- **Multi-alert granularity (DynamoDB instructions):** The `web-tracking-agent` instructions explicitly constrain granularity: one row per distinct document/PDF (by URL or filename), one row per distinct event/meeting. Multiple agenda items within the same document go in the `agenda_item_title_and_chronicle_topics` array of that one row — do NOT fan out by agenda item.
+- **Multi-alert granularity (DynamoDB instructions):** The `web-tracking-agent` instructions explicitly constrain granularity: one row per distinct document/PDF (by URL or filename), one row per distinct event/meeting. Multiple agenda items within the same document go in the `agenda_item_title_chronicle_topics` array of that one row — do NOT fan out by agenda item.
 
 ## Critical warnings
 

@@ -517,26 +517,31 @@ def _build_xlsx(rows: list[dict]) -> bytes:
     if not rows:
         rows = []
 
-    # Core columns in preferred display order (mirrors current agent output schema).
-    # Any new agent fields not listed here will be appended after these automatically.
+    # Core columns in preferred display order (mirrors current flat agent output schema,
+    # May 2026+). Any fields not listed here appear after these, sorted alphabetically
+    # (this includes old nested-schema aliases for backward compat rows).
     CORE_COLS = [
         "run_id", "run_timestamp", "target_id", "source_url",
-        # Top-level alert fields (exact agent output names)
+        # Top-level alert fields (exact agent output names, flat schema)
         "alert_type", "alert_title", "alert_description", "alert_url",
         "organization", "alert_date_time",
-        # event_* (prefixed from events[0])
-        "event_title", "event_start_datetime", "event_end_datetime",
+        # event fields
+        "event_title", "event_start_date_time", "event_end_date_time",
         "event_timezone", "event_duration", "event_is_full_day",
-        "event_url", "event_call_in_access_code",
-        # agenda_item_* (prefixed from agenda_items[0])
-        "agenda_item_title", "agenda_item_official_title",
+        "event_url", "event_call_in_number_access_code",
+        # agenda item arrays
+        "agenda_item_title_chronicle_topics", "agenda_item_title_official",
         "agenda_item_standardized_id", "agenda_item_official_id",
-        "agenda_item_is_existing", "agenda_item_chronicle_topics",
-        # library_item_* (prefixed from library_items[i])
-        "library_item_title", "library_item_preliminary_title",
-        "library_item_url", "library_item_file_name",
+        # library item
+        "library_item_preliminary_title", "library_item_url", "library_items_file_name",
+        # newsreel relevance
+        "is_the_alert_relevant_for_an_art_newsreel_article",
         # doc extraction
         "candidate_chronicles", "candidate_agenda_items",
+        # pipeline metadata
+        "agent_call_id", "config_hash",
+        "recording_s3_key", "transcript_s3_key", "ingest_status",
+        "bubble_action", "bubble_sync_status",
     ]
 
     # Collect all keys present in the data, append any not in CORE_COLS
@@ -552,15 +557,18 @@ def _build_xlsx(rows: list[dict]) -> bytes:
         "run_id": 18, "run_timestamp": 22, "target_id": 22, "source_url": 30,
         "alert_type": 22, "alert_title": 40, "alert_description": 60,
         "alert_url": 30, "organization": 30, "alert_date_time": 20,
-        "event_title": 35, "event_start_datetime": 22, "event_end_datetime": 22,
+        "event_title": 35, "event_start_date_time": 22, "event_end_date_time": 22,
         "event_timezone": 16, "event_duration": 14, "event_is_full_day": 14,
-        "event_url": 30, "event_call_in_access_code": 22,
-        "agenda_item_title": 35, "agenda_item_official_title": 35,
+        "event_url": 30, "event_call_in_number_access_code": 28,
+        "agenda_item_title_chronicle_topics": 45, "agenda_item_title_official": 40,
         "agenda_item_standardized_id": 22, "agenda_item_official_id": 18,
-        "agenda_item_is_existing": 14, "agenda_item_chronicle_topics": 35,
-        "library_item_title": 35, "library_item_preliminary_title": 35,
-        "library_item_url": 30, "library_item_file_name": 25,
+        "library_item_preliminary_title": 40, "library_item_url": 35,
+        "library_items_file_name": 30,
+        "is_the_alert_relevant_for_an_art_newsreel_article": 30,
         "candidate_chronicles": 25, "candidate_agenda_items": 25,
+        "agent_call_id": 20, "config_hash": 20,
+        "recording_s3_key": 35, "transcript_s3_key": 35, "ingest_status": 16,
+        "bubble_action": 50, "bubble_sync_status": 16,
     }
 
     def thin_border():
