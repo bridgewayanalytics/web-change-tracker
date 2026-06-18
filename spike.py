@@ -3122,21 +3122,25 @@ def _run_manual_chunk(agent_call_id: str, transcript_s3_key: str) -> None:
 
 def _run_recording_ingest(recording_s3_key: str) -> None:
     """
-    Process a new recording: transcribe, ingest to newsreel KB, stamp matching alerts.
+    Process a new recording: transcribe, stamp matching alerts, create synthetic alert row.
 
-    Triggered via RECORDING_S3_KEY env var set by the recording_ingest_trigger Lambda.
-    Fully automatic — no human approval step.
+    Triggered via RECORDING_S3_KEY env var set by the recording_ingest_trigger Lambda
+    when a new mp3 lands in recordings-bucket-1.
+
+    Nothing is auto-ingested — all publishing goes through the content gate.
 
     Steps:
-      1. Transcribe the mp3 via Whisper (idempotent — skips if transcript already exists)
-      2. Generate a presigned URL for the transcript and submit to the newsreel KB
-      3. Scan alerts_table.jsonl for alert rows with a matching date/org that have no
-         transcript yet; stamp recording_s3_key, transcript_s3_key, ingest_status="approved"
+      1. Transcribe the mp3 via Whisper (idempotent — skips if already transcribed)
+      2. Scan alerts_table.jsonl for rows matching this recording's date + org acronym;
+         stamp recording_s3_key, transcript_s3_key, ingest_status="pending" on matches
+      3. Run transcript doc extraction and append rows to document_extractions_table.jsonl
+      4. Create one synthetic "New Meeting Transcript Available" alert row per unique
+         event title and append to alerts_table.jsonl (idempotent — skips if already present)
     """
     import boto3
+    import uuid as _uuid
+    from datetime import datetime, timezone
     from bubble.transcriber import transcribe_recording
-    from bubble.newsreel_ingest import ingest_for_newsreel
-    from storage.ingest_actions import generate_presigned_url
     from storage.alert_s3 import patch_jsonl_row
     from bubble.recording_matcher import _extract_date, _extract_abbreviation, _acronym_score
 
@@ -3147,6 +3151,9 @@ def _run_recording_ingest(recording_s3_key: str) -> None:
         log.error("recording_ingest: CHANGELOG_BUCKET not set")
         raise SystemExit(1)
 
+    s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+    alerts_key = "alerts/alerts_table.jsonl"
+
     # Step 1: Transcribe
     transcript_key = transcribe_recording(recording_s3_key)
     if not transcript_key:
@@ -3154,63 +3161,193 @@ def _run_recording_ingest(recording_s3_key: str) -> None:
         raise SystemExit(1)
     log.info("recording_ingest: transcript at s3://%s/%s", bucket, transcript_key)
 
-    # Step 2: Submit to newsreel knowledge base via presigned URL
-    presigned_url = generate_presigned_url(transcript_key, expires_in=3600)
-    filename = transcript_key.split("/")[-1] or "transcript.txt"
-    ingest_for_newsreel(document_url=presigned_url, filename=filename)
-    log.info("recording_ingest: submitted to newsreel KB as '%s'", filename)
-
-    # Step 3: Find alert rows matching this recording and stamp them
+    # Step 2: Find matching alert rows
     rec_date = _extract_date(recording_s3_key)
     rec_abbrev = _extract_abbreviation(recording_s3_key)
     log.info("recording_ingest: searching for alerts with date=%s abbrev=%s", rec_date, rec_abbrev)
 
-    matching_call_ids: list[tuple[str, float, str]] = []  # (agent_call_id, score, event_title)
-    if rec_date:
-        try:
-            s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
-            body = s3.get_object(Bucket=bucket, Key="alerts/alerts_table.jsonl")["Body"].read().decode("utf-8")
-            seen: set[str] = set()
-            for line in body.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    row = json.loads(line)
-                except Exception:
-                    continue
-                if row.get("transcript_s3_key"):
-                    continue  # already processed
-                event_dt = row.get("event_start_date_time", "")
-                if not isinstance(event_dt, str) or not event_dt.startswith(rec_date):
-                    continue
-                event_title = row.get("event_title", "")
-                if not isinstance(event_title, str) or event_title.strip().upper() in ("N/A", "N/A.", "-", ""):
-                    continue
-                score = _acronym_score(rec_abbrev, event_title) if rec_abbrev else 0.0
-                if score < 0.3:
-                    continue
-                call_id = row.get("agent_call_id", "")
-                if not call_id or call_id in seen:
-                    continue
-                seen.add(call_id)
-                matching_call_ids.append((call_id, score, event_title))
-        except Exception as exc:
-            log.warning("recording_ingest: could not scan alerts_table.jsonl: %s", exc)
+    matched_rows: list[dict] = []
+    synthetic_already_exists = False
+    try:
+        body = s3.get_object(Bucket=bucket, Key=alerts_key)["Body"].read().decode("utf-8")
+        seen_call_ids: set[str] = set()
+        for line in body.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except Exception:
+                continue
+            # Check if synthetic row already written for this transcript (idempotency)
+            if (row.get("alert_type") == "New Meeting Transcript Available"
+                    and row.get("transcript_s3_key") == transcript_key):
+                synthetic_already_exists = True
+            if not rec_date:
+                continue
+            if row.get("transcript_s3_key"):
+                continue  # already stamped
+            event_dt = row.get("event_start_date_time", "")
+            if not isinstance(event_dt, str) or not event_dt.startswith(rec_date):
+                continue
+            event_title = row.get("event_title", "")
+            if not isinstance(event_title, str) or event_title.strip().upper() in ("N/A", "N/A.", "-", ""):
+                continue
+            score = _acronym_score(rec_abbrev, event_title) if rec_abbrev else 0.0
+            if score < 0.3:
+                continue
+            call_id = row.get("agent_call_id", "")
+            if not call_id or call_id in seen_call_ids:
+                continue
+            seen_call_ids.add(call_id)
+            matched_rows.append(row)
+            log.info("  matched: agent_call_id=%s score=%.2f title=%r", call_id, score, event_title)
+    except Exception as exc:
+        log.warning("recording_ingest: could not scan %s: %s", alerts_key, exc)
 
-    log.info("recording_ingest: found %d matching alert row(s)", len(matching_call_ids))
-    for call_id, score, title in matching_call_ids:
-        log.info("  agent_call_id=%s score=%.2f title=%r", call_id, score, title)
+    log.info("recording_ingest: %d matching alert row(s)", len(matched_rows))
+
+    for row in matched_rows:
         patch_jsonl_row(
-            "alerts/alerts_table.jsonl",
-            {"agent_call_id": call_id},
+            alerts_key,
+            {"agent_call_id": row["agent_call_id"]},
             {
                 "recording_s3_key": recording_s3_key,
                 "transcript_s3_key": transcript_key,
-                "ingest_status": "approved",
+                "ingest_status": "pending",
             },
             bucket=bucket,
         )
+
+    if not matched_rows:
+        log.warning("recording_ingest: no matching alerts found — transcript stored but no rows updated")
+        log.info("recording_ingest: done")
+        return
+
+    # Step 3: Transcript doc extraction (one per unique event_title)
+    transcript_text = ""
+    try:
+        transcript_text = s3.get_object(Bucket=bucket, Key=transcript_key)["Body"].read().decode("utf-8")
+    except Exception as exc:
+        log.warning("recording_ingest: could not download transcript for doc extraction: %s", exc)
+
+    doc_extraction_rows: list[dict] = []
+    seen_titles_for_extraction: set[str] = set()
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    if transcript_text:
+        from bubble.document_agent import extract_document_data
+        for row in matched_rows:
+            event_title = str(row.get("event_title") or "").strip()
+            if event_title in seen_titles_for_extraction:
+                continue
+            seen_titles_for_extraction.add(event_title)
+            try:
+                doc_name = f"Meeting Transcript: {event_title}"
+                doc_result = extract_document_data(
+                    doc_name, document_url="", pdf_text=transcript_text, text_limit=40_000
+                )
+                if doc_result:
+                    doc_result["extraction_source"] = "transcript"
+                    doc_result["transcript_s3_key"] = transcript_key
+                    doc_extraction_rows.append({
+                        "run_id": row.get("run_id", "recording-ingest"),
+                        "run_timestamp": now_iso,
+                        "target_id": row.get("target_id", ""),
+                        "source_url": row.get("source_url") or row.get("alert_url") or "",
+                        "agent_call_id": row.get("agent_call_id", ""),
+                        "library_item_title": doc_name,
+                        "library_item_url": "",
+                        "library_item_file_name": transcript_key.split("/")[-1],
+                        **doc_result,
+                    })
+                    log.info("recording_ingest: doc extraction done for %s (%d fields)", event_title[:60], len(doc_result))
+            except Exception as exc:
+                log.warning("recording_ingest: doc extraction failed for %s: %s", event_title[:60], exc)
+
+    if doc_extraction_rows:
+        try:
+            doc_key = "alerts/document_extractions_table.jsonl"
+            try:
+                existing = s3.get_object(Bucket=bucket, Key=doc_key)["Body"].read().decode("utf-8")
+            except Exception:
+                existing = ""
+            new_lines = "\n".join(json.dumps(r, ensure_ascii=False) for r in doc_extraction_rows)
+            combined = (existing.rstrip("\n") + "\n" + new_lines).strip() + "\n"
+            s3.put_object(Bucket=bucket, Key=doc_key, Body=combined.encode("utf-8"),
+                          ContentType="application/x-ndjson")
+            log.info("recording_ingest: appended %d doc extraction row(s)", len(doc_extraction_rows))
+        except Exception as exc:
+            log.warning("recording_ingest: failed to write doc extraction rows: %s", exc)
+
+    # Step 4: Create synthetic "New Meeting Transcript Available" alert rows
+    if synthetic_already_exists:
+        log.info("recording_ingest: synthetic alert row already exists for this transcript — skipping")
+        log.info("recording_ingest: done")
+        return
+
+    synthetic_rows: list[dict] = []
+    seen_titles_for_synthetic: set[str] = set()
+
+    for row in matched_rows:
+        event_title = str(row.get("event_title") or "").strip()
+        if event_title in seen_titles_for_synthetic:
+            continue
+        seen_titles_for_synthetic.add(event_title)
+        synthetic_rows.append({
+            "agent_call_id": str(_uuid.uuid4()),
+            "run_id": row.get("run_id", "recording-ingest"),
+            "run_timestamp": now_iso,
+            "target_id": row.get("target_id", ""),
+            "source_url": row.get("source_url") or row.get("alert_url") or "",
+            "config_hash": row.get("config_hash", ""),
+            "alert_type": "New Meeting Transcript Available",
+            "alert_title": f"Bridgeway transcript available: {event_title}",
+            "alert_description": f"Bridgeway meeting transcript available for {event_title}",
+            "alert_url": str(row.get("event_url") or row.get("alert_url") or ""),
+            "organization": row.get("organization"),
+            "alert_date_time": now_iso,
+            "event_title": event_title,
+            "event_start_date_time": row.get("event_start_date_time"),
+            "event_end_date_time": row.get("event_end_date_time"),
+            "event_duration": row.get("event_duration"),
+            "event_is_full_day": row.get("event_is_full_day"),
+            "event_url": row.get("event_url"),
+            "event_call_in_number_access_code": row.get("event_call_in_number_access_code"),
+            "recording_s3_key": recording_s3_key,
+            "transcript_s3_key": transcript_key,
+            "ingest_status": "pending",
+            "agenda_item_title_and_chronicle_topics": [{"status": "N/A", "agenda_item_title": "N/A", "chronicle_topics": []}],
+            "agenda_item_title_official": [{"status": "N/A", "official_title": "N/A"}],
+            "agenda_item_standardized_id": [{"status": "N/A", "standardized_id": "N/A"}],
+            "agenda_item_official_id": [{"status": "N/A", "official_id": "N/A"}],
+            "library_item_preliminary_title": {"status": "N/A", "title": "N/A"},
+            "library_item_url": "N/A",
+            "library_items_file_name": "N/A",
+            "is_alert_relevant_for_art_newsreel": {"status": "Yes", "reference": "Bridgeway internal transcript"},
+        })
+        log.info("recording_ingest: created synthetic alert for %s", event_title[:60])
+
+    # Stamp bubble_action on synthetic rows
+    try:
+        from bubble.bubble_sync_classifier import classify_alert
+        for syn_row in synthetic_rows:
+            plan = classify_alert(syn_row)
+            if plan.applicable:
+                syn_row["bubble_action"] = plan.to_dict()
+    except Exception as exc:
+        log.warning("recording_ingest: bubble_sync_classifier failed: %s", exc)
+
+    # Append synthetic rows to alerts_table.jsonl
+    try:
+        existing = s3.get_object(Bucket=bucket, Key=alerts_key)["Body"].read().decode("utf-8")
+        new_lines = "\n".join(json.dumps(r, ensure_ascii=False) for r in synthetic_rows)
+        combined = (existing.rstrip("\n") + "\n" + new_lines).strip() + "\n"
+        s3.put_object(Bucket=bucket, Key=alerts_key, Body=combined.encode("utf-8"),
+                      ContentType="application/x-ndjson")
+        log.info("recording_ingest: appended %d synthetic alert row(s)", len(synthetic_rows))
+    except Exception as exc:
+        log.warning("recording_ingest: failed to write synthetic alert rows: %s", exc)
 
     log.info("recording_ingest: done")
 
