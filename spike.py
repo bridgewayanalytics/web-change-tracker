@@ -2019,6 +2019,7 @@ def _build_bubble_payloads(
                     continue
                 synthetic_alerts.append({
                     "agent_call_id": str(_uuid.uuid4()),
+                    "config_hash": alert.get("config_hash", ""),
                     "alert_type": "New Meeting Transcript Available",
                     "alert_title": f"Bridgeway transcript available: {event_title}",
                     "alert_description": f"Bridgeway meeting transcript available for {event_title}",
