@@ -2001,6 +2001,55 @@ def _build_bubble_payloads(
     except Exception as _tx_exc:
         log.warning("transcript document extraction: non-fatal error: %s", _tx_exc)
 
+    # Create synthetic "New Meeting Transcript Available" alert rows.
+    # Generated deterministically whenever a transcript is stamped on an agent alert.
+    # Inserted before the classifier so synthetic rows also get bubble_action stamped.
+    try:
+        import uuid as _uuid
+        _now_iso = run_timestamp.isoformat() if hasattr(run_timestamp, "isoformat") else str(run_timestamp)
+        for ev in change_events:
+            synthetic_alerts: list[dict] = []
+            for alert in (ev.get("__agent_output") or []):
+                if not alert.get("transcript_s3_key"):
+                    continue
+                if alert.get("alert_type") == "New Meeting Transcript Available":
+                    continue  # avoid duplicating if already present
+                event_title = str(alert.get("event_title") or "").strip()
+                if not event_title or event_title.upper() in ("N/A", "N/A.", "-"):
+                    continue
+                synthetic_alerts.append({
+                    "agent_call_id": str(_uuid.uuid4()),
+                    "alert_type": "New Meeting Transcript Available",
+                    "alert_title": f"Bridgeway transcript available: {event_title}",
+                    "alert_description": f"Bridgeway meeting transcript available for {event_title}",
+                    "alert_url": str(alert.get("event_url") or alert.get("alert_url") or ""),
+                    "organization": alert.get("organization"),
+                    "alert_date_time": _now_iso,
+                    "event_title": event_title,
+                    "event_start_date_time": alert.get("event_start_date_time"),
+                    "event_end_date_time": alert.get("event_end_date_time"),
+                    "event_duration": alert.get("event_duration"),
+                    "event_is_full_day": alert.get("event_is_full_day"),
+                    "event_url": alert.get("event_url"),
+                    "event_call_in_number_access_code": alert.get("event_call_in_number_access_code"),
+                    "recording_s3_key": alert.get("recording_s3_key"),
+                    "transcript_s3_key": alert.get("transcript_s3_key"),
+                    "ingest_status": "pending",
+                    "agenda_item_title_and_chronicle_topics": [{"status": "N/A", "agenda_item_title": "N/A", "chronicle_topics": []}],
+                    "agenda_item_title_official": [{"status": "N/A", "official_title": "N/A"}],
+                    "agenda_item_standardized_id": [{"status": "N/A", "standardized_id": "N/A"}],
+                    "agenda_item_official_id": [{"status": "N/A", "official_id": "N/A"}],
+                    "library_item_preliminary_title": {"status": "N/A", "title": "N/A"},
+                    "library_item_url": "N/A",
+                    "library_items_file_name": "N/A",
+                    "is_alert_relevant_for_art_newsreel": {"status": "Yes", "reference": "Bridgeway internal transcript"},
+                })
+                log.info("synthetic_alert: created 'New Meeting Transcript Available' for: %s", event_title[:60])
+            if synthetic_alerts:
+                ev.setdefault("__agent_output", []).extend(synthetic_alerts)
+    except Exception as _syn_exc:
+        log.warning("synthetic transcript alert: non-fatal error: %s", _syn_exc)
+
     # Stamp bubble_action on each alert — pure classification, no API calls.
     # Irrelevant alerts (No Meaningful Change, carousel) are skipped.
     try:

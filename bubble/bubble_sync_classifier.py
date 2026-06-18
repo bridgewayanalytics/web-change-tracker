@@ -55,6 +55,7 @@ _TYPE_MAP: dict[str, tuple[str | None, str | None, bool]] = {
     "New Effective Date":                       ("create", "create", False),
     "Updated Effective Date":                   ("update", "update", False),
     "New or Updated Report or Other Resource":  ("update", "create", False),
+    "New Meeting Transcript Available":         ("update", "create", False),
     "Other":                                    ("update", "create", False),
 }
 
@@ -71,6 +72,7 @@ _LIBRARY_ITEM_TYPE: dict[str, str] = {
     "New Effective Date":                       "Adopted Guideline",
     "Updated Effective Date":                   "Adopted Guideline",
     "New or Updated Report or Other Resource":  "Report / Resource",
+    "New Meeting Transcript Available":         "Meeting Transcript",
     "Other":                                    "Document",
 }
 
@@ -87,6 +89,7 @@ _EVENT_AGENDA_LINK_LABEL: dict[str, str] = {
     "New Effective Date":                       "→ Link adopted guideline document",
     "Updated Effective Date":                   "→ Update guideline document reference",
     "New or Updated Report or Other Resource":  "→ Link document or resource",
+    "New Meeting Transcript Available":         "→ Link meeting transcript",
     "Other":                                    "→ Update document reference",
 }
 
@@ -135,7 +138,8 @@ _EVENT_UPDATE_CHANGES: dict[str, list[str]] = {
     "New Effective Date":           ["Link adopted guideline document"],
     "Updated Effective Date":       ["Update guideline document reference"],
     "New or Updated Report or Other Resource": ["Link document or resource"],
-    "Other":                        ["Update event record"],
+    "New Meeting Transcript Available":        ["Link meeting transcript to event"],
+    "Other":                                   ["Update event record"],
 }
 
 _LIB_UPDATE_CHANGES: dict[str, list[str]] = {
