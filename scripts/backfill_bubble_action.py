@@ -52,7 +52,12 @@ def save_rows(client, rows: list[dict]) -> None:
 
 
 def load_doc_extractions(client) -> dict[str, dict]:
-    """Load document_extractions_table.jsonl and return a dict keyed by agent_call_id."""
+    """Load document_extractions_table.jsonl and return a dict keyed by library_item_url.
+
+    Keying by URL (not agent_call_id) handles multi-document page changes correctly:
+    one agent_call_id can produce N alerts each with a different library_item_url,
+    and each needs its own matching extraction.
+    """
     try:
         body = client.get_object(Bucket=BUCKET, Key=DOC_EXTRACTIONS_KEY)["Body"].read().decode("utf-8")
     except Exception as exc:
@@ -65,9 +70,9 @@ def load_doc_extractions(client) -> dict[str, dict]:
             continue
         try:
             row = json.loads(line)
-            call_id = row.get("agent_call_id") or ""
-            if call_id and call_id not in result:
-                result[call_id] = row
+            url = str(row.get("library_item_url") or "").strip()
+            if url and url not in result:
+                result[url] = row
         except Exception:
             pass
     return result
@@ -87,8 +92,8 @@ def main() -> None:
     log.info("Loaded %d rows", len(rows))
 
     log.info("Loading doc extractions from s3://%s/%s", BUCKET, DOC_EXTRACTIONS_KEY)
-    doc_by_call_id = load_doc_extractions(client)
-    log.info("Loaded %d doc extraction rows", len(doc_by_call_id))
+    doc_by_url = load_doc_extractions(client)
+    log.info("Loaded %d doc extraction rows (keyed by library_item_url)", len(doc_by_url))
 
     counts: Counter = Counter()
     changed = 0
@@ -101,8 +106,8 @@ def main() -> None:
         plan = classify_alert(row)
         if plan.applicable:
             ba = plan.to_dict()
-            call_id = row.get("agent_call_id") or ""
-            doc_row = doc_by_call_id.get(call_id)
+            lib_url = str(row.get("library_item_url") or "").strip()
+            doc_row = doc_by_url.get(lib_url) if lib_url and lib_url != "N/A" else None
             if doc_row:
                 enrich_with_doc_extraction(ba, doc_row)
             row["bubble_action"] = ba
