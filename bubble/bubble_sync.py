@@ -95,7 +95,7 @@ def _resolve_org_ids(org_names: list[str], client) -> list[str]:
         return []
     name_to_id: dict[str, str] = {}
     for org in client.list_all(TYPE_ORGANIZATION, constraints=SPACE_CONSTRAINT):
-        name = (org.get("name_text") or "").strip()
+        name = (org.get("Name") or "").strip()
         oid = org.get("_id") or ""
         if name and oid:
             name_to_id[name] = oid
@@ -136,7 +136,7 @@ def _find_calendar_item(match_search: dict, client) -> str | None:
     if org_name:
         name_to_id: dict[str, str] = {}
         for org in client.list_all(TYPE_ORGANIZATION, constraints=SPACE_CONSTRAINT):
-            n = (org.get("name_text") or "").strip()
+            n = (org.get("Name") or "").strip()
             if n:
                 name_to_id[n] = org.get("_id") or ""
         org_id = name_to_id.get(org_name)
@@ -195,7 +195,7 @@ def _resolve_chronicle_topic_ids(topic_names: list[str], client) -> list[str]:
         return []
     name_to_id: dict[str, str] = {}
     for topic in client.list_all(TYPE_CHRONICLE_TOPIC, constraints=SPACE_CONSTRAINT):
-        t = (topic.get("title_text") or "").strip()
+        t = (topic.get("Title") or "").strip()
         tid = topic.get("_id") or ""
         if t and tid:
             name_to_id[t] = tid
