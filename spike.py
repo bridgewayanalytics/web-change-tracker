@@ -2006,7 +2006,8 @@ def _build_bubble_payloads(
     # Inserted before the classifier so synthetic rows also get bubble_action stamped.
     try:
         import uuid as _uuid
-        _now_iso = run_timestamp.isoformat() if hasattr(run_timestamp, "isoformat") else str(run_timestamp)
+        from datetime import datetime as _datetime, timezone as _timezone
+        _now_iso = _datetime.now(_timezone.utc).isoformat()
         for ev in change_events:
             synthetic_alerts: list[dict] = []
             for alert in (ev.get("__agent_output") or []):

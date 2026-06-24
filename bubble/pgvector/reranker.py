@@ -58,8 +58,7 @@ async def _score_one(client: AsyncOpenAI, query: str, chunk: dict[str, Any]) -> 
                     f"{chunk['content'][:1500]}"
                 )},
             ],
-            reasoning_effort="low",
-            max_completion_tokens=500,
+            max_completion_tokens=200,
         )
         choice = resp.choices[0]
         if choice.finish_reason == "length":
