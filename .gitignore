@@ -8,3 +8,6 @@ last_email_report.txt
 snapshots/
 debug/
 last_alerts.json
+.DS_Store
+~$*.xlsx
+*.zip

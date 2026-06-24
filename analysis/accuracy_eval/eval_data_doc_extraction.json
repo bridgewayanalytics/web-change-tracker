@@ -1,0 +1,647 @@
+[
+  {
+    "index": 1,
+    "extraction": {
+      "agent_call_id": "40129817-2e5e-4ce6-860e-382189d4c2ed",
+      "run_id": "run-1779394979",
+      "target_id": "naic.capital_markets_bureau",
+      "data_extraction_datetime": "2026-05-21T00:00:00-04:00",
+      "document_title": "Double-Digit Increase in U.S. Insurers’ Other Long-Term Invested Assets at Year-End 2025 - National Association of Insurance Commissioners - May 2026",
+      "document_type": "Publication (e.g., report)",
+      "document_description": "NAIC Capital Markets Bureau special report analyzing U.S. insurers’ Schedule BA other long-term invested assets at year-end 2025. The report highlights year-over-year growth, composition by asset type and insurer segment, and notes that part of the increase may reflect reclassification effects from the NAIC’s principles-based bond definition effective Jan. 1, 2025.",
+      "document_url_web_tracking_agent": null,
+      "library_item_url": "https://content.naic.org/sites/default/files/capital-market-schedule-ba-ye2025.pdf",
+      "library_item_title": "Double-Digit Increase in U.S. Insurers’ Other Long-Term Invested Assets at Year-End 2025",
+      "library_item_file_name": "capital-market-schedule-ba-ye2025.pdf",
+      "organization_or_publisher": {
+        "name": "National Association of Insurance Commissioners",
+        "status": "NEW ORGANIZATION"
+      },
+      "newsreel_relevance": {
+        "explanation_or_reference": "New publication related to existing agenda items on the principles-based bond definition and Schedule BA reporting.",
+        "status": "Yes"
+      },
+      "agenda_items": [
+        {
+          "agenda_item_title": "Reporting changes related to the principles based bond definition - debt that does not qualify as a bond, including collateral loans",
+          "chronicle_topics": [
+            "Principles-Based Bond Definition and Reporting",
+            "Funds Under Schedule BA"
+          ],
+          "status": "Existing"
+        },
+        {
+          "agenda_item_title": "Debt Securities that Do Not Qualify as Bonds",
+          "chronicle_topics": [
+            "Principles-Based Bond Definition and Reporting",
+            "Funds Under Schedule BA"
+          ],
+          "status": "Existing"
+        }
+      ],
+      "existing_updated_or_new_document": "New Document",
+      "date_published": "May 1, 2026",
+      "meeting_or_last_comment_date": "N/A",
+      "number": 1,
+      "ingest_status": null,
+      "extraction_source": null
+    },
+    "newsreel_status": "Yes",
+    "newsreel_details": null,
+    "doc_url": "https://content.naic.org/sites/default/files/capital-market-schedule-ba-ye2025.pdf",
+    "doc_page_content": "[PDF — binary content, not scraped]",
+    "doc_page_length": 35
+  },
+  {
+    "index": 2,
+    "extraction": {
+      "agent_call_id": "a19ed3a2-1c94-490c-ac48-c502858ac266",
+      "run_id": "run-1778617382",
+      "target_id": "naic.resource_center",
+      "data_extraction_datetime": "2026-05-12T00:00:00-04:00",
+      "document_title": "NAIC Accounting Practices and Procedures Manual - As of March 2026",
+      "document_type": "Existing Requirements & Guidelines",
+      "document_description": "The document is the As of March 2026 edition of the NAIC Accounting Practices and Procedures Manual, a two-volume publication containing the preamble, Statements of Statutory Accounting Principles, and appendices with actuarial guidelines, issue papers, policy statements, and related statutory accounting materials. It is an authoritative NAIC guidance publication describing statutory accounting principles and procedures used for financial annual statement filing and risk-based capital calculations.",
+      "document_url_web_tracking_agent": null,
+      "library_item_url": "https://content.naic.org/sites/default/files/publication-app-manual.pdf",
+      "library_item_title": "2026 Accounting Practices and Procedures Manual",
+      "library_item_file_name": "publication-app-manual.pdf",
+      "organization_or_publisher": {
+        "name": "Statutory Accounting Principles (E) Working Group",
+        "status": "Listed"
+      },
+      "newsreel_relevance": {
+        "explanation_or_reference": "The document version already exists in the library.",
+        "status": "No"
+      },
+      "agenda_items": [
+        {
+          "agenda_item_title": "Accounting Practices and Procedures Manual annual publication update",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        }
+      ],
+      "existing_updated_or_new_document": "Existing",
+      "date_published": "March 3, 2026",
+      "meeting_or_last_comment_date": "N/A",
+      "number": 1,
+      "ingest_status": null,
+      "extraction_source": null
+    },
+    "newsreel_status": "No",
+    "newsreel_details": null,
+    "doc_url": "https://content.naic.org/sites/default/files/publication-app-manual.pdf",
+    "doc_page_content": "[PDF — binary content, not scraped]",
+    "doc_page_length": 35
+  },
+  {
+    "index": 3,
+    "extraction": {
+      "agent_call_id": "d70c087b-1c3b-4d38-86ef-886a6d1adb03",
+      "run_id": "run-1779243788",
+      "target_id": "naic.newsroom",
+      "data_extraction_datetime": "2026-05-20T00:00:00-04:00",
+      "document_title": "NAIC Spring National Meeting to Advance Modernization, Resilience, and Consumer Protection - NAIC - March 2025",
+      "document_type": "Other",
+      "document_description": "An NAIC web article announcing the 2025 Spring National Meeting and describing the meeting as focused on modernization, resilience, and consumer protection. It appears to be a general event announcement rather than meeting materials or a formal agenda item document.",
+      "document_url_web_tracking_agent": null,
+      "library_item_url": "https://content.naic.org/article/naic-spring-national-meeting-advance-modernization-resilience-and-consumer-protection",
+      "library_item_title": "NAIC Spring National Meeting to Advance Modernization, Resilience, and Consumer Protection",
+      "library_item_file_name": "N/A",
+      "organization_or_publisher": {
+        "name": "NAIC",
+        "status": "Listed"
+      },
+      "newsreel_relevance": {
+        "explanation_or_reference": "NAIC 2025 Spring National Meeting Tentative Agenda",
+        "status": "Yes"
+      },
+      "agenda_items": [
+        {
+          "agenda_item_title": "NAIC 2025 Spring National Meeting announcement",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        }
+      ],
+      "existing_updated_or_new_document": "New Document",
+      "date_published": "March 23, 2025",
+      "meeting_or_last_comment_date": "March 23, 2025",
+      "number": 1,
+      "ingest_status": null,
+      "extraction_source": null
+    },
+    "newsreel_status": "Yes",
+    "newsreel_details": null,
+    "doc_url": "https://content.naic.org/article/naic-spring-national-meeting-advance-modernization-resilience-and-consumer-protection",
+    "doc_page_content": "NAIC Spring National Meeting to Advance Modernization, Resilience, and Consumer Protection Skip to main content Search Search NAIC Search Recommended Insurance Summit International Forum N.A.I.C. Foundation Insurance Departments Contacts Consumer Insurance Search Insurance Terms × Back to Newsroom National Meeting News KANSAS CITY, Mo. (March 20, 2026) NAIC Spring National Meeting to Advance Modernization, Resilience, and Consumer Protection On March 22–25, state insurance regulators will gather in San Diego for the National Association of Insurance Commissioners’ (NAIC) 2026 Spring National Meeting , where they will continue working together on key initiatives addressing the challenges and pressures facing consumers and insurance markets. Joined by their counterparts across the globe, industry leaders, and interested parties, state insurance regulators will advance work on issues including the NAIC’s 2026 strategic priorities : Enhancing capital and investment frameworks. Enhancing data architecture, predictive analysis, and market analysis. Increasing resilience through regulation, mitigation, and public partnership. Leading on AI model governance, innovation oversight, and cyber threats. On March 23, NAIC President and Virginia Insurance Commissioner Scott A. White will deliver the event’s keynote address. “As natural disasters intensify, technology revolutionizes everyday life, and financial risks evolve, state insurance regulators are leading amid change by modernizing oversight, boosting resilience, and improving market analysis,” said NAIC President and Virginia Insurance Commissioner Scott A. White . “Our national meeting agenda will help ensure our state-based system remains strong, forward-looking, and centered on protecting consumers no matter the landscape.” “State insurance regulators are first responders in the fight for safer communities. Wildfires, hurricanes, and floods are growing national and global threats, and going it alone doesn’t get the job done for any state,” said California Insurance Commissioner Ricardo Lara . “California is proud to host insurance commissioners from across the country at this pivotal moment for consumers and insurance markets.” For more information on the NAIC’s 2026 Spring National Meeting, visit the NAIC website . About the National Association of Insurance Commissioners As part of our state-based system of insurance regulation in the United States, the National Association of Insurance Commissioners (NAIC) provides expertise, data, and analysis for insurance commissioners to effectively regulate the industry and protect consumers. The U.S. standard-setting organization is governed by the chief insurance regulators from the 50 states, the District of Columbia and five U.S. territories. Through the NAIC, state insurance regulators establish standards and best practices, conduct peer reviews, and coordinate regulatory oversight. NAIC staff supports these efforts and represents the collective views of state regulators domestically and internationally.",
+    "doc_page_length": 3051
+  },
+  {
+    "index": 4,
+    "extraction": {
+      "agent_call_id": "f7e43cba-0b54-4c07-90f7-09e35bce1aad",
+      "run_id": "run-1780064578",
+      "target_id": "naic.resource_center",
+      "data_extraction_datetime": "2026-05-29T00:00:00-04:00",
+      "document_title": "2026 NAIC International Calendar - Public Version",
+      "document_type": "Other",
+      "document_description": "Public NAIC international calendar listing 2026 meetings and events involving U.S. state insurance regulators and/or NAIC staff, including IAIS, OECD, NAIC national meetings, forums, fellows programs, and other international insurance regulatory events. The document states it was last updated May 29, 2026.",
+      "document_url_web_tracking_agent": "https://content.naic.org/sites/default/files/government-affairs-international-calendar-2026.pdf",
+      "library_item_url": "https://content.naic.org/sites/default/files/government-affairs-international-calendar-2026.pdf",
+      "library_item_title": "2026 International Calendar",
+      "library_item_file_name": "government-affairs-international-calendar-2026.pdf",
+      "organization_or_publisher": {
+        "name": "International Insurance Relations (G) Committee",
+        "status": "NEW ORGANIZATION"
+      },
+      "newsreel_relevance": "Yes",
+      "agenda_items": "1. New Agenda Item - 2026 NAIC International Calendar and international insurance regulatory events (Chronicle Topics: The International Landscape)",
+      "existing_updated_or_new_document": "New Document",
+      "date_published": "May 29, 2026",
+      "meeting_or_last_comment_date": "N/A",
+      "number": "1",
+      "ingest_status": null,
+      "extraction_source": null
+    },
+    "newsreel_status": "Yes",
+    "newsreel_details": null,
+    "doc_url": "https://content.naic.org/sites/default/files/government-affairs-international-calendar-2026.pdf",
+    "doc_page_content": "[PDF — binary content, not scraped]",
+    "doc_page_length": 35
+  },
+  {
+    "index": 5,
+    "extraction": {
+      "agent_call_id": "e5d8feb4-8875-4595-9d19-aaba99e88e6d",
+      "run_id": "run-1779351791",
+      "target_id": "naic.resource_center",
+      "data_extraction_datetime": "2026-05-21T00:00:00-04:00",
+      "document_title": "NAIC Letter to Senate Appropriators on SHIP and MHP Grant Funding - May 1, 2025",
+      "document_type": "Other",
+      "document_description": "A May 1, 2025 NAIC letter to U.S. Senate appropriators urging full FY2026 funding for State Health Insurance Assistance Programs (SHIPs) and for state enforcement grants under the Mental Health Parity and Addiction Equity Act of 2008 (MHPAEA). The letter explains the consumer-protection rationale for both funding requests and is signed by current NAIC officers.",
+      "document_url_web_tracking_agent": null,
+      "library_item_url": "https://content.naic.org/sites/default/files/naic-letter-to-congress-appropriations-senate-may-2025.pdf",
+      "library_item_title": "NAIC Letter to Senate Appropriators on SHIP and MHP Grant Funding",
+      "library_item_file_name": "naic-letter-to-congress-appropriations-senate-may-2025.pdf",
+      "organization_or_publisher": {
+        "name": "NAIC",
+        "status": "NEW ORGANIZATION"
+      },
+      "newsreel_relevance": {
+        "explanation_or_reference": "The document is a new NAIC federal appropriations advocacy letter on health-policy funding issues, but it does not appear tied to an existing upcoming event, library item, or agenda item and is likely not of interest to the ART Newsreel audience.",
+        "status": "No"
+      },
+      "agenda_items": [
+        {
+          "agenda_item_title": "NAIC letter to Senate appropriators supporting FY2026 funding for SHIPs and MHPAEA state enforcement grants",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        }
+      ],
+      "existing_updated_or_new_document": "New Document",
+      "date_published": "May 1, 2025",
+      "meeting_or_last_comment_date": "N/A",
+      "number": 1,
+      "ingest_status": null,
+      "extraction_source": null
+    },
+    "newsreel_status": "No",
+    "newsreel_details": null,
+    "doc_url": "https://content.naic.org/sites/default/files/naic-letter-to-congress-appropriations-senate-may-2025.pdf",
+    "doc_page_content": "[PDF — binary content, not scraped]",
+    "doc_page_length": 35
+  },
+  {
+    "index": 6,
+    "extraction": {
+      "agent_call_id": "46caf9c2-983d-4697-98d6-0dead8a7f3da",
+      "run_id": "run-1779394979",
+      "target_id": "naic.e.blanks_wg",
+      "data_extraction_datetime": "2026-05-21T00:00:00-04:00",
+      "document_title": "Blanks (E) Working Group Meeting Agenda & Materials - May 28, 2026 (updated 5/21/26)",
+      "document_type": "Agenda & Materials",
+      "document_description": "Meeting agenda and materials for the Blanks (E) Working Group virtual meeting scheduled for May 28, 2026. The document sets out the roll call, top-level agenda, and detailed proposal items for adoption, exposure, referrals, technical systems discussion, and reference materials.",
+      "document_url_web_tracking_agent": null,
+      "library_item_url": "https://content.naic.org/sites/default/files/call_materials/BWG%2005.28.26%20Materials_0.pdf",
+      "library_item_title": "Blanks (E) Working Group Meeting Agenda & Materials - May 28, 2026 (updated 5/21/26)",
+      "library_item_file_name": "BWG 05.28.26 Materials_0.pdf",
+      "organization_or_publisher": {
+        "name": "Blanks (E) Working Group",
+        "status": "Listed"
+      },
+      "newsreel_relevance": {
+        "explanation_or_reference": "Existing upcoming event: NAIC BWG | 2026-05-28. The document is new and relates to an existing upcoming Blanks (E) Working Group meeting event on May 28, 2026.",
+        "status": "Yes"
+      },
+      "agenda_items": [
+        {
+          "agenda_item_title": "Consider Adoption of its March 5 Minutes",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "2025-23BWG Modified – Update the Separate Account Assets page by adding “Nonadmitted Assets” and “Net Admitted General Account Assets.” Add a new line on the Separate Account Summary of Operations for “Change in Nonadmitted Assets” within the surplus account. Insert a new page “Exhibit of Nonadmitted Assets” that will detail the current and prior total nonadmitted assets, and the change in nonadmitted assets.",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "2025-24BWG – Update Notes to Financial Statements Note 18B – ASC Plans for the disclosure clarifications in Statement of Statutory Accounting Principles (SSAP) No. 47— Uninsured Plans.",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "2025-25BWG – Update Notes to Financial Statements Note #2 – Accounting Changes and Corrections of Errors, by adding the reference to Valuation Manual (VM)-20, Requirements for Principle-Based Reserves for Life Products.",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "2025-26BWG Modified – Update the annual statement expense categories and instructions to remove outdated expense terminology and update to reflect the current types of expenses that exist for companies.",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "2025-27BWG Modified – Add a section to Life/Fraternal Asset Valuation Reserve (AVR) to report collateralized loan obligations (CLOs). Add a footnote to Schedule D, Part 1, Section 2 to report the book /adjusted carrying value (BACV) by NAIC designation for CLOs.",
+          "chronicle_topics": [
+            "NAIC Investments"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "2025-29BWG – Update Investment Schedules General Instructions restricted asset codes to add codes that were previously added to Notes to Financial Statements Note 5L – Restricted Assets for reporting funds withheld and modified coinsurance (modco) arrangements.",
+          "chronicle_topics": [
+            "NAIC Ownership and Capital Structure"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "2026-01BWG – Update Notes to Financial Statements Note #26 – Intercompany Pooling Arrangements to add instructions for modifications to an existing intercompany pooling arrangement that involved the transfer of assets with fair value that differ from statement value.",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "FHLB agreements (BWG#2026-02)",
+          "chronicle_topics": [
+            "NAIC Investments"
+          ],
+          "status": "Existing"
+        },
+        {
+          "agenda_item_title": "2026-03BWG Modified – Update the Life/Fraternal Annual and Quarterly Blanks and Instructions (Exhibit 5, General Interrogatory lines 27.6 and 27.7, Supplemental Exhibits and Schedules, Variable Annuities Supplement) to clarify how companies should report valuation standards for VM-22, Requirements for Principles-Based Reserves for Non-Variable Annuities, business. Add an annual supplement for VM-22 reserve reporting.",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "Funding Agreements backing SPV Issuances (BWG#2026-04)",
+          "chronicle_topics": [
+            "NAIC Ownership and Capital Structure"
+          ],
+          "status": "Existing"
+        },
+        {
+          "agenda_item_title": "2026-05BWG – Update the instructions to require explicit identification of instances where net asset value (NAV) is used by requiring direct reporting, rather than inference through omission, in the Fair Value Hierarchy Level and Method Used to Obtain Fair Value Code column in Schedules D and BA. The updates require completion of this column for all reported items and restrict reporting to indicators expressly permitted in the annual statement instructions.",
+          "chronicle_topics": [
+            "NAIC Investments"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "2026-06BWG – Update Notes to Financial Statements Note #5L(1) to add a reconciling adjustment line to the illustration to identify the assets pledged under multiple arrangements.",
+          "chronicle_topics": [
+            "NAIC Ownership and Capital Structure"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "2026-07BWG – Add clarifying instruction to Schedule D, Part 1, Sections 1 and 2 for the payment due at maturity column and to specify what reporting categories should be included in this column. Add clarifying instructions to the origination balloon payment percentage column on Schedule D, Part 1, Section 2. For Schedule BA, Parts 1, 2, and 3, add clarification to the maturity date column to complete the column if the investment has a contractual stated maturity date.",
+          "chronicle_topics": [
+            "NAIC Investments"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "2026-08BWG Modified – Add a code “O – Other” to the active status column on Schedule T for reporting entities that have a unique, restricted license type that does not fit into one of the other existing categories. Add a field to provide a description of the other license type, for example, captive insurers or international insurers. The proposal changes the “N – None of the Above” status code to “N – None,” as instances where the existing codes do not apply would now be reported through the “O – Other” status code.",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "2026-09BWG – Update the Five-Year Historical to add a line reporting short-term and cash equivalent affiliated investments.",
+          "chronicle_topics": [
+            "NAIC Investments"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "2026-10BWG – Update Life/Fraternal Liability lines 24.03 and 24.07 to add reference to use the BACV and an annual crosscheck to Schedule S. Add reference to use the BACV value to Schedule S, Part 3, Section 1, Column 15; Schedule S, Part 3, Section 2, Column 14; Schedule S, Part 4, Column 12; and Schedule S, Part 5, Column 20.",
+          "chronicle_topics": [
+            "NAIC Investments"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "2026-11BWG – Update Notes to Financial Statements Note #5A – Mortgage Loans by adding a paragraph to disclose mortgage loans acquired through a qualifying investment in a qualifying statutory trust.",
+          "chronicle_topics": [
+            "NAIC Investments"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "2026-12BWG – Update the AVR factors to zero in columns 7 and 9 for the Collateral Loan section.",
+          "chronicle_topics": [
+            "NAIC Investments"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "2026-13BWG – Add an active status code column to Cybersecurity Insurance Coverage Supplement Part 5 and to Private Flood Insurance Supplement Parts 2 through 6 to identify the active status for each state.",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "2026-14BWG – Update Schedule P instructions with revisions exposed at the Casualty Actuarial and Statistical (C) Task Force.",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "2026-15BWG – Update the “CUSIP” column throughout the annual and quarterly investment schedules to be a “Security Identifier” column to allow for different types of identifiers, such as CUSIP, CINS, PPN, ISIN, and LXID. Add a Security ID Type column to the investment schedules to identify what security identifier is being used. Update references to CUSIP throughout the annual and quarterly statements to the security identifier when the instructions are not specifically referring to CUSIP.",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "2026-16BWG – Update the list of disclosure exclusions for Notes to Financial Statements Note #20C to remove investments accounted for under the equity method.",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "2026-17BWG – Update Annual General Interrogatory 25.04 and 25.05 changing “amount of collateral” to “assets lent.” Update Notes to Financial Statements Note #5L(1) category “Collateral held under security lending agreements” to “Assets lent under security lending agreements.”",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "Consider Adoption of the Editorial Listing",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "Receive a Referral Memorandum for Combining Security Identifiers and Adding a Security Identifier Type Field to the Financial Statements",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "Discuss the Technical Systems Issue – Schedule B, Parts 1, 2, and 3 Line Number Expansion",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "Discuss Any Other Matters Brought Before the Working Group",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "Adjournment",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        }
+      ],
+      "existing_updated_or_new_document": "New Document",
+      "date_published": "May 21, 2026",
+      "meeting_or_last_comment_date": "May 28, 2026",
+      "number": 1,
+      "ingest_status": null,
+      "extraction_source": null
+    },
+    "newsreel_status": "Yes",
+    "newsreel_details": null,
+    "doc_url": "https://content.naic.org/sites/default/files/call_materials/BWG%2005.28.26%20Materials_0.pdf",
+    "doc_page_content": "[PDF — binary content, not scraped]",
+    "doc_page_length": 35
+  },
+  {
+    "index": 7,
+    "extraction": {
+      "agent_call_id": "2c2d2f78-0801-4d4c-bc7e-2c86da0a7aad",
+      "run_id": "run-1779222215",
+      "target_id": "naic.resource_center",
+      "data_extraction_datetime": "2026-05-19T00:00:00-04:00",
+      "document_title": "NAIC Government Affairs Brief: GCC, LST, and Receivership - Holding Company Act and Model Regulation - May 2026",
+      "document_type": "Publication (e.g., report)",
+      "document_description": "This is an NAIC government affairs brief summarizing the NAIC's Group Capital Calculation (GCC), Liquidity Stress Test (LST), and 2021 receivership amendments to the Insurance Holding Company System Regulatory Act (#440) and Model Regulation (#450). It explains the background, purpose, accreditation timing, and jurisdiction-by-jurisdiction implementation status of the 2020 and 2021 revisions.",
+      "document_url_web_tracking_agent": null,
+      "library_item_url": "https://content.naic.org/sites/default/files/government-affairs-brief-gccc-liquidity-receivership.pdf",
+      "library_item_title": "GCC, LST, and Receivership - Holding Company Act and Model Regulation",
+      "library_item_file_name": "government-affairs-brief-gccc-liquidity-receivership.pdf",
+      "organization_or_publisher": {
+        "name": "NAIC - Other",
+        "status": "Listed"
+      },
+      "newsreel_relevance": {
+        "explanation_or_reference": "Candidate ART Newsreel article title: NAIC Brief Updates State Adoption Status for GCC, LST, and Receivership Amendments",
+        "status": "Yes"
+      },
+      "agenda_items": [
+        {
+          "agenda_item_title": "Implementation of Group Capital Calculation and Liquidity Stress Test amendments to the Insurance Holding Company Act and Model Regulation",
+          "chronicle_topics": [
+            "Group Capital Calculations",
+            "Liquidity Stress Tests (LSTs)"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "Implementation of receivership provisions in the Insurance Holding Company Act and Model Regulation",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        }
+      ],
+      "existing_updated_or_new_document": "New Document",
+      "date_published": "May 1, 2026",
+      "meeting_or_last_comment_date": "N/A",
+      "number": 1,
+      "ingest_status": null,
+      "extraction_source": null
+    },
+    "newsreel_status": "Yes",
+    "newsreel_details": null,
+    "doc_url": "https://content.naic.org/sites/default/files/government-affairs-brief-gccc-liquidity-receivership.pdf",
+    "doc_page_content": "[PDF — binary content, not scraped]",
+    "doc_page_length": 35
+  },
+  {
+    "index": 8,
+    "extraction": {
+      "agent_call_id": "8e633f61-0ed1-4a58-8176-af02638abf46",
+      "run_id": "run-1779438176",
+      "target_id": "naic.resource_center",
+      "data_extraction_datetime": "2026-05-22T00:00:00-04:00",
+      "document_title": "NAIC Letter to House Education & the Workforce Committee on AHP, Stop Loss, Telehealth Bills - May 1, 2025",
+      "document_type": "Other",
+      "document_description": "A May 1, 2025 NAIC letter to the U.S. House Committee on Education & the Workforce stating the NAIC’s positions on federal health coverage legislation affecting Association Health Plans, stop loss insurance, and telehealth-only excepted benefits. The letter supports HR 2528, opposes HR 2571, and objects to proposals to classify telehealth-only coverage as an excepted benefit.",
+      "document_url_web_tracking_agent": null,
+      "library_item_url": "https://content.naic.org/sites/default/files/naic-letter-ahp-stop-loss-telehealth-final-may-2025.pdf",
+      "library_item_title": "NAIC Letter to House Education & the Workforce Committee on AHP, Stop Loss, Telehealth Bills",
+      "library_item_file_name": "naic-letter-ahp-stop-loss-telehealth-final-may-2025.pdf",
+      "organization_or_publisher": {
+        "name": "NAIC",
+        "status": "Listed"
+      },
+      "newsreel_relevance": {
+        "explanation_or_reference": "The document concerns federal health coverage policy for small businesses, stop loss regulation, and telehealth excepted benefits, which are generally outside the ART Newsreel’s core focus on insurer investment guidelines, capital, reserving, and related international developments.",
+        "status": "No"
+      },
+      "agenda_items": [
+        {
+          "agenda_item_title": "Association Health Plans Act – HR 2528",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "Self-Insurance Protection Act – HR 2571",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "Telehealth as an Excepted Benefit",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        }
+      ],
+      "existing_updated_or_new_document": "New Document",
+      "date_published": "May 1, 2025",
+      "meeting_or_last_comment_date": "N/A",
+      "number": 1,
+      "ingest_status": null,
+      "extraction_source": null
+    },
+    "newsreel_status": "No",
+    "newsreel_details": null,
+    "doc_url": "https://content.naic.org/sites/default/files/naic-letter-ahp-stop-loss-telehealth-final-may-2025.pdf",
+    "doc_page_content": "[PDF — binary content, not scraped]",
+    "doc_page_length": 35
+  },
+  {
+    "index": 9,
+    "extraction": {
+      "agent_call_id": "169a47c1-6d3c-44c2-8f48-aed870879f76",
+      "run_id": "run-1779222215",
+      "target_id": "naic.a.latf",
+      "data_extraction_datetime": "2026-05-19T00:00:00-04:00",
+      "document_title": "Life Actuarial (A) Task Force APF 2026-05 VM Editorial Corrections",
+      "document_type": "Proposed Guidelines & Support Materials",
+      "document_description": "This document appears to be a Life Actuarial (A) Task Force Amendment Proposal Form concerning editorial corrections to the Valuation Manual. Based on the title and URL, it is a proposed set of non-substantive wording, formatting, cross-reference, or similar edits to Valuation Manual text.",
+      "document_url_web_tracking_agent": null,
+      "library_item_url": "https://content.naic.org/sites/default/files/call_materials/APF%202026-05%20Editorial%20Valuation%20Manual%20Edits.docx",
+      "library_item_title": "APF 2026-05 VM Editorial Corrections",
+      "library_item_file_name": "APF 2026-05 Editorial Valuation Manual Edits.docx",
+      "organization_or_publisher": {
+        "name": "Life Actuarial (A) Task Force",
+        "status": "Listed"
+      },
+      "newsreel_relevance": {
+        "explanation_or_reference": "Existing upcoming event: NAIC LATF | May 21, 2026",
+        "status": "Yes"
+      },
+      "agenda_items": [
+        {
+          "agenda_item_title": "VM Editorial Corrections",
+          "chronicle_topics": [
+            "Chronicle N/A"
+          ],
+          "status": "New"
+        }
+      ],
+      "existing_updated_or_new_document": "New Document",
+      "date_published": "May 19, 2026",
+      "meeting_or_last_comment_date": "May 21, 2026",
+      "number": 1,
+      "ingest_status": null,
+      "extraction_source": null
+    },
+    "newsreel_status": "Yes",
+    "newsreel_details": null,
+    "doc_url": "https://content.naic.org/sites/default/files/call_materials/APF%202026-05%20Editorial%20Valuation%20Manual%20Edits.docx",
+    "doc_page_content": "PK\u0003\u0004\u0014\u0000\u0006\u0000\b\u0000\u0000\u0000!\u0000s����\u0001\u0000\u0000' \u0000\u0000\u0013\u0000\b\u0002[Content_Types].xml �\u0004\u0002(�\u0000\u0002\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000̖�j�@\u0010�� }\u0007���Z'�R��\\�-\u0014z\b4�܎wG��� '��wt�(���� �\u0011H3���f��]\\�[��bL�w�8��\"C���ܺ\u0010��?�ދ,\u00118 �;,�\u000e��X�~���\u0005L\u0019W�T� Q� eR\u001b��r �q���\u0002�k\\�\u0000�7�Q������ьj �\\|�\u0012���O���%�h��.��ګ\u0010\u0010��\u0014\u0010���\u000f\\f�CΕMN�T!��\u0004!\u000f:ԑ\u001btu?�5�Ҙ]A��`9K�����jk�2\\�\u0000�/�Ja__���\u0015��=�&�#\u0016*��?ġ�����FV��*��Ύ��Ek=�Ta�Ñ �/���s34{�m� #���7E/=\b�hg0���� �G\".�\u0002�S D�����(�\u0012 \u0004)�'�i���\u0007!��\u0018�ʣ������`\u00170��g?X\u0019���� �\b��\u0014\u0004��=�d��y�B42�Yrfs\u000e�O���(��ga�\u0001�;������-A��_�vh�h��7��\u0004\u001a\b�WX���J?\u0002��mse�7S�\u0005M��;�暷�\u0003\u0000\u0000��\u0003\u0000PK\u0003\u0004\u0014\u0000\u0006\u0000\b\u0000\u0000\u0000!\u0000<]��/\u0001\u0000\u0000s\u0003\u0000\u0000 \u0000\b\u0002_rels/.rels �\u0004\u0002(�\u0000\u0002\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000���J\u00031\u0010��\u0005�!供���Hw{#BAAd}�1�� n2!I�}{�Ң+�ڋ^f���7'd6_��}�\u000f�lɧY�\u0019ZIJ۶�o��䎳\u0010�*��b��\u0018������b\u000f1 �N���� %�bt�B\u0004١���C�: y\u00031 }+ �\u000fhQ\u0014y~+�o\u000f^ <�B��/�\u0015g���)��4Z�\u0003ɥA\u001b\u000f\\!p\u0015�*T\u0013�Ӽ�:m�j�-ƒ+�/� \u00048�%k.\u000e\u0013\u0015�\u0013 �V\u0018�� ���q�g�\u0018\u0003��3���拼\u0012jW ��9Bc��\u0014���$��&\u0001\u0014�ȋ? ��\u0010t\u0012lk=�c?��y �Ӧ�� �\u0011]�3 � ��?\u000f�����T�\u0000\u0000\u0000��\u0003\u0000PK\u0003\u0004\u0014\u0000\u0006\u0000\b\u0000\u0000\u0000!\u0000K��\u0013\u0016H\u0000\u0000v�\u0003\u0000\u0011\u0000\u0000\u0000word/document.xml�}�r�H���F�? ��� K�{\u0002�)w�Z噲�a���� \"!\u0011m��\u0000�d�S�� � ��������� �s#�ʸ�W\u001bB5\u001a\u0012\u0010\"��\u0014޹)v%G��\u0010�Ր\u0018�JK�^Kk�c�ZB�-�z-�Ֆ�z-����*�G�`$ �E񃟊�������M�\u0017�ᱟ���0L�E��M���ѷ\u001a#\u0012_�Zx���[�W\u000fQ?\u0018������7�xt�1�^\u000e�:�>��}\u0011 �u+�3����0I���Up�}��Ea�*\u000e�\u0002��(\u0019��vx�ۚx8�6� \u0001�\u000f��{OcXQ��T���a�`���{\u0018f#��\"\u0004\u0015�)��}Qe\b�>�#y\u0010 <�\u0016j\u0016� +*�i\u0003h�\u0001� *\u001a�i\u001bz��Uo.ݲ���XM�ɨ\"� 爅\u0015u��`\u0016\u001a�Ovj\u0002��8��|�����\u0007�57�ѕ��O���̄&k�\"��H\u0016Z�\u0018l\u0018�f�L�\u0019�4:k��a����f��S M����f�}���'�<��V.��J(i6���?\u0016���w��~\u0014���P�H��&$PS\u0014�� F�?��໺/�'��n(��O4�\u0012߼\u0017N�m���c�\\���� d����;P8��0��������k�p����F�I�횳[Np�O�����3�R���s,��\u0013� }������W�^�=J�>}�@� ���\u0014�]�o_� ��Up�k\u001a��r,��q=n3 wv�s���\u0002��' ���Z\u0018{\u0005q\u0001�� �\u0019\\�\u001aXսeX�e�v��������`�q $A�\u0018�y�Kx\u0017hf/��q�\u000f5�A�}��[D\u0017E�\u0005X\u0001��8ޚ?�t޴��_���Eq/8\u0000\\ﯴ�\u0003�\u000e\u0016����A+\u0019�z� S[�\u0002��{\u0006�̽&�;ka���p�\u001a�\\;���$��p��j.�9��Q\"�$��B�Bȳփ�����p@)�]Z\u0005�E �@ �Lo\u0001�{T��\u0018\u0018Yخ\u0002#��BK0\u0012\u000e�e�����S� �h ���V�ˇW�Y�!��Z����� koBx\u0003�>􅀅w��s4��`x�N�����\u0018�j�������xҳv\u001b����\u000f�^ ���M�h\u0010��3��5��fA{���0�a�x���DwZ:\b�0I&A�k�˞p�\\ u��Z���뇑�\u0012\u00181�� �\"�\u0004����\\7�\u0011::\u0004�.��c�\u0011��W`�u\u0001���e0f/�\u000f�\u0005�*c�^4��K�\u0015 ��i�-��\u0005(kj��^��� ��?? �D ��޿��C_s��a�N�d~�+p0�(�\u0000�<��%1�I�9x\u0003u �g��n-P7\u0014\u0003� \u0006w�\u0013>��\u0007ak`��2�gX\u0000�\u0011 YP\u0010�\u0000x�O�\u0002N)6��7\u0007<�u`���W����Vs\u0001�6Up?L#�\\��8\u000ez*ܨ������D��� \u000eF�`�|���\u0004q �I霩%,�����a�pt�����8LR\u0001c\u0018$��\u00100L�*F�\u0002ȴ�]�rN.�~L#\u0004= R\u0003�v��a���.K��\u0018��{�4�G�] C\u0003^CEvj�� ��\u0006�4�h� K�m� Z\u0006��r�d��8�I� N�bm6\u0014?\u0015nd�M�Vg�D������a�'��z�� ��\u0018x�[q�[\u0018���cS��!X�߽i k'${\u001a�Tƒdè�͢�Q��������0xj\u0014�,�\"8i��+A�������в�W�c\u0010x���\u0014\u0019>��,A��m�ђ� !� 8r�3G���l�\u0019)��\u0010�0�8��w\u0010Q�\u00174��g ��\u0010@Ls��&%&�B�jhB5��N���&#���I&� 将{6s%Z����cs��01�\u0007�܃���\u0005\u0002�M�,k�һė�\u0015��6��6\u0002�a�S�)��z@��&=��\u0002P�53�m� ��F� l�����-8`��6�\u0018�o\u001b�:\\�G�� \"��]�޿��<��!|��y�\b'�\u001b\u0007�'�r,��9����ˍ�ǵ�� ��-�\u0018\b�\u0013`��z\\���Z�C���%��cS�:��n��\u0007\u0001]@)�f�����Ea��-5�47B�_u�\\�p�9 '�\"���Î�z-��&㷧���O7&E �A�\u0003?\u00116L.y�����Fǀ��\u0010�Ŷq3[E;\u0002]�Ц�&�#�����Ԇ.9��.�\\d\u001b�R�!p��<��`�9���:1�����cq��A=S�n\u000ec~k\u0001Ƶ�b\u0015ȭ\u001b\bJ\u0015f>��e1�7M�J�`�W��`��r�R�=\b���a�%Ӥ�J y��?�Bޞ����1�7������aҋ�����Nο�Q2\u0011\u0013��Џ����6G��P \u0006Ao0 {2m�כ\b������\u0012Q�Աm^�3-�v�����DAapi�@ h�JZg��@:�60� )� ��@1+��G�bn\u0014��U ��t\u001bĿ9_O�,%�� �J���V��RV��́�,���0�jIJ}��\u0001���\u00163C�dñ�W�\u000f��\u0010@t�W�!\u0015�w]� \u000f\u000fzq����m�\u0015��\u0016XwS�{��ԗ=?��,_�ɏK�8r TG��=�<\u0007Le� ���\u0005X5�Z��\u0004Xm_��d��I1��*{����(!�6D%�P�B\u000e�\u0012�Y�\u0017�]|��]� `$� \u0019r��L��\u0006]&\u0018�10��\u0005��� f��\u0018\u0014��&>� ȝC�M���iv���l���Ʊ�e�$VJ,ݰu��ԊQ\u0013\u0003;l���\u0018uMb� /�\u0018E?[ �G>�~�^�\u0006>㺟�/��\u0017�� M� \u0012�� �p\u001b\u001az.�K��d|�6��t޽�O\u001ak \u0012�6ɟ\u0001�h.�S-�m\u0003`�e�v�\u0016���}�[\u000eh�s��i���%\u0007<����;��eT�G��i������, ��[_�a\u00065�lG�6��\u0019�+jo͊�\u0002�r��-\bƟD� .y�K8 2�c��ma0y��\u0017 c$��^\u0018��Ɣ�A ��\u0014\"�p�K�\u0017�jʇP}P����Ar�m\u0016���w5�_�^\u0010>.-ug�Fq�\u0006^VB�_^�6f��\u0006 / �# ��)K�QN]-��b�{d �]�[v��N k��\u001aN��qx;Ik� e���\u0014��LǕ�R:�h�)l�\\!|�M �l�6�FɅ\u0018T鮴\u0006i��\u0002�pP%E�Pn��\u0013FY�|�\"��ו�b\bdDg\u0001��M�< ���\u0014݌��� \u00074�\u0010O��4�%��(/�7�ٱF;�\u0011Z^\u0011�\u001a>\u0004��)xҾD\u000f�H����/?�\";9R��O���e���k��]v�!����F =k�<�D\u001bGð�� #�h���� ���»�� \u000e�$l3�l�p����-+r��uQ���2���΍%ݲ��d �7� �9��Rt�h����Q{S�\u0019iN��B�����|�� ��Y���V��X(v�/({i\u0010 �\u0011�n���\u0018F�ړ�Ln�&_�w����O�8P{\u0005�S�`\\:�!��\u0014dRF�S%D��8e##�5�~��\u0013t����ʕ��|��ن�x� �����w�͒�~�q�?�G=���P� �m��\u0005[\u000e�j���@ |�OƎ�����6I�a��lǘ�)\u0011ɍ�Cɑ�c\u0010�JX�7�=�ϴ��\u0004�����Lp�E~Y� b[�#\u0015�z]|� �~T4X�>�\\�\u000e�T�\u00144�G�@���o�O�Js�\u0007���ܵ���W�$C&�`��at�}\u0018i=؛ȓ��\u0018�*\u000e�Eas �`��� �%�z~2P�Z`% ��\u000e �T���S�qU��8��:;�@4&X��6\u0016X.)�\u001aʍ�ס`m�H�$ �%|1\u0019x���?R[c�\u0001\u0017r�\u0014� �. � �5f�\u0000���*�C����jZ>�<���\u0012�j��I� y<�\u0010!����l\u0015=~\u0015����QL/��\u0012w�I��\ḇ�\u0012i�à/c�ڊ%5\u00059 �Taږ��r6\u001a�R�8�:,�L���9�j �\u0001�+\u0001}\u0013!�i��TV\u0019\u001aER�.�\u0012�/���ۢ �*�5��R{+�ʈ�d5'�� ��) \u000e�.��cY\u0016�Y��Y\u0013��Iw�T\u0016HY���Ju�\u0004�P\u0000[e\u001b�YY��=\u001a�q,�\u0016�}IǜjI�L�(���\bk\u0012ɢ5���\u0012��,c#���XP�/�\u0015�̭�c\u00158:�9n�;�f��a��u�h�\u0015?��\u0002��� ��Jf���w��Y�~�.�i &X- 5��v\u001b wt�\u001a�i �\u0004w��V���b�SD]��g��Xw*m}ۇ=ۯ�j�h �E�3�د*&g��;:�d��Kfk�D�薂�\u0012�\u000f�[�\u0010���9�Օ��NyK����J��>� *�`g�R��*��2|IG`\u0014��� \u0001��,bE'U����l����џ�� �w7��=_`��,\u00045�; ?�rtSf=P����@�,�\"P/%��X'�?��Fς� \u0005��xO�} �\u0012Y\\x�N��Xnquy��M\u0002!|��21\u0013\u0004��\u000f�E�Ņ�\"�'2�\u0011�:�J4rp\u0016�\u00171��c\u0018w\u00000�R��Pϲ,:?aW\u0002`\u0000���Ǭa��늍�[���tS�V\u000fV�qh�N�U9Q �\u0006g���m����K7w%d1��\u0017��\u0016\u0003\u0013&s��n4y�5��Q�N�^Nk���lO&Tչ�\u0016�\u0010r����o�/I�\"G4�\u00129?\"S�5}U\u0006�d�O�K}͟|Zz2����.����m{ƚJ��Cq�\u0003\u0015�U\u0017_&àX�MB���ɭ���{�H\u0012e�\u000f�̣�ޏ�B�@�6�� k�3�-��[ �\"%\u0015B/Tፅ���i����):2��2w�\u0018J�m�=_=\u0013EŚY�G\u0010 y��$I\u0001{�A��e@���J��N��W½��O1P��WY��7-{�yPvwo��=@\u0015����lMe5��\u001a�\u0002 {\u0012p�w\"��G�Qa�� �\b\u0002�:6ڈ��O\u0003N A��D[��0�\u001aS��JQ�� ������h2G�I���B ,�'���?9���ãH�_ \u0006\u0017ρ W�gY�q����{�'��$Ho�޷N �\bd\u0014kw��? � ��JN���\u0014>�\u00196s�\u0014;�G�\u0016���n-�[ ��d^K\u0002\u0001w_SK y�k�UO\u0017@��*\u0015xN���iM9]fR�ӳ�4k8]m;���y�w�髜�޺��\u0004�x�W9�I\u001a>�i�=Lg�Z(����6�\u0013�6\bF� 1� �Av<���{\u0005h{n�����e\u0015k\u0005L@���N�[��l?smk�\"�J�;\u0019��,��e� ��r�| �ΥE��7 ��$������;���D�\u0004b '�!,���8� 6\u000ebyP�,%\u0017e�2\u0011��C��V���Q��$�i*�����<��s�\u0013�2�'���X�[a��Aҋ��@U;ۺ1\u001a\u0015*Nر �k�`2 �۳}��\u0002� \u0004�\u0002�\u001aò}�{d-��t\u0006*T�h\u0003���të �p�| ݲܹ\u00123� �zC��J�݇��,ƨ^�ӯ@´ٙ<,IÚ��!C��q�]a�� \u0015�B����\u0000�\u0011��\u000e��J��nհHi��Ӗ�텐�n%��\"\"����\u000eF�p{N\u0012;S��~{%O���-\\)Re.@<\u000fٮ]堦zg��O�:#�=��x�A��5I[�g\u0004�C�e/��\u0012\u00033\u0006աa-N\u001b^N�\u0014X<i=�0\u0002�����\u001bOG�a���G���]�#H F_K:�m�U�*l;������\\>)_+�\u0005^�)Z\u0007\u001b+l�\u0003Ұy�+3�YvxZh��8�����̬Ɣ:�# Ԛ���,d\u0016h_2\u0017hZ��\u0016�+�{��K�\u0018\u0014K?��:\u0004M�J�f��W\u0019�[\u0010�?��\u0015��B���QR�_;��Z�x����=�P��]\u0000x\u0001�W\b�)]�\b���V � \u0015(K��$��� uQ�q���N\u0011��8���$\u0015\u0003�W�$��3f���\u000e�\u0012��bu�l֖�g�݉g��a:�'dI/\u001aO�\"��K�bB)��ۓDL\u0006�dؗ�,�s�|�E�������;�3nǟ����1\u0012�/ԌVL�Ӌ8�Wd�\u0005��a�YR�,!s\u0000�V�g�B�Zv����\u0014��'�k���\\�s���:X�\u0002A%\"?S���\u000fD��Sé\u0012G~e��\u0000\u001b\u0006�+��|]�!�g\u001b��m�A����3Rs`���� /�����\u0004��U\u0017G�����\u0007�?_\u0016פ�S�r\u0013AhVI�[��o �\u0017��\u0016��37\u0000���*�\u0000\u0004)�j\u0005z��ś �*>Q��o-��^(@=9ġ��^CX7��1, �*�_>\u0011q\u0004�\u0001Y\u0014�ݻ����\u0002}���\u0000�*���؎\u001b�� \u000eO=� �\u0010�}R�\u0010��G�\u0015GR��%�Y�c\u0015�����~ ��7�(UɎ�I\u00102�Bt P�$�\u0005Rw�(\u0004ri^��p [W�i�K��}���% v*ǱqOǮ�J��\u0019��\u001a��\u0004\u0002�\u0018�êL|;\u0002�ݛY��\u0013UZ�}�6�\u001a}�Ӥ��u� f {o�\u000f\u000e�1�w��9\u0000�R�\u0018� �\u0012�&��$\u0014!�O�\u001bJ{ŗ���\u0017����O�z�\u000e.��s@|�7�Qz��SE�t�@�ۨ�lp�\\S��� \u0004v=L�J78I\u000f�8r�B&�?YO�s׎+��+u�� �����w��Mj�,�\u0017\u0018+Z:��$Lҹ�Z��\u0015NS�����ra�a�.� w�D\u0013 ��M�@�q=G��6�P/[�->9L�Z 8�\u0001 -'��\u0011Z��͓,ր�-���0��&sm��6�����ҽ\\�/��*�\u0014?����?���~|��,� C� �\u0011��NZ��2���<����k,ȱ�lpF���� �+�9\u000ev!��ɾ��/�cq\u0004]�j\u001b��\u000e�X\u000e\":�R2�hRe�Z� q\u0010bܮ�ߪ\u0013�5�d�{��\u001a������u�4�P3�m7R\u0013[ v�v�������0�\u0017hy\u0001�F� � )���*�'w� ��� �\u001b �� �w��bÙ�K�)_L�hcrH��\u0000\u0003���\u0017�v/P��\u0019y���B�uZƵ}n�ޝd��Q�\u000f�ls}�{��� \u0010�u��&4�E!��Αu^��aQ\b�A\u0019q���P� ��\u0012�9V+!��DaS��!0\\�(�6���S�H��&�@P� 拱���\u0002�\u0003K����`�($�˱�j w(��B\u0000L\u0017\u0010����+E!r=n��\u0019saSs��c2\u0003���Y�G5g�P��JG� Ŝ��6jO����w*���&�z\u0003�z؛U�z{��!B�!\u0006ԫ�\\��\u0012�p\\��u^1�\u0003s!s-��J;O;\u0014��t�\u000e�Lz�ዦ������aiu}J�6--��eڠ��� hX�:=ʇ7�b�Hc�'F���s��h\u0003�������\u000f�d� �@3 \u0010!�l�S�5Qh@�蠋&�G!\u0006��Ha�Ca=\u0014\u0002 =(Ltg�K��\b@HP��f-��9��F�$@m�� � \u0018h���q��� �T ��8M�9�\u0006\u00109�K;c�$nm� tA�&(ԡC����ӫ��\b�۰�Iu��^o�\u0019\u0010��{³i�2ǳI�>kg�\u001b\u001ak���I�\u0006��\u001aj�c�R�ԩ�z(��\u0002]��\u000eV����a\"B�9�g�� �N��<",
+    "doc_page_length": 8000
+  },
+  {
+    "index": 10,
+    "extraction": {
+      "agent_call_id": "98fd7948-f232-470c-8bc9-e025cb752dec",
+      "run_id": "run-1781036574",
+      "target_id": "naic.a.latf",
+      "data_extraction_datetime": "2026-06-09T00:00:00-04:00",
+      "document_title": "APF 2025-14 VA Scope Clarification - Life Actuarial (A) Task Force - June 11, 2026",
+      "document_type": "Proposed Guidelines & Support Materials",
+      "document_description": "An NAIC amendment proposal form document titled \"APF 2025-14 VA Scope Clarification.\" It appears to be call material for the Life Actuarial (A) Task Force concerning a proposed scope clarification for variable annuity contracts in the payout phase under the Valuation Manual and related life RBC treatment.",
+      "document_url_web_tracking_agent": "https://content.naic.org/sites/default/files/call_materials/APF%202025-14%20-%20VM%20Variable%20Annuity%20Scope%20Clarification%2020260611.docx",
+      "library_item_url": "https://content.naic.org/sites/default/files/call_materials/APF%202025-14%20-%20VM%20Variable%20Annuity%20Scope%20Clarification%2020260611.docx",
+      "library_item_title": "APF 2025-14 VA Scope Clarification",
+      "library_item_file_name": "APF 2025-14 - VM Variable Annuity Scope Clarification 20260611.docx",
+      "organization_or_publisher": {
+        "name": "Life Actuarial (A) Task Force",
+        "status": "Listed"
+      },
+      "newsreel_relevance": "Yes",
+      "agenda_items": "1. New - VM Variable Annuity Scope Clarification - NAIC Strategic Asset Allocation and Asset Liability Management",
+      "existing_updated_or_new_document": "New Document",
+      "date_published": "June 11, 2026",
+      "meeting_or_last_comment_date": "June 11, 2026",
+      "number": "1",
+      "ingest_status": null,
+      "extraction_source": null
+    },
+    "newsreel_status": "Yes",
+    "newsreel_details": null,
+    "doc_url": "https://content.naic.org/sites/default/files/call_materials/APF%202025-14%20-%20VM%20Variable%20Annuity%20Scope%20Clarification%2020260611.docx",
+    "doc_page_content": "PK\u0003\u0004\u0014\u0000\u0006\u0000\b\u0000\u0000\u0000!\u0000\u0015��b�\u0001\u0000\u0000�\b\u0000\u0000\u0013\u0000\b\u0002[Content_Types].xml �\u0004\u0002(�\u0000\u0002\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000̖�k�0\u0010�� � �^G���RJ�>�\u0007 ���\u0014�z�Ή�~!]����NL\u0019Y�-�؋�����#Y�ir��l�)��+q^�E�^\u0005m��\u0012\u000f�O�+Qd\u0002��\u0006��Xc\u00167�7g��:b.���J,�ⵔY-�A.CDϑ:$\u0007įi!#� �@y1 _J\u0015<��\u00115\u001ab:��5�,\u0015 ��sG��fQ��\u0012\u001b�J@��( ��G�q\u0019m J�ls�����\u0013����D~o����S����\u000e\u0012݂�,�\u0014��:�����u� ����¾�Q�)(̙��ٲ�80~˿�C�2\u0005��Yi\b�] 1� �Ӌ6z��`?�{2\\�\u0007 ��5C�&���1�_<���\u0007!2�-��\u0013t���H�\u0005�\u0000�(\u000f\"<���d\u0014/�\u0007Aj������1z�A��!���� �'�\b�=\u000f?�Z��,9����a�_�y�B��Q�k���,}����N\u001a��zw�Ցμ�Ϳ\"�\u0006\u0002�\u0005�h?�:�බ������\u0004m��;��z1� \u0000\u0000��\u0003\u0000PK\u0003\u0004\u0014\u0000\u0006\u0000\b\u0000\u0000\u0000!\u0000<]��/\u0001\u0000\u0000s\u0003\u0000\u0000 \u0000\b\u0002_rels/.rels �\u0004\u0002(�\u0000\u0002\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000���J\u00031\u0010��\u0005�!供���Hw{#BAAd}�1�� n2!I�}{�Ң+�ڋ^f���7'd6_��}�\u000f�lɧY�\u0019ZIJ۶�o��䎳\u0010�*��b��\u0018������b\u000f1 �N���� %�bt�B\u0004١���C�: y\u00031 }+ �\u000fhQ\u0014y~+�o\u000f^ <�B��/�\u0015g���)��4Z�\u0003ɥA\u001b\u000f\\!p\u0015�*T\u0013�Ӽ�:m�j�-ƒ+�/� \u00048�%k.\u000e\u0013\u0015�\u0013 �V\u0018�� ���q�g�\u0018\u0003��3���拼\u0012jW ��9Bc��\u0014���$��&\u0001\u0014�ȋ? ��\u0010t\u0012lk=�c?��y �Ӧ�� �\u0011]�3 � ��?\u000f�����T�\u0000\u0000\u0000��\u0003\u0000PK\u0003\u0004\u0014\u0000\u0006\u0000\b\u0000\u0000\u0000!\u0000L��\u0007YH\u0000\u0000\u0005\u0000\u0011\u0000\u0000\u0000word/document.xml�}˒�H��~�� `)ӨJʌ�\u0007� ���6<�SVՕ���c�\u000eA\"\"�E\u0012l����U/g)i#��Z����ԧ�\u0017�'� �o2\u0000\"�@�,�\u0002\u0003\u000f�����׏�{� �u8����$�G?��\u0017蕕�zy?\u001b����>�o�W�d���� �?�zH'�~����� ��yo6LGSK\u00161�\\ݏ{?���N�W����]:L&\u0017ìW��fz�ˇ���M�K/��I\u0010F�׸�{�d\"�\u0017$�/��UY\\��q����^>� �/{wI1M�>���\\\b�t/�͂H���\u0017\u0012�Y\u0014}rQ�R�j� �RA�V\u001b%�j%m�8^�$�Y��V\u0012�,ɩV�\u0006���\u0000���H^�ɋa2�\u0016��ä�m6~# '��:\u001bd�\u0007Y&��b�l�[�\u001aɧ\u0016% i��%��a�O\u0007�?/%��լ\u0018]�ϿY<��~e�/\u000f�'��q���s/ӯ��d:�8����a�Xt�]\u0016�@�c>��e�v\u0018V-M^��\u0017�e_\u0003|\u0019\u000e��ݏ񑢶K���\u001b <��e� \u0007���K���TE,�8� ���d(\u0011���JM�Ը�H�3/�l\u0014�{鑃ż �,��(ݪ��H���czE��=6,>R\u0007�Wf����IE\u0010:��:�Ǘʚ�����\u00157�K�l2M��BhL�7G*�y��R�\u0006`����g���i��\u0016\u0005> ��p|[OP*������^i� U��2��PV)��JhR�2 ����ջ�Q^$�\u0003Y#)���@K����\u0004�:��W}^��q3P?�3K��Wo�\u0011x�� �q,/�W�H�I\u0019\"�p]N�����!t�Ί�<{% ��� _!D=j �8\u0015�7�l0UWb���鷌�\u0017�0\u0019'=�%���f��\u0011\u0005��T�Q_=����\u000795'�ؓ�$\u0012�=���B��\\\u0014e�W����t�J��2�埲a:����[ �a2RuK��ԛd�֋w�h����d������\u0011��XY\u0019mN�/��3.�IZ|I_��9�I-�7�%E� ���O��7+� �����d0�[��_��R/��טV��3� ��>o��ʓ/����̓fG_ϐ�\u0017�8��n��1����\u0006 8a��{��smc ��m|L[R���( 'n��lh~d�/�y�K �k�\u0014��9\\~�⁍^�o dj� �Қ��\u000f3����4�\"2�~�.\u0019�ꩺ �-�\"t�KS�|:�`W��KQ�n ��|VL���k��J�6�� ൕ�6H\u0014a�`]\u0017Yzc��I������4�\u000e���ƚޥV6��ҋ�t�\bh�}��F��}I�qL�1?�\u0005\"�VS��zR �h.\u0007\u0004��ԤR��Kʯ�߼E���f��ȗ�����\u0005�S��Z��~A�zZf���� �u\u0003vj��0��p�� )� ��\u0001f�\u0006�_��� �������n �$�&V�JLM��%��w�ɬHF�Y�D�8\b]��( �6 �8 �(��\u0014`��(p���I�bsS�2Ŏ\u001a 0&�F���t\u0002�.�� ;�o�1�}i�w0H e}O�E�\bײ���h�M3YZ6�Ɖ4ȧ��.����4�=��������zȷry���g#U�`�J+} �� >�\u000f#��/z� WL��g���d�\u000f7 ��h�������̗�1L��!�p>��]!)�6u����p�j�풾y�G�����+��iO�6o��Z��i�\u0015��3'J� ����C�T��ѴHz���9 �%�� �3��\\�mⲄ��]� E �=\"���D� \u0011[��,9R&�\u0016 ^o�&��,\u001bF�\b�ҳ\u0003y5�����\u0016�(�\u0004�J��^܌�r� ��\u0010��ӝ��%�In���\" ���Ӫ^?wp\\�\u000e�#\u001bU\u001bW\u0016���qE����q\u0003\b����ނQye��=�� ��p|n���.�\u0011�W[\u00163!\"�9�j��\u001bP ۇ&5������\u0014�T�_\u000e�39ToL\u0011d�\u0014y~\u0013\u0015�6\u0006j�E2��@�͖�������?V�掏�F�D�����\u0004�L��bs�Z޵�\u001a�[y��\u0019G�����o������S���tލr'��`Y�� �� ۋC\u001a�&s�)L�]�D��ҁ�`ΕL⚿�c ���}w�Fdg֑pD \u0007��^\u0005\u0006G��v��QG�ե{�ki?�\u00063\u00158d�K3�����\"RHN�����Y�r�4)�)�������j� u� 7�\u0003�$[y��.-�a�Z�·N�9��ui��\u0005&\u0012FA�6.����H'r �t�2���I7=Q_�t\u0012D��9\u0019̌\b���f�����߽�>�[�q���8�����+�+���\u0017y֓���,ױ��\u0000\u00009\u0013��YR]�����Ep��u˟��$?�N\u0013\"\u0014 vN=\u0018�\u0010����_ &kΫ���G���\u0005��N�? � g~�N���?\u0013!N�9�ߵ\u000etR�\u00003��]��.����dj��g��\u0015_;JӾ�]\\?����LOI\u0012�H�oT\u0013ͳ �]�r�:�(�Y\u0010���6-}�R�4ѳ�lyʳ�q�+O&}g�W\u0013 Y-�K�kt�v��鬐u\u0018� ��\u0016�m� j\"$�=��\u0017�����_����\u0017�w�)�Y��AΎ�\u00159 ��\u0015���N��J�Ӥw�F�����H\b|j�~\u0003��\u0005�Kz\u0002�<\u0010���c� �\u0011�\u000fǫ\bp�=am�;�~L�R@��Q�I8�����#3�0\u0016���Z\u0019\\��a��\u001b��F�4 dSKx��]��\u0016sK�T��[��2���9�JF�;�#��d�I �������r\u0003�)*�����$\u001b�\u0007�{%\u0001�/�\u001a�Kj 1� \u0006��!��t��I`�yOߨ��SEaȟz���H�Wj��d0���zu�����X����ngJ� �vV\u0017�~����TJ�ЫX�E����-\u000f�a}��5S\u0003��\u0017Ս�|(\u0001!��yX�����$���6q\u0011�m�|r��)e���ǔ� F��W�g��ĕ��T� \u0017����=��I̸v�Tw��Hc92�i��Rؒ ������E2����\u001a���O�lc]|�#餼����\u0017rh��.0�/ %C)):\u0006�2�̍�?|�I�r���B�򾐧��[s���O*��Љ,�� �ib͊�\u00149\u0004T�o��o�<� �\u0013� Ǻ��ĭ�K���M1TGY�\u001a|\u0012�);{$�������]���� /W�q?�\\�Otm'��e�H��żgt \u0001˜ҟ��\\|�D��z_������d�S���ɗ�'S������n���u4�YHx�\u0001f\"U�T=7�i)7_]��E5Եa�%��뻦k p�|u0Z�˔�t����V�{����G߸��K� ��/W�v0Rm ��)�w#��i�L9�\u000f��b�D�D� ָ�����<�MQ �\u001b \u001a]\u001bubR�^\u0007�B�\u0000�\u0011H���\u001b��|�s���|�,Gݧf�\"��\"M ��\u001aaZM�W�W>j q�\u0002�˥���倶x~��R32>~���R_h�� Zv�Hi��\\Q*�\u001b�k�\u0017=�.\u0006����G�X�L�jbPW����YK��\u0001���kg��/��J�*�_����f9�g���\u0015�\u0010ؕ��� ���{E�\u0005%���hr%��|0��? '����7�s�?�vM\u0006o�֕\u001a�vݵTLR�\u0019�\u001be�^\u0011!ߴ� ��Yo�T��4 _\u0011�]`UC��\\��I��T��k%W��S6�D�:�\u0014�JO���M����q\\ zp�t��`��ޯ�\u000fi/�\u0014ٱE-��\u0003]-�\u0000�g�.&.\u00168:���<�od�9�A�8pH�d�q��8Mnn���m�E\u0004�n\u0018�\u0002\u0005>��S� :\u0004�0�L��z�\b� ��&\u0012\u0000�فm N���z��!`\u0007�|�l����6�.���d�L�p]&�\u0003T��F=�Gf�\u0002��% � �E�f\u0019�8r�k&��6�7�ߗ��ǂ:f������Dm Ix%S f\"m�\u001ba<⎻��\u0012\u0005\\P\u0016���7?��l���k%a�yS\u001b�\u0017�\b 0v@\u0018��f�,�d�\u0011��88��ѷ�fu0�\u0016� UNqVW`]\u0012�\u0001:0)-�H.\u000eb��q�\u0014I؋�W�O�v,��g�-�x@ܚ <\\j�\u0011:f��\u0005�6�mi }�¤W5S��3��OnS�H�� ƶ�� r�P��? \"� ���}Dca�@/�.5(g GL\u0005�u�A�j��t��_v6 u�����H�u�Ϸ�R�y�\"��⡴�\\��#\u0007u�:l�\u0015Ʌ ƞ{�� �?�7�\u0011C�K\u0019n~\u0013�sjʓ4 �}�co�A \u001a�\b�1.�{�{�u\u000fq�\u0013��z3�����9��XA� ��xDS� p#�+v�M}t �| e_�;k\u0011�Du �1�&M�R `��3N�����n6�ǮN'��z�M�d1%\u0014�� ��F\u0004���NS*@i2Q���\u0018��\u000ez����~z#�U�, ?z�?�\u0017\u0016C� ���H�� ޗ��.V�� ��\u0004\u00015 u��r ��X&\u0011�H�C<\u0002���\u001bQ~�F�p6ܭW6�������&�-6Ɇ� )���D��d�ښ�ӞQ?R��[�$�UE�/�Q/\u001b\u000f�7�������\\�<�\u0019�T�z�������': �KV���︰>I�5��I�M��V�z� \u000e�� 6�}<+T��~J)��\u001b)C�\u0014�E*oOu�j󿬧k>�ջ~:*��� t��ݞ�ێ笎\u001a� �( ��?��\u0007\u0005պ�\u001a��/�J�Q?ej��hj|�/u�_%�F��nީJ�� �Zqy:-p`$]'\bV��B�˰k� ү�tl�;6��Q\u000f��X'�\\��L%r�&�މL_7̰�r:����p��3uq��L�r v>W�K\u0017�o�\u0000�´waQ�� �bu{\u0006�\b& |}/++�='�)o�)�%o�n6n�ų~�LF\u0017��-�z��Q�+�(�u�U�Ӯ&��~�«CЎ�N^2tU\u0007�V>�S)PŃT��Տ����� ��p�uq^ g�$�-\u0006���8`���� ��\u0006U:u\\?t�ݽ�h��\u0015�\u0011���rg�S�δE�1����r�LƜ8������sgr�a6�� ݓ;ӑ\u0015b&ĭ�ܙ�#��;S�27B�̭=�ܙ�O==w���;SG �*w斺��;���N �,�3W�{_J̣o\\}1�΄ܙ�rg\u001a�| w&g\u0017�9�ܙ�&\u0017�oɝ����ܙL� ���TE ʝY���ܙ��\u0000=��ܙ�L���H\u0007��Ђn��\u0003� ���(⁐]���\"U[�,\u0013�?� Md�˳�Fr�jRɩn(���\u000f#Y�\u0014�÷Ʋ\u000ej��)O\u0016]�e��Z�2Lh���e2�\u0019~�&WӀ2��J���U.��m�c�/�s�\u0005Ca�+-z�l`�Z�B�\u000et)R��\u000e.��XΩ���Uf��{9�yL����������&*e�p��l�`�9�{�ؾ�싪ֵ쮛L��$�)\"�?�S�&-\u0014�� }}OQ��gR�� �nd�\u001a�#�z�H�Dm ��lȷ6�V���[ ?\u0017)Y��f���rw�\u0014�A:)u� ^ �4��4O�\u0006�\u001aO�a�^��j͔�� $Zoӣ\u001b�X�V���p��x{qf ��;�)�n�� ��sח��� i hu-���C��vi׿x�ޜ�n��}j~E�+#u �r�-ߩ�\u0004=��\u0006�So����!�[Z���T]P{����o\u0010{��O\u0018_Qr��V0����㟦�՛��&�\u0015�� \u0018 �#�L Cy��t������_=#Z�K[Z�����B������-�w��t��e���\b{�=���ڧ\u0011��\u000e���\brdJ���^�U\u0005>�\b\u0016�\u0003���CbB����a����^(�؂N3����\u001b��\u0018�?3Ё�%Nu�< ��\u0018���:�Fs4��\u0005�o�\u0013�-�4g�͏����<���*\u0007��� ˁ��\u000798� Lߎ�iv��4O���n,yBڌL{jm�Z���mua�y�(*z��l'�� \u0014\u0015��\u0010D�4��Ű~D�\u0002�\u0000=\u0003=�n\u0003�; �.�kR�\b�� 7$&}d����IS�.�X!;��w�����, 8ϵ1� �J>���irLmǰ+Brr\\��7 ����xD͊�#W����\u001b]��\u0006�g����}r���e�\u0001�\u0005�:\u0019@��}4����\u001a���/��+{]=� ���Gt�`�G]�q� �ܓ6�5=��}r� �58�\u0015ٵr �Lf��\u0017�12\u0012$�Q��Y�I��DUQ�#\u0011\u0017���u�\\�D��� ��TyЩ��*� c���X�| \u0011��d�,\u000f��ڸ7V\u0001vQQȧ���m� ��*��ᬡ�� x>�M�� �����&�l�pL�G��Kh���Q\u0002 ۂ6���\u0010��^[\u0003�� Q%� Q�H�\"�T\u0017/��\u0012亁/t���\u000eQ�.�.S�(T Q�\u0004!{�)O Q����Q��\u0019r��ǘTB����Ts��\b1�[��)1��O=9&U%\u0011Y�Iee��ibR�ԭ��Բ\u001a:$�YbRW�{_���7BL�F\u0018Ĥ�&&�T�\u0007bR � � ��\u00191A��!�J��\u0010�J�\u0010���>\u0014�ZJ���Tsy� |�!��%�aKa L=8'ѡj��c~��1��. (�J�'����|� Ҥ���� ���5��1m����L\u0005��-��O�~R%*�X��4���ںW�j�Ѝ��d,��3�U���9͟�K�0o��.v�P�]{E6���\\�G5�K�P�ӑ� �t\u0006�>S�BgA����R�݋�g �|�\u0006�� π�_�:&�'ҕnxqz \u001b*\u000fH\u0013��{fi1� �R�9WG1�6 \u0004sN��t�a� �K�����{����;�z�櫧�T�ac� \u0002o������)<\u0017���/�������׿���{H����[b}L�_�5���7��Q�\u0004!b ?� �$j��1' ��R�lj�������,\u0006�5�m�J��<�\u000f_K\u001bUN��M����\"+�B^�o�G\\�\u0010��\u0015����\u0006�� .�PڼC-���������*]�ƽ��xj W��m� ��զ-\u001b������z�s��6�6d{:r�&+&�\u000f�z��S���� /\u0006�`6 -]��з����҄[����5��q�mUK��jgAY��:AN92��v�X�v\u00163���~\u001a9����.S|���.�v�:�=� �zxg{�xh��.��\u0014R���\u0016�b.^�w�ס'���V��\u000e�/�zk�i\u0010z.=�C�J\u000e�2�9+���қN\u0013��ۻM��~�Ms�F�\u0007W���u}GQ-n�⧠�8 \u0011�S�TE�~�\u0002�S�b�.ۨ �=Ä���^��3v�4Q���y\u0011��D��3ݦ�ެ�9�\u000f}b� 9 + ԅ*���t�1�}�rO�טU�ʙ\u0010 �0H7�]/@� ��š��\u0016 �!�8�\"��l���n i��6m�\u0015�`�f6>*H��\\���Y33��/z��S�W�(�\u0016����Ǐ �y\u0014�$�*#Dst�Q����R�``���",
+    "doc_page_length": 8000
+  }
+]

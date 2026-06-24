@@ -132,8 +132,24 @@ python scripts/backfill_document_extractions.py --limit 10
 | `rebuild_alerts_table.py` | Rebuild JSONL from stored `agent_output.json` (no agent re-run) |
 | `wrap_schema_alerts.py` | Wrap DynamoDB schema in `alerts` array for multi-alert support |
 | `backfill_call_id.py` | One-time: backfill `agent_call_id` on existing JSONL rows |
+| `backfill_bubble_action.py` | Backfill `bubble_action` on existing JSONL rows using the classifier |
+| `backfill_recordings.py` | Backfill `recording_s3_key` on alerts missing a recording match |
+| `backfill_transcripts.py` | Backfill `transcript_s3_key` on alerts that have a recording but no transcript |
 
 All backfill scripts support `--dry-run` and `--limit N`.
+
+### Accuracy eval scripts
+
+| Script | What it does |
+|--------|-------------|
+| `fetch_eval_data.py` | Sample 20 alerts from S3 + scrape their live pages → `analysis/accuracy_eval/eval_data.json` |
+| `fetch_eval_data_targeted.py` | Field-specific samples (chronicle_topics / events / documents modes) → `eval_data_<mode>.json` |
+| `fetch_eval_data_doc_extraction.py` | Sample doc extraction rows (newsreel_relevance, Yes/No balanced) → `eval_data_doc_extraction.json` |
+| `generate_eval_excel.py` | Scored Excel workbook from general eval data |
+| `generate_eval_excel_targeted.py` | Scored Excel workbook from targeted eval data |
+| `generate_eval_excel_doc_extraction.py` | Scored Excel workbook for doc extraction newsreel accuracy |
+
+Run with `AWS_PROFILE=bridgeway python3 scripts/<script>.py`.
 
 ---
 
@@ -252,6 +268,20 @@ pytest tests/                                                    # Unit tests
 python spike.py --simulate-change --target-ids <id>              # Inject fake diff
 python scripts/backfill_alerts.py --dry-run --limit 5            # Test agent pipeline
 ```
+
+---
+
+## Accuracy evaluation
+
+Field-level accuracy results and improvement recommendations live in `analysis/accuracy_eval/`:
+
+| File | Contents |
+|------|----------|
+| `scoresheet_2026_06_23.md` | General eval: 20 rows, 85.4% overall, field-by-field breakdown |
+| `accuracy_audit.xlsx` | Scored general eval workbook |
+| `accuracy_audit_targeted.xlsx` | Targeted evals: chronicle topics (70%), events (61.5% on title), documents (73.3% on title) |
+| `accuracy_audit_doc_extraction.xlsx` | Doc extraction agent: newsreel relevance 50% |
+| `prompt_improvement_recommendations_2026_06_24.md` | Field-by-field prompt fixes for all fields below 100% |
 
 ---
 

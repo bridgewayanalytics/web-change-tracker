@@ -1,0 +1,908 @@
+[
+  {
+    "index": 1,
+    "alert": {
+      "agent_call_id": "fb88c025-5b5b-4467-b2d4-971fd0ac65b5",
+      "run_id": "run-1781533392",
+      "target_id": "naic.ex.climate_resiliency_tf",
+      "alert_date_time": "2026-06-15T00:00:00-04:00",
+      "alert_type": "New Agenda & Materials",
+      "alert_title": "Natural Catastrophe Risk and Resilience (EX) Task Force posts agenda and materials for June 15, 2026 meeting",
+      "alert_description": "The page was updated to add an agenda PDF and a materials PDF for the previously listed June 15, 2026 Public Webex Meeting of the Natural Catastrophe Risk and Resilience (EX) Task Force.",
+      "alert_url": "https://content.naic.org/cmte_ex_climate_resiliency_tf.htm",
+      "organization": [
+        "NEW ORGANIZATION: Natural Catastrophe Risk and Resilience (EX) Task Force"
+      ],
+      "event_title": "NAIC Interim Meeting: Natural Catastrophe Risk and Resilience (EX) Task Force",
+      "event_start_date_time": "2026-06-15T13:00:00-04:00",
+      "event_end_date_time": "2026-06-15T14:30:00-04:00",
+      "event_duration": "1 hour 30 minutes",
+      "event_is_full_day": "false",
+      "event_url": "https://naic.webex.com/naic/j.php?MTID=mc31015fb6f78edb697a4483063f67bb4",
+      "event_call_in_number_access_code": "N/A",
+      "agenda_item_title_chronicle_topics": [
+        {
+          "agenda_item_title": "June 15, 2026 open meeting of the Natural Catastrophe Risk and Resilience (EX) Task Force",
+          "chronicle_topics": [
+            "N/A"
+          ],
+          "status": "New"
+        }
+      ],
+      "agenda_item_title_official": [
+        {
+          "official_title": "N/A",
+          "status": "N/A"
+        }
+      ],
+      "library_item_preliminary_title": {
+        "title": "June 15, 2026 agenda for the Natural Catastrophe Risk and Resilience (EX) Task Force public Webex meeting",
+        "status": "New"
+      },
+      "library_item_url": "https://content.naic.org/sites/default/files/call_materials/061526-ncrr-agenda_0.pdf",
+      "library_items_file_name": "061526-ncrr-agenda_0.pdf",
+      "is_the_alert_relevant_for_an_art_newsreel_article": {
+        "details": "true",
+        "status": "Yes"
+      },
+      "bubble_action": {
+        "event": "update",
+        "library_item": "create",
+        "agenda_items": true,
+        "event_preview": {
+          "title": "NAIC Interim Meeting: Natural Catastrophe Risk and Resilience (EX) Task Force",
+          "start_datetime": "2026-06-15T13:00:00-04:00",
+          "end_datetime": "2026-06-15T14:30:00-04:00",
+          "group": [
+            "NEW ORGANIZATION: Natural Catastrophe Risk and Resilience (EX) Task Force"
+          ],
+          "url": "https://naic.webex.com/naic/j.php?MTID=mc31015fb6f78edb697a4483063f67bb4",
+          "call_in": "",
+          "match_key": "NEW ORGANIZATION: Natural Catastrophe Risk and Resilience (EX) Task Force | 2026-06-15",
+          "what_changes": [
+            "Link new agenda/materials documents",
+            "Append agenda items"
+          ],
+          "fields": {
+            "Agenda": "→ Link new agenda/materials documents"
+          },
+          "field_ids": {},
+          "match_search": {
+            "org": "NEW ORGANIZATION: Natural Catastrophe Risk and Resilience (EX) Task Force",
+            "date": "2026-06-15"
+          }
+        },
+        "library_item_preview": {
+          "title": "June 15, 2026 agenda for the Natural Catastrophe Risk and Resilience (EX) Task Force public Webex meeting",
+          "url": "https://content.naic.org/sites/default/files/call_materials/061526-ncrr-agenda_0.pdf",
+          "filename": "061526-ncrr-agenda_0.pdf",
+          "type": "Agenda & Materials",
+          "group": [
+            "NEW ORGANIZATION: Natural Catastrophe Risk and Resilience (EX) Task Force"
+          ],
+          "what_changes": [],
+          "fields": {
+            "Name": "June 15, 2026 agenda for the Natural Catastrophe Risk and Resilience (EX) Task Force public Webex meeting",
+            "URL": "https://content.naic.org/sites/default/files/call_materials/061526-ncrr-agenda_0.pdf",
+            "File": "061526-ncrr-agenda_0.pdf",
+            "Type": "Agenda & Materials",
+            "Organizations": "NEW ORGANIZATION: Natural Catastrophe Risk and Resilience (EX) Task Force",
+            "Status": "Active",
+            "Description": "This document is the agenda for the Natural Catastrophe Risk and Resilience (EX) Task Force public virtual Webex meeting scheduled for June 15, 2026. It lists roll call participants and six agenda items, including adoption of Spring 2026 National Meeting minutes, strategic priority updates, IBHS strategic planning discussion, a catastrophe risk and solvency tool update, other matters, and adjournment.",
+            "Date": "June 4, 2026",
+            "Doc Type": "Agenda & Materials"
+          },
+          "field_ids": {
+            "name_text": "June 15, 2026 agenda for the Natural Catastrophe Risk and Resilience (EX) Task Force public Webex meeting",
+            "url_text": "https://content.naic.org/sites/default/files/call_materials/061526-ncrr-agenda_0.pdf",
+            "file_name_text": "061526-ncrr-agenda_0.pdf",
+            "organizations_list_custom_organization": [
+              "NEW ORGANIZATION: Natural Catastrophe Risk and Resilience (EX) Task Force"
+            ],
+            "status_option_status": "Active",
+            "description_text": "This document is the agenda for the Natural Catastrophe Risk and Resilience (EX) Task Force public virtual Webex meeting scheduled for June 15, 2026. It lists roll call participants and six agenda items, including adoption of Spring 2026 National Meeting minutes, strategic priority updates, IBHS strategic planning discussion, a catastrophe risk and solvency tool update, other matters, and adjournment.",
+            "date_date": "June 4, 2026",
+            "type___text_text": "Agenda & Materials"
+          },
+          "match_search": {}
+        },
+        "agenda_item_previews": [],
+        "notes": "New Agenda & Materials"
+      }
+    },
+    "alert_page_content": "Natural Catastrophe Risk and Resilience (EX) Task Force | NAIC Skip to main content Search Search NAIC Search Recommended Insurance Summit International Forum N.A.I.C. Foundation Insurance Departments Contacts Consumer Insurance Search Insurance Terms × Natural Catastrophe Risk and Resilience (EX) Task Force Executive (EX) Committee Natural Catastrophe Risk and Resilience (EX) Task Force Pre-Disaster Mitigation and Risk Modeling (EX) Working Group Severe Peril (EX) Working Group Government Relations (EX) Leadership Council Risk-Based Capital Model Governance (EX) Task Force Natural Catastrophe Risk and Resilience (EX) Task Force Executive (EX) Committee Natural Catastrophe Risk and Resilience (EX) Task Force Pre-Disaster Mitigation and Risk Modeling (EX) Working Group Severe Peril (EX) Working Group Government Relations (EX) Leadership Council Risk-Based Capital Model Governance (EX) Task Force Charges View Membership Report Natural Catastrophe Risk and Resilience Resource Center NATURAL CATASTROPHE RISK MITIGATION AND RESILIENCY RESOURCES The Task Force will serve as the primary coordinating body for regulatory actions, engagement, communication, and discussions related to natural catastrophe risk and resilience. This includes facilitating dialogue among state insurance regulators, industry representatives, and other stakeholders. The Task Force will address a wide range of catastrophe risks, including, but not limited to, atmospheric rivers, wind, water, wildfires, severe convective storms, hail, hurricanes, landslides, and earthquakes. 2026 Charges 1. The Natural Catastrophe Risk and Resilience (EX) Task Force will: A. Implement the deliverables outlined in the NAIC National Climate Resilience Strategy for Insurance and efficiently coordinate its operationalization, implementation, and communication initiatives. B. Serve as the coordinating body for discussions and engagement on matters related to natural catastrophe risk and resilience. C. Assess existing and proposed financial regulatory strategies aimed at addressing natural catastrophe risk and enhancing resilience. D. Coordinate communications regarding catastrophe risk and resilience, solvency strategies and tools, as well as mitigation programs and discounts. E. Act as a catalyst and repository for innovative ideas and vision development for the NAIC Center of Excellence on Catastrophe Modeling and Risk Management, focusing on future resources and services for members. Meeting Materials Exposure Drafts Documents Calendar Sort by Date Choose the order in which meetings are listed. Sort by Call Date and Time (field_call_date) Order Oldest to Newest Newest to Oldest Featured Natural Catastrophe Risk and Resilience (EX) Task Force Public Webex Meeting Monday, June 15, 2026 1:00 PM ET, 12:00 PM CT, 11:00 AM MT, 10:00 AM PT Expected Duration: 1 hour 30 minutes Webex Link Open meeting with agenda to follow. Agenda Materials Featured Natural Catastrophe Risk and Resilience (EX) Task Force Public Webex Meeting Tuesday, May 26, 2026 1:00 PM ET, 12:00 PM CT, 11:00 AM MT, 10:00 AM PT Expected Duration: 1 hour 30 minutes Webex Link Open call with agenda to follow Featured Climate and Resiliency (EX) Task Force Public Webex Meeting Tuesday, February 24, 2026 2:00 PM ET, 1:00 PM CT, 12:00 PM MT, 11:00 AM PT Expected Duration: 1 hour Webex Link Agenda Dashboard Changes Summary Natural Catastrophe Risk Dashboard Report Natural Catastrophe Risk and Resilience Charges Spring National Meeting Natural Catastrophe Risk and Resilience (EX) Task Force (pending adoption) Natural Catastrophe Risk and Resilience (EX) Task Force (pending adoption) Tuesday, March 24, 2026 9:00 AM - 10:15 AM PT Manchester Grand Hyatt—Grand Hall C—Level 1 Agenda Materials - updated 3/23 Summary Minutes See all Current Exposure Drafts There are no exposure drafts at this time. Related Documents Mitigation Grant Programs Interactive Map | NAIC Catastrophe Risk Resilience COE Webex Recording : 6/15/26 Natural Catastrophe and Risk Resilience TF Call Natural Catastrophe Risk Dashboard Report December 2024 NAIC National Climate Resilience Strategy March 2024 Comments Received : RAA ; APCIA ; NAMIC ; United Policyholders ; Consumer Groups 2022 Proposed Climate Risk Survey CAT Model COE Proposal Financial Stability Board report The Implications of Climate Change for Financial Stability Financial Stability Board report Stocktake of Financial Authorities’ Experience in Including Physical and Transition Climate Risks as Part of Their Financial Stability Monitoring Solvency Workstream Public Panel #1 Recording 5/5/21 Public Panel #2 Recording 6/1/21 In support of its goals, on May 23, 2022, the Solvency Workstream adopted three referrals. These were received by the Climate and Resiliency (EX) Task Force in August during the Summer National Meeting in Portland, OR. The first suggests the Financial Analysis Solvency Tools (E) Working Group consider modifications to incorporate particular concepts as it pertains to climate risk and offers high-level principles to consider and develop, as appropriate, for inclusion in the Financial Analysis Handbook . ReferraltoFASTWG.pdf The second proposes for the Financial Examiners Handbook (E) Technical Group's consideration, a list of enhancements to the Financial Condition Examination Handbook . ReferraltoFEHTG.pdf The third offers a list of possible enhancements to the Own Risk Solvency Assessment (ORSA) Guidance Manual presented as high-level principles for the ORSA Implementation (E) Subgroup to consider and develop, as appropriate. ReferraltoORSASubgroup.pdf Climate Scenario Analysis Recordings Public Panel #1 10/13/22 Public Panel #2 11/4/22 Public Panel #3 11/29/22 Insurance Topics Our improved resource can help you navigate committee-curated topics for a comprehensive understanding. Explore Related NAIC Publications Committee and task force minutes PDF files will be posted to the Interactive Agenda approximately 10 business days after the conclusion of a national meeting. They are posted to the Interactive Agenda for each meeting tab on the Meetings page . The Proceedings of the NAIC are made available after the minutes are adopted at each subsequent meeting and may be accessed via the NAIC Publications page . Contacts Media Inquiries (816) 783-8909 news@naic.org Contacts Aaron Brandenburg Director, Property & Casualty Regulatory Services 816-783-8271 Butch Kinerney Senior P&C Insurance Specialist 816-783-8563 Please see the current Committee List for a complete list of committee members.",
+    "doc_page_content": "%PDF-1.6 %���� 220 0 obj < > endobj 244 0 obj < >/Filter/FlateDecode/ID[<492E57114222E3478DCDC4B50DB7B00F> ]/Index[220 38]/Info 219 0 R/Length 115/Prev 191868/Root 221 0 R/Size 258/Type/XRef/W[1 3 1]>>stream h�bbd`\u0010``b``�\u0000\"\u0019��H�t\u0010�\"\u0007f��H�.�\u001av\u0010�*\u0006fO\u0005�9\u0001&��E\u000e�Uj�՘�H6i0Y \"��\u0000I�l \u0010�c\"�,[\u0006\u0012�wC貗\u0002��j3\u0018����\u0006����\"�?\u0003��W�\u0000\u0003\u0000�H\u0010[ endstream endobj startxref 0 %%EOF 257 0 obj < >stream h�b```\u0002�M � ��\u0019�\u0018\u0010@��\u0005(�����a�Z\u0003\u0003�L������\u0016\u0007\u0006���\u0006fӎ\u000e�\u0014\u0012\u0010�b\u0006FM\u0006\u0001\u0006;���� � ���2�0�g�f�������5`�u����Z?Y\u0006\u0006����!ڙ\u0019�N��t\u0003\u0011\u001b�fa`:S \u0016g�9\u0002������\u0002��;\u0000\u0001\u0006\u0000�� � endstream endobj 221 0 obj < >/Metadata 7 0 R/Outlines 11 0 R/PageLayout/OneColumn/Pages 218 0 R/StructTreeRoot 14 0 R/Type/Catalog>> endobj 222 0 obj < >/Font< >/XObject< >>>/Rotate 0/StructParents 0/Tabs/S/Type/Page>> endobj 223 0 obj < >stream h޴V�n�8\u0010��y�\"��~\u0003�\u0000�[��$N�r��\u0016yP 6\u0011V� I���;��TJm�1�\u0010hQ���9��\\*���\u0006��e@p�o ֆo\u0007� \u0003\\Q`�*�0`J�\u0011\u000e�Ǝ\u0000΃���5e�A?+Юp�9 /_��i\u0002�Ӽ�dxA&e�Hs2\u001a\u0000���˫����\u0002\u0018I\u0006�T_ �7-} �y ���Ʒ�\u001bߌ����j\u001a�( �L;�6\u0011�\\��5� E�`C�R�G #� 6\u0017��2K)���2Lw���&�h�� �,J��\u0006U��}��>N�ӳ���Qt<�z�;\u0011�p�#�ɢ\u0007�C>�R\u0012| 8�m�0J�fs?}3$ �H�z�V��?���\u0010`\u0000�a� endstream endobj 224 0 obj < >stream H�\\��n�0\u0014��y /�E����\"EH\u0014Z���h�y��\u0018\u001a�8� �~|r��4H�\u0013\u0012�|��%��w�0�&�\u0019���gs\u001aB �u��Λ�?\u000f!++�\u000f��y�|v�v���p����\u000f�1k\u001a��J\u0017�s���M? �c�����C8��?�ã�\u000f�i��\u0017 fS�������������M�,{����0ߟҚw��O�T�yI�n��uj; �p�YS���4o��|����5� O�{\u001b����E�\u000e)+�\"?3?#��W�[�-�y������Ɯ\u0000���5�뒹D��+䚹F\u0016fA��\u0016�l5�� �&ea��S�)�\u0014v :���Na��S�)�\u0014�쐹w�ޅ{\u0017�]�\\Y�����L'\u0002'B'\u0002'B'\u0002'B'\u0002'�N,�X2[0[2[0[2[0[2[0[2[0[2[0+=(<(;\u0015��NE��Sѩ�Tt*;\u0015��N]:�A�A�A�A�A�A�A�A�A�A�A�A�A�A�A��у�\u0007Gf\u0007fGf\u0007fGf\u0007fGf\u0007fGf\u0007fGf\u0007fGN\u0007�\u0015\u0012=\u001b~�\u000e\u0018��_?�#M�����\u0016c\u001a�eԗyä ��\u001bL�d�*���\u0002 \u0000�0\u0001\u0016 endstream endobj 225 0 obj < >stream H�\\��j�@\u0010\u0007��>� �C�\u00187 Bc\u0013��\u000fj�\u0000fwL��.�9���qB \u0015��d���l��|.];B� zS�\bM�l���\u0005�p�k��:\u0001ۚ��4����*��j\u001aF�J��*� ���a \u0013,�l���ނ�к+,��j Qu��\u0007;t#Đ�`��F/��;�h.[����qZQ��\u001b��GH�組1����\u0006C������ �3]�Bg��'��Kc�렲�_�cZ�{�}\u0010 ��z6-�x�N�)[�5{+޲w� [���?�����(>� q�>�O쳘>*ӒYsf��\u0013�dӜMK6�ٴdӜMK\u0006Zx8�)��4�q\u0006�\u0016\u0002�>�y�<����_�{\u000fTŷ�\u0015`\u0000iN�\" endstream endobj 226 0 obj < >stream H�\\��j�0\u0014E�� -�E��J�5`\u0002i�B\u0016Ӗ��\u00078��1Ld�8�����\u0016���\u0018��s�\\nv�]\u0018fS~ı��� ��G\u0019�����OC(\u0016��n��˿ݹ��2 �o�ٟw�8\u0016Mcʟ��e�7s��ǃ�/����8������ߛr������l*�Z�� �B?��={S汇]��\u000f��!�|���6yS��\u0005e������|l��\u0017M���i^ӱ*|��{n� ; �?m,�\u001a/WU�$~\"?���%xCހ_�/��\"s�$��5���\b�d vd\u0007\u0016����`:X8X:X8�5y ~&?��f�f��-��6{��� �8�:�::;8;:;8;:;8;z:x:z:x �\u0005��Y��pV0+�\u0015� �\u0011�#\\G�:�\u0015� {\u0005��FA��Q�(l\u00144 \u001b\u0005��FA��QѨlT4*=\u0015�JO���S��Tx*=\u0015�JO���S��;u��y�}�*l��u��=�]cL�9By c\u0007\u000f�}e�8�4���'�\u0000_j�Y endstream endobj 227 0 obj < >stream H��W�n�F\u0010}�W�#\u0017\bW{�\u0004A\u0000�V\u0010�u�8L[@΃jˮ�ZJ\u0015\u001am��3ˋ��d'(�\u0017sI���̙���lW�o�W%y�b:+��� �k�� m�r{G>M�������,\u0004.���9i�1�y�51�I\u0011��������+2}�ݖ� �\u0016��|y��,��vC^�<:9&��'�� ѕ�D*ͼ&B��j�+�L�� g�:r;�\u0016\u0005'�\u00147���%9'�ĕ\u0013�Uǿ��$��F���ɼ�� ÿ�L��?�_�s�8@W\\�z�\u000f��\u0003\u0010�p�K;f9�K�ƫ\u0007�PXN^�\u0006�\b��~�����\\0K�eI9>�T1A���\u0012\u0017˿���x\u0005���#\u001b(�H˝}���:���\u001aZ�]�\u0001\b(��\u0005���T\b\u0007~�F�܌��wL� �| �N�s{3*��cn\\2�� ���\u0010�i��S��K_jN�﨎ܦ�ʛ+j���j�.J\u0015� ��X,(\\�h\\ ��\u0018*-�\u0018˭X��yw\u0007 P�����\b\bg�Y��?�a\u000f�{��j�T�h� \u0004G��I\u0000 �t�ӂ��#c�\u0003 �/�5d�H\u0013�UWVķ�y�e`F�M��m@\u0005ٱ���ъ[�� ?;>=\u0001���\u00057b?p�3���6�\u0012/��\"\u0004��>n����\u0013���{e��\u0013�y �\u0014'\u0007LU��aم�S\u0004y�4)���'47ȴ��\\�� m",
+    "alert_page_length": 6556
+  },
+  {
+    "index": 2,
+    "alert": {
+      "agent_call_id": "c2e82c85-40d1-4b04-90bc-65c99be7bbae",
+      "run_id": "run-1781641395",
+      "target_id": "naic.a.latf",
+      "alert_date_time": "2026-06-16T00:00:00-04:00",
+      "alert_type": "New Agenda & Materials",
+      "alert_title": "Life Actuarial (A) Task Force posts agenda and presentation for June 18, 2026 meeting",
+      "alert_description": "The Life Actuarial (A) Task Force updated its June 18, 2026 upcoming meeting entry from \"To be determined\" to a posted agenda and added one meeting material: a presentation on historical and future mortality improvement.",
+      "alert_url": "https://content.naic.org/cmte_a_latf.htm",
+      "organization": [
+        "Life Actuarial (A) Task Force (NAIC LATF)"
+      ],
+      "event_title": "NAIC LATF | ",
+      "event_start_date_time": "2026-06-18T14:00:00-04:00",
+      "event_end_date_time": "2026-06-18T15:30:00-04:00",
+      "event_duration": "1 hour 30 minutes",
+      "event_is_full_day": "false",
+      "event_url": "https://naic.webex.com/naic/j.php?MTID=m0babcdc61a80a73b8283c0f047e45b9c",
+      "event_call_in_number_access_code": "N/A",
+      "agenda_item_title_chronicle_topics": [
+        {
+          "agenda_item_title": "Hear Presentation from the SOA on Historical and Future Mortality Improvement",
+          "chronicle_topics": [
+            "N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "Hear Update on Actuarial Guideline 55 Report Reviews",
+          "chronicle_topics": [
+            "N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "Discuss Other Matters",
+          "chronicle_topics": [
+            "N/A"
+          ],
+          "status": "New"
+        }
+      ],
+      "agenda_item_title_official": [
+        {
+          "official_title": "Hear Presentation from the SOA on Historical and Future Mortality Improvement",
+          "status": "New"
+        },
+        {
+          "official_title": "Hear Update on Actuarial Guideline 55 Report Reviews—MATERIALS PENDING",
+          "status": "New"
+        },
+        {
+          "official_title": "Discuss Other Matters",
+          "status": "New"
+        }
+      ],
+      "library_item_preliminary_title": {
+        "title": "SOA on Historical and Future Mortality Improvement",
+        "status": "New"
+      },
+      "library_item_url": "https://content.naic.org/sites/default/files/call_materials/latf-presentation-mloac-life-mi-subgroup-final.pdf",
+      "library_items_file_name": "latf-presentation-mloac-life-mi-subgroup-final.pdf",
+      "is_the_alert_relevant_for_an_art_newsreel_article": {
+        "details": "The alert is relevant for an ART Newsreel article.",
+        "status": "Yes"
+      },
+      "bubble_action": {
+        "event": "update",
+        "library_item": "create",
+        "agenda_items": true,
+        "event_preview": {
+          "title": "NAIC LATF |",
+          "start_datetime": "2026-06-18T14:00:00-04:00",
+          "end_datetime": "2026-06-18T15:30:00-04:00",
+          "group": [
+            "Life Actuarial (A) Task Force (NAIC LATF)"
+          ],
+          "url": "https://naic.webex.com/naic/j.php?MTID=m0babcdc61a80a73b8283c0f047e45b9c",
+          "call_in": "",
+          "match_key": "Life Actuarial (A) Task Force (NAIC LATF) | 2026-06-18",
+          "what_changes": [
+            "Link new agenda/materials documents",
+            "Append agenda items"
+          ],
+          "fields": {
+            "Agenda": "→ Link new agenda/materials documents"
+          },
+          "field_ids": {},
+          "match_search": {
+            "org": "Life Actuarial (A) Task Force (NAIC LATF)",
+            "date": "2026-06-18"
+          }
+        },
+        "library_item_preview": {
+          "title": "SOA on Historical and Future Mortality Improvement",
+          "url": "https://content.naic.org/sites/default/files/call_materials/latf-presentation-mloac-life-mi-subgroup-final.pdf",
+          "filename": "latf-presentation-mloac-life-mi-subgroup-final.pdf",
+          "type": "Agenda & Materials",
+          "group": [
+            "Life Actuarial (A) Task Force (NAIC LATF)"
+          ],
+          "what_changes": [],
+          "fields": {
+            "Name": "SOA on Historical and Future Mortality Improvement",
+            "URL": "https://content.naic.org/sites/default/files/call_materials/latf-presentation-mloac-life-mi-subgroup-final.pdf",
+            "File": "latf-presentation-mloac-life-mi-subgroup-final.pdf",
+            "Type": "Agenda & Materials",
+            "Organizations": "Life Actuarial (A) Task Force (NAIC LATF)",
+            "Status": "Active",
+            "Description": "Presentation materials titled \"2026 HMI and FMI VM20 Mortality Improvement Scale Review Initial HMI Scale Recommendation\" for the Life MI Subgroup of the SOA Mortality and Longevity Oversight Advisory Council. The presentation reviews the current methodology for historical mortality improvement scale updates, a proposed 2026 adjustment to bring industry data from 2023 to 2026, and next steps for HMI and FMI recommendations under VM-20.",
+            "Date": "June 18, 2026",
+            "Doc Type": "Agenda & Materials"
+          },
+          "field_ids": {
+            "name_text": "SOA on Historical and Future Mortality Improvement",
+            "url_text": "https://content.naic.org/sites/default/files/call_materials/latf-presentation-mloac-life-mi-subgroup-final.pdf",
+            "file_name_text": "latf-presentation-mloac-life-mi-subgroup-final.pdf",
+            "organizations_list_custom_organization": [
+              "Life Actuarial (A) Task Force (NAIC LATF)"
+            ],
+            "status_option_status": "Active",
+            "description_text": "Presentation materials titled \"2026 HMI and FMI VM20 Mortality Improvement Scale Review Initial HMI Scale Recommendation\" for the Life MI Subgroup of the SOA Mortality and Longevity Oversight Advisory Council. The presentation reviews the current methodology for historical mortality improvement scale updates, a proposed 2026 adjustment to bring industry data from 2023 to 2026, and next steps for HMI and FMI recommendations under VM-20.",
+            "date_date": "June 18, 2026",
+            "type___text_text": "Agenda & Materials"
+          },
+          "match_search": {}
+        },
+        "agenda_item_previews": [],
+        "notes": "New Agenda & Materials"
+      }
+    },
+    "alert_page_content": "Life Actuarial (A) Task Force | NAIC Skip to main content Search Search NAIC Search Recommended Insurance Summit International Forum N.A.I.C. Foundation Insurance Departments Contacts Consumer Insurance Search Insurance Terms × Life Actuarial (A) Task Force Life Insurance and Annuities (A) Committee Annuity Buyer's Guide (A) Working Group Annuity Suitability (A) Working Group Life Actuarial (A) Task Force Experience Reporting (A) Subgroup Generator of Economic Scenarios (GOES) (E/A) Subgroup Longevity Risk (E/A) Subgroup Valuation Manual (VM)-22 (A) Subgroup Variable Annuities Capital and Reserve (E/A) Subgroup Life Insurance and Annuities Illustrations (A) Working Group Life Actuarial (A) Task Force Life Insurance and Annuities (A) Committee Annuity Buyer's Guide (A) Working Group Annuity Suitability (A) Working Group Life Actuarial (A) Task Force Experience Reporting (A) Subgroup Generator of Economic Scenarios (GOES) (E/A) Subgroup Longevity Risk (E/A) Subgroup Valuation Manual (VM)-22 (A) Subgroup Variable Annuities Capital and Reserve (E/A) Subgroup Life Insurance and Annuities Illustrations (A) Working Group View Membership Report Charges The mission of the Life Actuarial (A) Task Force is to identify, investigate, and develop solutions to actuarial problems in the life insurance industry. 2026 Charges The Life Actuarial (A) Task Force will: Work to keep reserve, reporting, and other actuarial-related requirements current. This includes principle-based reserving (PBR) and other requirements in the Valuation Manual , actuarial guidelines, and recommendations for appropriate actuarial reporting in blanks. Respond to charges from the Life Insurance and Annuities (A) Committee and referrals from other groups or committees, as appropriate. Report progress on all work to the Life Insurance and Annuities (A) Committee and provide updates to the Financial Condition (E) Committee on matters related to life insurance company solvency. This work includes the following: Work with the American Academy of Actuaries (Academy) and the Society of Actuaries (SOA) to develop new mortality tables for valuation and minimum nonforfeiture requirements for life insurance and annuities, as appropriate. Provide recommendations for guidance and requirements for accelerated underwriting (AU) and other emerging underwriting practices, as needed. Work with the SOA on the annual development of the Generally Recognized Expense Table (GRET) factors. Provide recommendations and changes to other reserve and nonforfeiture requirements to address issues as appropriate and provide actuarial assistance and commentary to other NAIC committees relative to their work on actuarial matters. Work with the selected vendor to develop and implement the new generator of economic scenarios (GOES) for use in regulatory reserve and capital calculations. Monitor international developments regarding life and health insurance reserving, capital, and related topics. Compare and benchmark these with PBR requirements. Coordinate with the Reinsurance (E) Task Force on actuarial items related to reinsurance. Upcoming Meeting CANCELED - Life Actuarial (A) Task Force - 06252026 Public Conference Call Thursday, June 25, 2026 2:00 PM ET, 1:00 PM CT, 12:00 PM MT, 11:00 AM PT Expected Duration: 1 hour Webex Link MEETING CANCELED Meeting Materials Exposure Drafts Documents Calendar Sort by Date Choose the order in which meetings are listed. Sort by Call Date and Time (field_call_date) Order Oldest to Newest Newest to Oldest Life Actuarial (A) Task Force - 07302026 Public Webex Meeting Thursday, July 30, 2026 2:00 PM ET, 1:00 PM CT, 12:00 PM MT, 11:00 AM PT Expected Duration: 1 hour Webex Link To be determined. Life Actuarial (A) Task Force - 07232026 Public Webex Meeting Thursday, July 23, 2026 2:00 PM ET, 1:00 PM CT, 12:00 PM MT, 11:00 AM PT Expected Duration: 1 hour Webex Link To be determined. Life Actuarial (A) Task Force - 07162026 Public Webex Meeting Thursday, July 16, 2026 2:00 PM ET, 1:00 PM CT, 12:00 PM MT, 11:00 AM PT Expected Duration: 1 hour Webex Link To be determined. CANCELED - Life Actuarial (A) Task Force - 07092026 Public Webex Meeting Thursday, July 09, 2026 2:00 PM ET, 1:00 PM CT, 12:00 PM MT, 11:00 AM PT Expected Duration: 1 hour Webex Link MEETING CANCELED Life Actuarial (A) Task Force - 07022026 Public Webex Meeting Thursday, July 02, 2026 2:00 PM ET, 1:00 PM CT, 12:00 PM MT, 11:00 AM PT Expected Duration: 1 hour Webex Link To be determined. CANCELED - Life Actuarial (A) Task Force - 06252026 Public Conference Call Thursday, June 25, 2026 2:00 PM ET, 1:00 PM CT, 12:00 PM MT, 11:00 AM PT Expected Duration: 1 hour Webex Link MEETING CANCELED Life Actuarial (A) Task Force - 06182026 Public Webex Meeting Thursday, June 18, 2026 2:00 PM ET, 1:00 PM CT, 12:00 PM MT, 11:00 AM PT Expected Duration: 1 hour Webex Link Agenda – June 18, 2026 Hear Presentation from the SOA on Historical and Future Mortality Improvement Hear Update on Actuarial Guideline 55 Report Reviews—MATERIALS PENDING Discuss Other Matters SOA on Historical and Future Mortality Improvement Actuarial Guideline 55 Report Reviews Spring National Meeting Life Actuarial (A) Task Force Life Actuarial (A) Task Force Saturday, March 21, 2026 8:00 AM - 4:30 PM PT Manchester Grand Hyatt—Grand Hall D—Level 1 Agenda Materials (Updated 3/18/26) Summary Minutes (Updated 4/16) Spring National Meeting Life Actuarial (A) Task Force Life Actuarial (A) Task Force Sunday, March 22, 2026 8:00 AM - 10:00 AM PT Manchester Grand Hyatt—Grand Hall D—Level 1 Agenda Materials (Updated 3/18/26) Summary Minutes (Updated 4/16) See all Current Exposure Drafts Exposure Drafts The following documents are being exposed for a 21-day public comment period ending Wednesday June 10 th , 2026. APF 2026-05 APF 2025-18 APF 2025-20 Please send comments to Scott O'Neal and McKayla Doyle by June 10, 2026. Related Documents Actuarial Guideline 55 (AG ReAAT) Life Knowledge Statements Appointed Actuary Knowledge Statement Illustration Actuary Knowledge Statement Qualified Actuary Knowledge Statement FAQ on Qualifications and PBR Report on the Results of the Principle - Based Reserving State Resource Survey VM-20 Impact Study – Towers Watson PBR Company Pilot Project Report Amendment Proposal Form VM-30 Reporting: AG 53 Templates 2025YE AG 53 Guidance 2025YE AG 55 Templates 2025YE Transition from LIBOR to SOFR NAIC Staff Memorandum on Transition from LIBOR to SOFR 2022 VM-20 Estimated SOFR Compared to Published Table J Current Swap Spreads IMR Allocation Guidance Year-end 2023 IMR Allocation Guidance Year-end 2022 IMR Allocation Guidance Generally Recognized Expense Table (\"GRET\"): 2025 Factors Archive PBR Education 2024 PBR Review Report Insurance Topics Our improved resource can help you navigate committee-curated topics for a comprehensive understanding. Explore Related NAIC Publications Committee and task force minutes PDF files will be posted to the Interactive Agenda approximately 10 business days after the conclusion of a national meeting. They are posted to the Interactive Agenda for each meeting tab on the Meetings page . The Proceedings of the NAIC are made available after the minutes are adopted at each subsequent meeting and may be accessed via the NAIC Publications page . Annual and Quarterly Statement Blanks Annual and Quarterly Statement Instructions Compendium of State Laws on Insurance Topics Model Laws, Regulations and Guidelines Contacts Media Inquiries (816) 783-8909 news@naic.org Contacts Scott O'Neal Managing Life Actuary 816-783-8814 Jennifer Frasier Assistant Managing Life Actuary 816-783-8834 Please see the current Committee List for a complete list of committee members.",
+    "doc_page_content": "%PDF-1.7 4 0 obj << /BitsPerComponent 8 /ColorSpace /DeviceRGB /Filter /DCTDecode /Height 681 /Length 16192 /Subtype /Image /Type /XObject /Width 1025 >> stream ����\u0000\u0010JFIF\u0000\u0001\u0001\u0001\u0000`\u0000`\u0000\u0000��\u0000C\u0000 \b \u000f\u000e \u0010\u0014!\u0015\u0014\u0012\u0012\u0014( \u0018!0*21/*.-4;K@48G9-.BYBGNPTUT3?]c\\RbKSTQ��\u0000C\u0001\u000e\u000f\u000f\u0014\u0011\u0014'\u0015\u0015'Q6.6QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ��\u0000\u0011\b\u0002�\u0004\u0001\u0003\u0001\"\u0000\u0002\u0011\u0001\u0003\u0011\u0001��\u0000 \u0000\u0000\u0001\u0005\u0001\u0001\u0001\u0001\u0001\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b ��\u0000�\u0010\u0000\u0002\u0001\u0003\u0003\u0002\u0004\u0003\u0005\u0005\u0004\u0004\u0000\u0000\u0001}\u0001\u0002\u0003\u0000\u0004\u0011\u0005\u0012!1A\u0006\u0013Qa\u0007\"q\u00142���\b#B��\u0015R��$3br� \u0016\u0017\u0018\u0019\u001a%&'()*456789:CDEFGHIJSTUVWXYZcdefghijstuvwxyz���������������������������������������������������������������������������\u0000 \u0001\u0000\u0003\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b ��\u0000�\u0011\u0000\u0002\u0001\u0002\u0004\u0004\u0003\u0004\u0007\u0005\u0004\u0004\u0000\u0001\u0002w\u0000\u0001\u0002\u0003\u0011\u0004\u0005!1\u0006\u0012AQ\u0007aq\u0013\"2�\b\u0014B���� #3R�\u0015br� \u0016$4�%�\u0017\u0018\u0019\u001a&'()*56789:CDEFGHIJSTUVWXYZcdefghijstuvwxyz��������������������������������������������������������������������������\u0000 \u0003\u0001\u0000\u0002\u0011\u0003\u0011\u0000?\u0000��(�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (��\u0011��⅝�Z/�MT��\u0000\\~�� �\u0001�H\u0014�u\u0015p*\u0011�����?2��A9C��̮����(ؿ�\u0014�A\u0019\u0014V@7b�\u0000tQ��)�Qp\u001b��(ؿ�\u0014�(� ؿ�\u0014l_�u\u0014\\\u0006�_�6/�E:�.\u0003v/�E\u001b\u0017���E\u0017\u0001�\u0017������N���݋��F���QE�n���b�\u0000tS���7b�\u0000tQ��)�Qp\u001b��(ؿ�\u0014�(� ؿ�\u0014l_�u\u0014\\\u0006�_�6/�E:�.\u0003v/�E\u001b\u0017���E\u0017\u0001�\u0017������N���݋��F���QE�n���b�\u0000tS���7b�\u0000tQ��)�Qp\u001b��(ؿ�\u0014�(� ؿ�\u0015V�\u0000W\u0003\u0015r�^�嫇�\u00048����F�\u0014Q\\� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (�� (��\u0011�骖�\u0000�֭��5R��q���f\u0005ʭq\u0006~e�Vh�N�R�r�c��r2*��\u0019���G\u0004�\u000e��V�2�\u0002�\u0014\u0002\bȢ�\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000���V��;�W\u000f�\b7�L����j(��F\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000\u0014QE\u0000#��U-�\u0000� �[�j�������� �QE@\u0005V��?2��4SN�R�r�k����2*��\u0019���G\u0004�\u000e��V�6� �P\u000eFE\u0015�\u0005\u0014Q@\u0005\u0014Q@\u0005\u0014Q@\u0005\u0014Q@\u0005\u0014Q@\u0005\u0014Q@\u0005\u0014Q@\u0005\u0014Q@\u0005\u0014Q@\u0005\u0014Q@\u0005\u0014Q@\u0005\u0014Q@\u0005\u0014Q@\u0005\u0014Q@\u0005\u0014Q@\u0005\u0014Q@\u0005S��r��uZ�|@A�(��\u0011�E\u0014W0(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0004�j������o�MT��\u0000\\~�qفr�(�\u0000��(\u0000��\u0010n���Y��v\u0002�\u0013�;_�]\u0004\u0011�U� ��/Z� � �ҭ�%t\u0005�(\u0004\u0011�Ef\u0001E\u0014P\u0001E\u0014P\u0001E\u0014P\u0001E\u0014P\u0001E\u0014P\u0001E\u0014P\u0001E\u0014P\u0001E\u0014P\u0001E\u0014P\u0001E\u0014P\u0001E\u0014P\u0001E\u0014P\u0001E\u0014P\u0001E\u0014P\u0001E\u0014P\u0001Tﺭ\\�w�V� \u0010\u0015rh��h��j�E\u0015�0��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0000��(\u0001 o���j���U-�\u0000� �\\v`\\��*\u0000(��\u0000(��\u0000*��\u001b�e�Vh����\u0004�3��U�A\u0019\u0015Z� �r�����v�J���@^���֏9=j,�����OZ<���� (������OZ,�����OZ<���� (������OZ,�����OZ<���� (������OZ,�����OZ<���� (������OZ,�����OZ<���� (�����Y\u0015�\u0001��\u0007�E\u0014�(��\u0000(��\u0000(��\u0000*���Z�U/~����\u0002*(��\u0011�E\u0014W8(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0002�(�\u0004�j������o�MT��\u0000\\~�qفr�(�\u0000��(\u0000��(\u0000��(\u0000�Wh\u0003�Uکw��\\7\u0000[l�sN� ������C�\u0002��\u0007� d �f�\\� �d �}�z՚(�`V� ���֬�G;\u0002��\u0007� d �f�9�\u0015��=h� ��4Q����A�G�\u0007�Y��v\u0005o�\u000fZ>�=j�\u0014s�+}�z��A�Vh���[�֏�\u000fZ�E � ��c�G\u0000��U���8�ך��N�]��+0 (�� (�� (�� �{����K߼�p����",
+    "alert_page_length": 7716
+  },
+  {
+    "index": 3,
+    "alert": {
+      "agent_call_id": "74ff0624-3680-4da4-9558-cdc3465d9b26",
+      "run_id": "run-1781274176",
+      "target_id": "naic.e.financial_stability_tf",
+      "alert_date_time": "2026-06-12T00:00:00-04:00",
+      "alert_type": "New Agenda",
+      "alert_title": "Agenda posted for June 15, 2026 Financial Stability (E) Task Force meeting",
+      "alert_description": "A new agenda document was posted for the Financial Stability (E) Task Force's June 15, 2026 Public Webex Meeting. The meeting details remain the same and the agenda is associated with a presentation from S&P on Private Credit.",
+      "alert_url": "https://content.naic.org/committees/e/financial-stability-tf",
+      "organization": [
+        "Financial Stability (E) Task Force (NAIC FSTF)"
+      ],
+      "event_title": "Financial Stability (E) Task Force - 06152026",
+      "event_start_date_time": "2026-06-15T11:30:00-04:00",
+      "event_end_date_time": "2026-06-15T12:30:00-04:00",
+      "event_duration": "1 hour",
+      "event_is_full_day": "false",
+      "event_url": "https://naic.webex.com/naic/j.php?MTID=maf895b6755bc4cbcba29ef87c3d47603",
+      "event_call_in_number_access_code": "N/A",
+      "agenda_item_title_chronicle_topics": [
+        {
+          "agenda_item_title": "Presentation from S&P on Private Credit",
+          "chronicle_topics": [
+            "N/A"
+          ],
+          "status": "New"
+        }
+      ],
+      "agenda_item_title_official": [
+        {
+          "official_title": "Agenda",
+          "status": "New"
+        }
+      ],
+      "library_item_preliminary_title": {
+        "title": "N/A",
+        "status": "N/A"
+      },
+      "library_item_url": "N/A",
+      "library_items_file_name": "N/A",
+      "is_the_alert_relevant_for_an_art_newsreel_article": {
+        "details": "N/A",
+        "status": "Yes"
+      },
+      "bubble_action": {
+        "event": "update",
+        "library_item": "create",
+        "agenda_items": true,
+        "event_preview": {
+          "title": "Financial Stability (E) Task Force - 06152026",
+          "start_datetime": "2026-06-15T11:30:00-04:00",
+          "end_datetime": "2026-06-15T12:30:00-04:00",
+          "group": [
+            "Financial Stability (E) Task Force (NAIC FSTF)"
+          ],
+          "url": "https://naic.webex.com/naic/j.php?MTID=maf895b6755bc4cbcba29ef87c3d47603",
+          "call_in": "",
+          "match_key": "Financial Stability (E) Task Force (NAIC FSTF) | 2026-06-15",
+          "what_changes": [
+            "Link new agenda document",
+            "Append agenda items"
+          ],
+          "fields": {
+            "Agenda": "→ Link new agenda document"
+          },
+          "field_ids": {},
+          "match_search": {
+            "org": "Financial Stability (E) Task Force (NAIC FSTF)",
+            "date": "2026-06-15"
+          }
+        },
+        "library_item_preview": {
+          "title": "",
+          "url": "",
+          "filename": "",
+          "type": "Agenda",
+          "group": [
+            "Financial Stability (E) Task Force (NAIC FSTF)"
+          ],
+          "what_changes": [],
+          "fields": {
+            "Type": "Agenda",
+            "Organizations": "Financial Stability (E) Task Force (NAIC FSTF)",
+            "Status": "Active"
+          },
+          "field_ids": {
+            "organizations_list_custom_organization": [
+              "Financial Stability (E) Task Force (NAIC FSTF)"
+            ],
+            "status_option_status": "Active"
+          },
+          "match_search": {}
+        },
+        "agenda_item_previews": [],
+        "notes": "New Agenda"
+      }
+    },
+    "alert_page_content": "Financial Stability (E) Task Force | NAIC Skip to main content Search Search NAIC Search Recommended Insurance Summit International Forum N.A.I.C. Foundation Insurance Departments Contacts Consumer Insurance Search Insurance Terms × Financial Stability (E) Task Force Financial Condition (E) Committee Accounting Practices and Procedures (E) Task Force Blanks (E) Working Group Statutory Accounting Principles (E) Working Group Capital Adequacy (E) Task Force Health Risk-Based Capital (E) Working Group Life Risk-Based Capital (E) Working Group Generator of Economic Scenarios (GOES) (E/A) Subgroup Longevity Risk (E/A) Subgroup Variable Annuities Capital and Reserve (E/A) Subgroup Property and Casualty Risk-Based Capital (E) Working Group Catastrophe Risk (E) Subgroup Risk-Based Capital Investment Risk and Evaluation (E) Working Group Examination Oversight (E) Task Force Electronic Workpaper (E) Working Group Financial Analysis Solvency Tools (E) Working Group Financial Examiners Coordination (E) Working Group Financial Examiners Handbook (E) Technical Group Information Technology (IT) Examination (E) Working Group Financial Analysis (E) Working Group Financial Stability (E) Task Force Macroprudential (E) Working Group Group Capital Calculation (E) Working Group Group Solvency Issues (E) Working Group Own Risk and Solvency Assessment (ORSA) Implementation (E) Subgroup Invested Assets (E) Task Force Credit Rating Provider (E) Working Group Investment Analysis (E) Working Group Investment Designation Analysis (E) Working Group Mutual Recognition of Jurisdictions (E) Working Group NAIC/American Institute of Certified Public Accountants (AICPA) (E) Working Group National Treatment and Coordination (E) Working Group Receivership and Insolvency (E) Task Force Receivership Financial Analysis (E) Working Group Receivership Law (E) Working Group Reinsurance (E) Task Force Reinsurance Financial Analysis (E) Working Group Reciprocal Exchanges (E) Working Group Restructuring Mechanisms (E) Working Group Risk-Focused Surveillance (E) Working Group Risk Retention Group (E) Working Group Valuation Analysis (E) Working Group Financial Stability (E) Task Force Financial Condition (E) Committee Accounting Practices and Procedures (E) Task Force Blanks (E) Working Group Statutory Accounting Principles (E) Working Group Capital Adequacy (E) Task Force Health Risk-Based Capital (E) Working Group Life Risk-Based Capital (E) Working Group Generator of Economic Scenarios (GOES) (E/A) Subgroup Longevity Risk (E/A) Subgroup Variable Annuities Capital and Reserve (E/A) Subgroup Property and Casualty Risk-Based Capital (E) Working Group Catastrophe Risk (E) Subgroup Risk-Based Capital Investment Risk and Evaluation (E) Working Group Examination Oversight (E) Task Force Electronic Workpaper (E) Working Group Financial Analysis Solvency Tools (E) Working Group Financial Examiners Coordination (E) Working Group Financial Examiners Handbook (E) Technical Group Information Technology (IT) Examination (E) Working Group Financial Analysis (E) Working Group Financial Stability (E) Task Force Macroprudential (E) Working Group Group Capital Calculation (E) Working Group Group Solvency Issues (E) Working Group Own Risk and Solvency Assessment (ORSA) Implementation (E) Subgroup Invested Assets (E) Task Force Credit Rating Provider (E) Working Group Investment Analysis (E) Working Group Investment Designation Analysis (E) Working Group Mutual Recognition of Jurisdictions (E) Working Group NAIC/American Institute of Certified Public Accountants (AICPA) (E) Working Group National Treatment and Coordination (E) Working Group Receivership and Insolvency (E) Task Force Receivership Financial Analysis (E) Working Group Receivership Law (E) Working Group Reinsurance (E) Task Force Reinsurance Financial Analysis (E) Working Group Reciprocal Exchanges (E) Working Group Restructuring Mechanisms (E) Working Group Risk-Focused Surveillance (E) Working Group Risk Retention Group (E) Working Group Valuation Analysis (E) Working Group View Membership Report Charges The mission of the Financial Stability (E) Task Force is to consider domestic and global financial stability issues and their impact on the role of state insurance regulators. 2026 Charges The Financial Stability (E) Task Force will: Manage the macroprudential supervisory component of the NAIC financial solvency framework. Monitor the U.S. insurance industry’s macroprudential risk levels. Maintain macroprudential regulatory tools. Identify data gaps and enhanced disclosure needs for the statutory financial statement and/or other reporting mechanisms. Propose enhancements and/or additional supervisory measures to the Financial Condition (E) Committee or other relevant committees, and consult with such committees on implementation. Monitor U.S. macroprudential policy issues, and respond as appropriate. Support and work with the state insurance regulator representative to the Financial Stability Oversight Council (FSOC) to address confidential FSOC or other federal agency macroprudential work. Participate in public FSOC or other federal agency macroprudential work. Monitor international macroprudential policy issues, and participate/respond as appropriate. Coordinate with the International Insurance Relations (G) Committee to address International Association of Insurance Supervisors (IAIS) or other international macroprudential work. Meeting Materials Exposure Drafts Documents Calendar There are no meeting materials at this time. See all Current Exposure Drafts There are no exposure drafts at this time. Related Documents Macroprudential Initiatives NAIC _ Reinsurance Comparison Worksheet 3-18-2026 Global Insurance Market Report (GIMAR) Mid-Year Update June 2025 Global Insurance Market Report (GIMAR) December 2025 Final 2024 LST Framework Final 2024 LST Framework with Lead State Guidance - For FL Final 2024 LST Framework with Lead State Guidance Final 2023 LST Framework Final 2023 LST Framework with Lead State Guidance Final 2022 LST Framework Final 2022 LST Framework with Lead State Guidance Final 2021 LST Framework Final 2021 LST Framework with Lead State Guidance Final 2020 LST Framework Final 2020 LST Framework with Lead State Guidance LST Reporting Template v2.0 - Illustrative Sept 2021.xlsx LST Reporting Template v2.0 - Blank Sept 2021.xlsx 2019 Scope Criteria for Liquidity Stress Test Counterparty Exposure Disclosures Academic Perspectives on Systemic Risk and Insurance Funding Agreement Backed Securities & Financial System Vulnerabilities David Stuart Brexit Presentation Kenneth Tanji EPS NPR and CS ANPR Presentation Pooja Rahman NPR ANPR Presentation Macro-Prudential Approaches: Monitoring the Insurance Sector Insurance sector investments and their impact on financial stabilit Insurance Topics Our improved resource can help you navigate committee-curated topics for a comprehensive understanding. Explore Key Documents Final 2025 LST Framework Final 2025 LST Framework with Lead State Guidance LST Reporting Template v3.0 - Blank 6-30-24 Education & Training Events There are no education and training events at this time. Related NAIC Publications Committee and task force minutes PDF files will be posted to the Interactive Agenda approximately 10 business days after the conclusion of a national meeting. They are posted to the Interactive Agenda for each meeting tab on the Meetings page . The Proceedings of the NAIC are made available after the minutes are adopted at each subsequent meeting and may be accessed via the NAIC Publications page . Contacts Media Inquiries (816) 783-8909 news@naic.org Contacts Tim Nauheimer Sr. Manager I, Macroprudential Surveillance 212-386-1967 Please see the current Committee List for a complete list of committee members.",
+    "doc_page_content": "",
+    "alert_page_length": 7800
+  },
+  {
+    "index": 4,
+    "alert": {
+      "agent_call_id": "c986df63-5b93-48ab-9e18-987e9f963324",
+      "run_id": "run-1781187789",
+      "target_id": "naic.e.rbc_investment_risk_evaluation_wg",
+      "alert_date_time": "2026-06-11T00:00:00-04:00",
+      "alert_type": "New Agenda & Materials",
+      "alert_title": "Agenda and materials posted for June 23, 2026 RBC Investment Risk and Evaluation Working Group meeting",
+      "alert_description": "A new Agenda & Materials PDF was posted for the upcoming June 23, 2026 Public Webex Meeting of the Risk-Based Capital Investment Risk and Evaluation (E) Working Group concerning Proposal 2026-12-IRE (CLO RBC Factor).",
+      "alert_url": "https://content.naic.org/committees/e/risk-based-capital-investment-risk-evaluation-wg",
+      "organization": [
+        "Risk Based Capital Investment Risk & Evaluation (E) Working Group (NAIC RBC-IRE-WG)"
+      ],
+      "event_title": "NAIC Interim Meeting: Risk-Based Capital Investment Risk and Evaluation (E) Working Group",
+      "event_start_date_time": "2026-06-23T12:00:00-04:00",
+      "event_end_date_time": "2026-06-23T14:00:00-04:00",
+      "event_duration": "2 hours",
+      "event_is_full_day": "false",
+      "event_url": "https://naic.webex.com/naic/j.php?MTID=mf8edb0de17a2c9b0a1e6be37248235f4",
+      "event_call_in_number_access_code": "N/A",
+      "agenda_item_title_chronicle_topics": [
+        {
+          "agenda_item_title": "CLO RBC factor proposal",
+          "chronicle_topics": [
+            "Collateralized Loan Obligations (CLOs) and Asset-Backed Securities (ABS)",
+            "RBC Covariance & Asset Concentration Risk"
+          ],
+          "status": "New"
+        }
+      ],
+      "agenda_item_title_official": [
+        {
+          "official_title": "Proposal 2026-12-IRE (CLO RBC Factor)",
+          "status": "New"
+        }
+      ],
+      "library_item_preliminary_title": {
+        "title": "RBCIREWG 06-23-26 Agenda & Materials",
+        "status": "New"
+      },
+      "library_item_url": "https://content.naic.org/sites/default/files/call_materials/RBCIREWG%2006-23-26%20Agenda%26Materials.pdf",
+      "library_items_file_name": "RBCIREWG 06-23-26 Agenda&Materials.pdf",
+      "is_the_alert_relevant_for_an_art_newsreel_article": {
+        "details": "true",
+        "status": "Yes"
+      },
+      "bubble_action": {
+        "event": "update",
+        "library_item": "create",
+        "agenda_items": true,
+        "event_preview": {
+          "title": "NAIC Interim Meeting: Risk-Based Capital Investment Risk and Evaluation (E) Working Group",
+          "start_datetime": "2026-06-23T12:00:00-04:00",
+          "end_datetime": "2026-06-23T14:00:00-04:00",
+          "group": [
+            "Risk Based Capital Investment Risk & Evaluation (E) Working Group (NAIC RBC-IRE-WG)"
+          ],
+          "url": "https://naic.webex.com/naic/j.php?MTID=mf8edb0de17a2c9b0a1e6be37248235f4",
+          "call_in": "",
+          "match_key": "Risk Based Capital Investment Risk & Evaluation (E) Working Group (NAIC RBC-IRE-WG) | 2026-06-23",
+          "what_changes": [
+            "Link new agenda/materials documents",
+            "Append agenda items"
+          ],
+          "fields": {
+            "Agenda": "→ Link new agenda/materials documents"
+          },
+          "field_ids": {},
+          "match_search": {
+            "org": "Risk Based Capital Investment Risk & Evaluation (E) Working Group (NAIC RBC-IRE-WG)",
+            "date": "2026-06-23"
+          }
+        },
+        "library_item_preview": {
+          "title": "RBCIREWG 06-23-26 Agenda & Materials",
+          "url": "https://content.naic.org/sites/default/files/call_materials/RBCIREWG%2006-23-26%20Agenda%26Materials.pdf",
+          "filename": "RBCIREWG 06-23-26 Agenda&Materials.pdf",
+          "type": "Agenda & Materials",
+          "group": [
+            "Risk Based Capital Investment Risk & Evaluation (E) Working Group (NAIC RBC-IRE-WG)"
+          ],
+          "what_changes": [],
+          "fields": {
+            "Name": "RBCIREWG 06-23-26 Agenda & Materials",
+            "URL": "https://content.naic.org/sites/default/files/call_materials/RBCIREWG%2006-23-26%20Agenda%26Materials.pdf",
+            "File": "RBCIREWG 06-23-26 Agenda&Materials.pdf",
+            "Type": "Agenda & Materials",
+            "Organizations": "Risk Based Capital Investment Risk & Evaluation (E) Working Group (NAIC RBC-IRE-WG)",
+            "Status": "Active",
+            "Description": "Meeting agenda and materials for the Risk-Based Capital Investment Risk and Evaluation (E) Working Group virtual meeting scheduled for June 23, 2026. The agenda covers adoption of prior minutes, updates from the American Academy of Actuaries on proposed CLO C-1 factors, comments on Proposal 2026-12-IRE, a placeholder item, other matters, and adjournment, with attachments including draft prior meeting minutes.",
+            "Date": "June 9, 2026",
+            "Doc Type": "Agenda & Materials"
+          },
+          "field_ids": {
+            "name_text": "RBCIREWG 06-23-26 Agenda & Materials",
+            "url_text": "https://content.naic.org/sites/default/files/call_materials/RBCIREWG%2006-23-26%20Agenda%26Materials.pdf",
+            "file_name_text": "RBCIREWG 06-23-26 Agenda&Materials.pdf",
+            "organizations_list_custom_organization": [
+              "Risk Based Capital Investment Risk & Evaluation (E) Working Group (NAIC RBC-IRE-WG)"
+            ],
+            "status_option_status": "Active",
+            "description_text": "Meeting agenda and materials for the Risk-Based Capital Investment Risk and Evaluation (E) Working Group virtual meeting scheduled for June 23, 2026. The agenda covers adoption of prior minutes, updates from the American Academy of Actuaries on proposed CLO C-1 factors, comments on Proposal 2026-12-IRE, a placeholder item, other matters, and adjournment, with attachments including draft prior meeting minutes.",
+            "date_date": "June 9, 2026",
+            "type___text_text": "Agenda & Materials"
+          },
+          "match_search": {}
+        },
+        "agenda_item_previews": [],
+        "notes": "New Agenda & Materials"
+      }
+    },
+    "alert_page_content": "Risk-Based Capital Investment Risk and Evaluation (E) Working Group | NAIC Skip to main content Search Search NAIC Search Recommended Insurance Summit International Forum N.A.I.C. Foundation Insurance Departments Contacts Consumer Insurance Search Insurance Terms × Risk-Based Capital Investment Risk and Evaluation (E) Working Group Financial Condition (E) Committee Accounting Practices and Procedures (E) Task Force Blanks (E) Working Group Statutory Accounting Principles (E) Working Group Capital Adequacy (E) Task Force Health Risk-Based Capital (E) Working Group Life Risk-Based Capital (E) Working Group Generator of Economic Scenarios (GOES) (E/A) Subgroup Longevity Risk (E/A) Subgroup Variable Annuities Capital and Reserve (E/A) Subgroup Property and Casualty Risk-Based Capital (E) Working Group Catastrophe Risk (E) Subgroup Risk-Based Capital Investment Risk and Evaluation (E) Working Group Examination Oversight (E) Task Force Electronic Workpaper (E) Working Group Financial Analysis Solvency Tools (E) Working Group Financial Examiners Coordination (E) Working Group Financial Examiners Handbook (E) Technical Group Information Technology (IT) Examination (E) Working Group Financial Analysis (E) Working Group Financial Stability (E) Task Force Macroprudential (E) Working Group Group Capital Calculation (E) Working Group Group Solvency Issues (E) Working Group Own Risk and Solvency Assessment (ORSA) Implementation (E) Subgroup Invested Assets (E) Task Force Credit Rating Provider (E) Working Group Investment Analysis (E) Working Group Investment Designation Analysis (E) Working Group Mutual Recognition of Jurisdictions (E) Working Group NAIC/American Institute of Certified Public Accountants (AICPA) (E) Working Group National Treatment and Coordination (E) Working Group Receivership and Insolvency (E) Task Force Receivership Financial Analysis (E) Working Group Receivership Law (E) Working Group Reinsurance (E) Task Force Reinsurance Financial Analysis (E) Working Group Reciprocal Exchanges (E) Working Group Restructuring Mechanisms (E) Working Group Risk-Focused Surveillance (E) Working Group Risk Retention Group (E) Working Group Valuation Analysis (E) Working Group Risk-Based Capital Investment Risk and Evaluation (E) Working Group Financial Condition (E) Committee Accounting Practices and Procedures (E) Task Force Blanks (E) Working Group Statutory Accounting Principles (E) Working Group Capital Adequacy (E) Task Force Health Risk-Based Capital (E) Working Group Life Risk-Based Capital (E) Working Group Generator of Economic Scenarios (GOES) (E/A) Subgroup Longevity Risk (E/A) Subgroup Variable Annuities Capital and Reserve (E/A) Subgroup Property and Casualty Risk-Based Capital (E) Working Group Catastrophe Risk (E) Subgroup Risk-Based Capital Investment Risk and Evaluation (E) Working Group Examination Oversight (E) Task Force Electronic Workpaper (E) Working Group Financial Analysis Solvency Tools (E) Working Group Financial Examiners Coordination (E) Working Group Financial Examiners Handbook (E) Technical Group Information Technology (IT) Examination (E) Working Group Financial Analysis (E) Working Group Financial Stability (E) Task Force Macroprudential (E) Working Group Group Capital Calculation (E) Working Group Group Solvency Issues (E) Working Group Own Risk and Solvency Assessment (ORSA) Implementation (E) Subgroup Invested Assets (E) Task Force Credit Rating Provider (E) Working Group Investment Analysis (E) Working Group Investment Designation Analysis (E) Working Group Mutual Recognition of Jurisdictions (E) Working Group NAIC/American Institute of Certified Public Accountants (AICPA) (E) Working Group National Treatment and Coordination (E) Working Group Receivership and Insolvency (E) Task Force Receivership Financial Analysis (E) Working Group Receivership Law (E) Working Group Reinsurance (E) Task Force Reinsurance Financial Analysis (E) Working Group Reciprocal Exchanges (E) Working Group Restructuring Mechanisms (E) Working Group Risk-Focused Surveillance (E) Working Group Risk Retention Group (E) Working Group Valuation Analysis (E) Working Group View Membership Report Charges 2026 Charges The Risk-Based Capital Investment Risk and Evaluation (E) Working Group will: Perform a comprehensive review of the RBC investment framework for all business types, which could include: Evaluating relevant historical data and applying defined statistical safety levels over appropriate time horizons in developing recommendations for revisions to current asset risk structure and factors (e.g. C-1o and C1-cs). Facilitating coordination and alignment among NAIC committees/task forces/working groups related to its work in reviewing current asset risk framework. Assessing the impact and effectiveness of potential changes in contributing to the identification of weakly capitalized companies; i.e., those companies at action levels. Meeting Materials Exposure Drafts Documents Calendar Sort by Date Choose the order in which meetings are listed. Sort by Call Date and Time (field_call_date) Order Oldest to Newest Newest to Oldest Risk-Based Capital Investment Risk and Evaluation (E) Working Group Public Webex Meeting Tuesday, June 23, 2026 12:00 PM ET, 11:00 AM CT, 10:00 AM MT, 9:00 AM PT Expected Duration: 2 hours Webex Link The purpose of the meeting is to receive comments on Proposal 2026-12-IRE (CLO RBC Factor). Agenda & Materials Spring National Meeting Risk-Based Capital Investment Risk and Evaluation (E) Working Group Risk-Based Capital Investment Risk and Evaluation (E) Working Group Monday, March 23, 2026 11:30 AM - 12:30 PM PT Manchester Grand Hyatt—Grand Hall A—Level 1 Agenda Materials Summary See all Current Exposure Drafts Exposure Drafts The following document is exposed for a 61-day comment period. Note that the Academy presentation included other topics such as PAF etc., please submit comments specific to residual tranches C-1 modelling to Maggie Chang by Monday, July 6, 2026 . CLO C1 Residuals and PAF The following document is exposed for a 30-day comment period ending Friday, June 5, 2026 , please submit comments to Maggie Chang . Proposal 2026-12-IRE CLO Factor Related Documents American Academy of Actuaries Update on CLO C-1 Factors Modelling (12/15/25) American Academy of Actuaries Updated RBC Principles for Structured Securities American Academy of Actuaries Update on CLO C-1 Factor Modeling Historical Documents Proposal 2024-19-I ( Withdrawn ) SSG presentation Memorandum on Consideration of Additional Information on Interim Factor for Residual Tranches Oliver Wyman Residual Tranche Report Insurance Topics Our improved resource can help you navigate committee-curated topics for a comprehensive understanding. Explore Related NAIC Publications Committee and task force minutes PDF files will be posted to the Interactive Agenda approximately 10 business days after the conclusion of a national meeting. They are posted to the Interactive Agenda for each meeting tab on the Meetings page . The Proceedings of the NAIC are made available after the minutes are adopted at each subsequent meeting and may be accessed via the NAIC Publications page . Contacts Media Inquiries (816) 783-8909 news@naic.org Contacts Julie Gann Director, Solvency Policy 816-783-8966 Maggie Chang Manager III, Solvency Policy 816-783-8976 Charles Therriault Director, Securities Valuation Office 212-386-1920 Linda Phelps Assistant Director, Securities Valuation Office 212-386-1921 Peter Kelly Assistant Director, Securities Valuation Office 212-386-1953 Please see the current Committee List for a complete list of committee members.",
+    "doc_page_content": "%PDF-1.7 %���� 7051 0 obj < >stream h��oO�0\u0010ƿʽ�B��رc EJ��A�-\u0010��\u0010/�֔hiS%f�o?�)[;A�xM�6��'��˹�eD\u0000\u0003�Q\u0000�0\u0017P \u0011w\u0001� �\\\u0010\u0002�^Á��\u0005\u0002���\bB��\u00128qb��+ \b��2��:�� �\u0013K\u0006Rxq\b\u0004{#)�P�s\u0012H�0\b� \u0010a�sr���\b u��n����,���K[���\"_/mx���r���v,���8F�rm��\u001b�4ui�]�3w�\u001a���XԷwql�c��GC�\u0016���Ai쵅��7\u001aM�\u0003t]��v��K��+�W� g�)���>}>}>}^�IN3�WE�Qg��e�R\u0005�&@�`49�V&�# (K�T�\u001ae#U��ҵn��=�Af��h��s�y���vm;^\u0002��j3����\u0000�\u0001JuSjS\u0012�~��5ج�\u0011�N�t�\u000e1�5 � C���W�j�\u0017�G]U�*o5���n� ?E|ʽ �\\��g��V�󙩴�?�����fS ctj�t����\u0006�2�WS�p\u0003�n�U�1e�n�,��}R�wH\u0005�;�A�\u001a)硯A�1�\u0006{�I���/�p�s��|���^9��(gt�3$�`G� �@�-��;��\"���(wG�>����:�y�h���O�=p k-�o b&_=�D��C��� ��>r�b�L���;e��\u0007�x����t�W\u0004q�K�\u0001\u0000}� endstream endobj 7052 0 obj < >stream hޜ��nB1 �_�o@��q\"!��]\u0010�Vu@*���U��}� �\u0001UBa�\u0001r? 쓛kb �k\u0012J��H k\u0017�D�/J1 �)�!���. i �=a�) d:\u0004S\u0019 \u0015���h���U\"� ]iSe|��ń�������7�l�_�� ��@\u0007�k�i���q��/����|^��|���\u0014:E�� ?O��1 �G+�\u0016\u0018 �� 4���@� �ѳ�\u001b\u0005 \u0012^� @\u0002�\u0002PD��\u0016x>ʈi���5�P}�X )Z���V�̰�}wsO ���\u0001pdO� �bfIgHt�DgH4ߐ 40��S��(�W��*�Wح�X=iu��n �\u0015 >stream hތWMo\u001b9 �+:�^<#Q�$�0�EP�H� ��n��I�\"�S$Ρ�~ 9 M= s.6-=򑏢��\u0010ٵ.�� �wq��wu>��Z���.�^�ਭb�#���.�j$\u0017}\u0012�]L\u0012/e��8ť�[�q\u0010w�q&1������(\u0014L.g\u0001stE�8�\u0012\u0015̮\u0014���U �@�Q(�\"w��ȹ��=�$~9�*�\u0002NEX,� ��.;lj� +�nq�+9C\u0016�\"\u0007r�l\u0005 1HJ\u0005 1�\u001a8b�5p��k�HY8 88�\u0005\u000e֬ 82 G\u0001G�\u0000��\u001a?})Rd\u0005G A,p�$�TpԪk jIx+6Zm���[QJ:��ȣ�@��\u0014 ih.�Х\u0006 �\u0014tM I��AU�\u0010>F��F j!hJj��\u0005B ,��<8��$�\u0000Y}=8��\"i\u0014� 9D%�/>����� '\u000fp��H�d�9�\u0001�=��a�>qҞ\u0013� F�@��� VQ\u000fv��G��U�\u0002��Gu$�@\u0010��%?\u0002\u0007����\u0010��D2\u000e,�\u00118�HL8H�H���X���*'��I���Y�� �\" a\u0012�S(�#g]\u0003GQ �A%�\u001a8 �ٛ7����\u0001E���\u000e� ;�vͭ��\"?�ۯ2!jn���Z|�s�t �B6�? \u0014���� d��� \u0014<�����xx<����>�˅�;�\u0004\u000f�lf�y���_�]�����q;���� �2 ��k޹�|�� �ч��U� g ø§�U��fs|z�?�~~� �hZ�y�;���on \u000e߆�ۮ\u0000� �K��p� �}�Q ?籨p\u0019�ׅ�:\\šn�l+����ù��.�:f\u0013���k�O\u000f�\b�\u000fζv\u0017=\u0016'�,ēC֚\bo\"�� \u0013\u0011-�69���&�,�D/�\u0011\u0011�t!��\u0004S�pF\u0015��'���{L�Ǽ}��Gq�*�\"�y̫H�C�K��<�U$�)]�P�σ^ǲ����>ڐdA��B�[^ (�\u0018�cZ�{���{��e� �9�b�r�a7�Íƻyx>~x��n��p��\\=<�7��� Ð!-�P}��������\u0017� �ȳe���՚�W{fP��4A�<�4�yu\bc���\"�y���C�B�<�9 Wy$^�T�1��j�m�}fP[{P�Ɉ�~\"��< ,y\u0001OK\u0018GL������ ;1 9�0���X�}���� �' >��g�-jY�3�\u001a_��� �� \u0013\u0011MD�\u0010[vyg�)&b* ���) ���) ���\"�Dd\u0013QLD5\u0011�����x]�\u001aA��L\u0010�DL�)��dzwM!dC� I6�m��K�u �.��%غ����/�\u0000��!> endstream endobj 7054 0 obj < >stream hޤXMo�8\u0010�+<�\u0017���sQ\u0018M\u0011\u0014\b6�\u0006�.v� \u0007'5��u�\"q\u000e���f$9Z[\u0012]�\u0010eL��zC\u000e)Y���\u001a\u0017\u0015\u0011�O*D����\u0006��ʐg�(\u00132 VY�X�\u00071�;e���\"-�\u0000s\u0002��(जN,d� \u0014L��%˂Q�\u0004\u0016�� �|�\u0011��\u0015�W!�TP!� �\u0019I���Q�d�4�\u0013�J�G\u0010T�2bU62B*;\u0019q*��葩\u0018�A\u0019#�C�4Y�\u0004)�\u0002\u0018��S\u0002%6s� �P`+0e(�D�4 &\u0007)s\u001a >��������#h�\u0007 �qN >Bb� �2\u000e�\u0010#��<�`{\u0019>\u0012�,|���d��Zf�#K\u0004\u0019>r�Y\u0018�F�����Y� �8\u0019+c���mJ�e ���,�AN�\u0002�^$���B�1ݖ��\u0016\u000fk�Ã&Hx\u0004��r!\u0002�l ~F-8^Bb��T\u0014+�&�\u0011]�L\u0012\u0001���h���\u0000�A�b\u0010�x\u0003u�ٔEZ� k`!�fv-�%cd U֯�X�\\\u0000HI\u0011�!eH��HC� �6\u000f���~��X׿��l\u0006��J�WX�P�꺾z�e*⼾j\u0011���E\u0004\u0015\u0011���ED(\"b\u0011���\\f�L*#�}�\u0011�E\\ޭ{ď`>l�~ %�\u0016ɷ\u0003�K���Əczф\u0006��,�qL�RjPn�R ��, ��\u0000cʐ2Ѧ̴qe�/An���Ps�A�m��\u0003D\\��Ys��\u0018�7e�WaO����K1s�PV����&7r\\���I����t��:� ��W t�)\u0002p\bt\u0004�.�D \u0001y�\u0000��\u0004��2)\u000e\u0007���I \u0001ɟ��3���\u0000流�qP4[��d�V\u0018\u0007�lI_����8栯��a�\u0012�cz�\\��S��8氻��e�R � v7�NMX������M���.w7]�n��u�n��� ��ɱ�~��1۝˗LQo\u0017о�����ߓw��m��M���ֲ ���`oSw *��\u0014ntǍ9]�ke�N��\u001aN��鴽�e� �ם��A\u0007Mb� �w�#�-\"��pE�/\"B\u0011\u0011��TD�2c'�ZfՔi5e^M�XSf֔�5Eno����C���@����\u0001���bӴ#���?�/�߿[�g���vÿ�<.V�������������� �oUۧ���Y�a\u000e�?���\u0011+�zy��! �ȯϾ�/ ��\u0005.V\u001a��wO/�����r��\u001bb=",
+    "alert_page_length": 7656
+  },
+  {
+    "index": 5,
+    "alert": {
+      "agent_call_id": "98fd7948-f232-470c-8bc9-e025cb752dec",
+      "run_id": "run-1781036574",
+      "target_id": "naic.a.latf",
+      "alert_date_time": "2026-06-09T12:00:00-04:00",
+      "alert_type": "Updated Agenda & Materials",
+      "alert_title": "Life Actuarial (A) Task Force posts June 11, 2026 agenda and meeting materials",
+      "alert_description": "The Life Actuarial (A) Task Force updated its June 11, 2026 meeting entry by replacing the placeholder summary with a detailed agenda and posting seven meeting materials, including APFs 2025-14, 2026-04, 2026-05, 2025-18, 2025-20, an ACLI comment letter, and the Group Annuity Selection Memo.",
+      "alert_url": "https://content.naic.org/cmte_a_latf.htm",
+      "organization": [
+        "Life Actuarial (A) Task Force (NAIC LATF)"
+      ],
+      "event_title": "NAIC LATF | June 11, 2026 Public Webex Meeting",
+      "event_start_date_time": "2026-06-11T14:00:00-04:00",
+      "event_end_date_time": "2026-06-11T15:00:00-04:00",
+      "event_duration": "1 hour",
+      "event_is_full_day": "false",
+      "event_url": "https://naic.webex.com/naic/j.php?MTID=m0babcdc61a80a73b8283c0f047e45b9c",
+      "event_call_in_number_access_code": "N/A",
+      "agenda_item_title_chronicle_topics": [
+        {
+          "agenda_item_title": "Consider adoption of APF 2025-14 VA Scope Clarification",
+          "chronicle_topics": [
+            "RBC C-3 (Interest Rate and Market Risk)"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "Consider adoption of APF 2026-04 CSO Clarification",
+          "chronicle_topics": [
+            "N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "Consider adoption of 2026-05 Editorial APF",
+          "chronicle_topics": [
+            "N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "Consider adoption of APF 2025-18 VM-22 Deposit-Type Contracts",
+          "chronicle_topics": [
+            "Principle-Based Reserving (PBR) & Fixed Income Annuities (VM-22)"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "Consider adoption of APF 2025-20 VM-22 Aggregation",
+          "chronicle_topics": [
+            "Principle-Based Reserving (PBR) & Fixed Income Annuities (VM-22)"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "Consider any comments on Group Annuity Selection Memo",
+          "chronicle_topics": [
+            "Principle-Based Reserving (PBR) & Fixed Income Annuities (VM-22)"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "Other Matters",
+          "chronicle_topics": [
+            "N/A"
+          ],
+          "status": "New"
+        }
+      ],
+      "agenda_item_title_official": [
+        {
+          "official_title": "Consider adoption of APF 2025-14 VA Scope Clarification",
+          "status": "New"
+        },
+        {
+          "official_title": "Consider adoption of APF 2026-04 CSO Clarification",
+          "status": "New"
+        },
+        {
+          "official_title": "Consider adoption of 2026-05 Editorial APF",
+          "status": "New"
+        },
+        {
+          "official_title": "Consider adoption of APF 2025-18 VM-22 Deposit-Type Contracts",
+          "status": "New"
+        },
+        {
+          "official_title": "Consider adoption of APF 2025-20 VM-22 Aggregation",
+          "status": "New"
+        },
+        {
+          "official_title": "Consider any comments on Group Annuity Selection Memo",
+          "status": "New"
+        },
+        {
+          "official_title": "Other Matters",
+          "status": "New"
+        }
+      ],
+      "library_item_preliminary_title": {
+        "title": "APF 2025-14 VA Scope Clarification",
+        "status": "New"
+      },
+      "library_item_url": "https://content.naic.org/sites/default/files/call_materials/APF%202025-14%20-%20VM%20Variable%20Annuity%20Scope%20Clarification%2020260611.docx",
+      "library_items_file_name": "APF 2025-14 - VM Variable Annuity Scope Clarification 20260611.docx",
+      "is_the_alert_relevant_for_an_art_newsreel_article": {
+        "details": "true",
+        "status": "Yes"
+      },
+      "bubble_action": {
+        "event": "update",
+        "library_item": "update",
+        "agenda_items": true,
+        "event_preview": {
+          "title": "NAIC LATF | June 11, 2026 Public Webex Meeting",
+          "start_datetime": "2026-06-11T14:00:00-04:00",
+          "end_datetime": "2026-06-11T15:00:00-04:00",
+          "group": [
+            "Life Actuarial (A) Task Force (NAIC LATF)"
+          ],
+          "url": "https://naic.webex.com/naic/j.php?MTID=m0babcdc61a80a73b8283c0f047e45b9c",
+          "call_in": "",
+          "match_key": "Life Actuarial (A) Task Force (NAIC LATF) | 2026-06-11",
+          "what_changes": [
+            "Update existing documents",
+            "Update agenda items"
+          ],
+          "fields": {
+            "Agenda": "→ Update agenda/materials document references"
+          },
+          "field_ids": {},
+          "match_search": {
+            "org": "Life Actuarial (A) Task Force (NAIC LATF)",
+            "date": "2026-06-11"
+          }
+        },
+        "library_item_preview": {
+          "title": "APF 2025-14 VA Scope Clarification",
+          "url": "https://content.naic.org/sites/default/files/call_materials/APF%202025-14%20-%20VM%20Variable%20Annuity%20Scope%20Clarification%2020260611.docx",
+          "filename": "APF 2025-14 - VM Variable Annuity Scope Clarification 20260611.docx",
+          "type": "Agenda & Materials",
+          "group": [
+            "Life Actuarial (A) Task Force (NAIC LATF)"
+          ],
+          "what_changes": [
+            "Replace file/URL with new version"
+          ],
+          "fields": {
+            "URL": "https://content.naic.org/sites/default/files/call_materials/APF%202025-14%20-%20VM%20Variable%20Annuity%20Scope%20Clarification%2020260611.docx",
+            "File": "APF 2025-14 - VM Variable Annuity Scope Clarification 20260611.docx"
+          },
+          "field_ids": {
+            "url_text": "https://content.naic.org/sites/default/files/call_materials/APF%202025-14%20-%20VM%20Variable%20Annuity%20Scope%20Clarification%2020260611.docx",
+            "file_name_text": "APF 2025-14 - VM Variable Annuity Scope Clarification 20260611.docx"
+          },
+          "match_search": {
+            "url": "https://content.naic.org/sites/default/files/call_materials/APF%202025-14%20-%20VM%20Variable%20Annuity%20Scope%20Clarification%2020260611.docx",
+            "title": "APF 2025-14 VA Scope Clarification"
+          }
+        },
+        "agenda_item_previews": [],
+        "notes": "Updated Agenda & Materials"
+      }
+    },
+    "alert_page_content": "Life Actuarial (A) Task Force | NAIC Skip to main content Search Search NAIC Search Recommended Insurance Summit International Forum N.A.I.C. Foundation Insurance Departments Contacts Consumer Insurance Search Insurance Terms × Life Actuarial (A) Task Force Life Insurance and Annuities (A) Committee Annuity Buyer's Guide (A) Working Group Annuity Suitability (A) Working Group Life Actuarial (A) Task Force Experience Reporting (A) Subgroup Generator of Economic Scenarios (GOES) (E/A) Subgroup Longevity Risk (E/A) Subgroup Valuation Manual (VM)-22 (A) Subgroup Variable Annuities Capital and Reserve (E/A) Subgroup Life Insurance and Annuities Illustrations (A) Working Group Life Actuarial (A) Task Force Life Insurance and Annuities (A) Committee Annuity Buyer's Guide (A) Working Group Annuity Suitability (A) Working Group Life Actuarial (A) Task Force Experience Reporting (A) Subgroup Generator of Economic Scenarios (GOES) (E/A) Subgroup Longevity Risk (E/A) Subgroup Valuation Manual (VM)-22 (A) Subgroup Variable Annuities Capital and Reserve (E/A) Subgroup Life Insurance and Annuities Illustrations (A) Working Group View Membership Report Charges The mission of the Life Actuarial (A) Task Force is to identify, investigate, and develop solutions to actuarial problems in the life insurance industry. 2026 Charges The Life Actuarial (A) Task Force will: Work to keep reserve, reporting, and other actuarial-related requirements current. This includes principle-based reserving (PBR) and other requirements in the Valuation Manual , actuarial guidelines, and recommendations for appropriate actuarial reporting in blanks. Respond to charges from the Life Insurance and Annuities (A) Committee and referrals from other groups or committees, as appropriate. Report progress on all work to the Life Insurance and Annuities (A) Committee and provide updates to the Financial Condition (E) Committee on matters related to life insurance company solvency. This work includes the following: Work with the American Academy of Actuaries (Academy) and the Society of Actuaries (SOA) to develop new mortality tables for valuation and minimum nonforfeiture requirements for life insurance and annuities, as appropriate. Provide recommendations for guidance and requirements for accelerated underwriting (AU) and other emerging underwriting practices, as needed. Work with the SOA on the annual development of the Generally Recognized Expense Table (GRET) factors. Provide recommendations and changes to other reserve and nonforfeiture requirements to address issues as appropriate and provide actuarial assistance and commentary to other NAIC committees relative to their work on actuarial matters. Work with the selected vendor to develop and implement the new generator of economic scenarios (GOES) for use in regulatory reserve and capital calculations. Monitor international developments regarding life and health insurance reserving, capital, and related topics. Compare and benchmark these with PBR requirements. Coordinate with the Reinsurance (E) Task Force on actuarial items related to reinsurance. Upcoming Meeting CANCELED - Life Actuarial (A) Task Force - 06252026 Public Conference Call Thursday, June 25, 2026 2:00 PM ET, 1:00 PM CT, 12:00 PM MT, 11:00 AM PT Expected Duration: 1 hour Webex Link MEETING CANCELED Meeting Materials Exposure Drafts Documents Calendar Sort by Date Choose the order in which meetings are listed. Sort by Call Date and Time (field_call_date) Order Oldest to Newest Newest to Oldest Life Actuarial (A) Task Force - 07302026 Public Webex Meeting Thursday, July 30, 2026 2:00 PM ET, 1:00 PM CT, 12:00 PM MT, 11:00 AM PT Expected Duration: 1 hour Webex Link To be determined. Life Actuarial (A) Task Force - 07232026 Public Webex Meeting Thursday, July 23, 2026 2:00 PM ET, 1:00 PM CT, 12:00 PM MT, 11:00 AM PT Expected Duration: 1 hour Webex Link To be determined. Life Actuarial (A) Task Force - 07162026 Public Webex Meeting Thursday, July 16, 2026 2:00 PM ET, 1:00 PM CT, 12:00 PM MT, 11:00 AM PT Expected Duration: 1 hour Webex Link To be determined. CANCELED - Life Actuarial (A) Task Force - 07092026 Public Webex Meeting Thursday, July 09, 2026 2:00 PM ET, 1:00 PM CT, 12:00 PM MT, 11:00 AM PT Expected Duration: 1 hour Webex Link MEETING CANCELED Life Actuarial (A) Task Force - 07022026 Public Webex Meeting Thursday, July 02, 2026 2:00 PM ET, 1:00 PM CT, 12:00 PM MT, 11:00 AM PT Expected Duration: 1 hour Webex Link To be determined. CANCELED - Life Actuarial (A) Task Force - 06252026 Public Conference Call Thursday, June 25, 2026 2:00 PM ET, 1:00 PM CT, 12:00 PM MT, 11:00 AM PT Expected Duration: 1 hour Webex Link MEETING CANCELED Life Actuarial (A) Task Force - 06182026 Public Webex Meeting Thursday, June 18, 2026 2:00 PM ET, 1:00 PM CT, 12:00 PM MT, 11:00 AM PT Expected Duration: 1 hour Webex Link Agenda – June 18, 2026 Hear Presentation from the SOA on Historical and Future Mortality Improvement Hear Update on Actuarial Guideline 55 Report Reviews—MATERIALS PENDING Discuss Other Matters SOA on Historical and Future Mortality Improvement Actuarial Guideline 55 Report Reviews Spring National Meeting Life Actuarial (A) Task Force Life Actuarial (A) Task Force Saturday, March 21, 2026 8:00 AM - 4:30 PM PT Manchester Grand Hyatt—Grand Hall D—Level 1 Agenda Materials (Updated 3/18/26) Summary Minutes (Updated 4/16) Spring National Meeting Life Actuarial (A) Task Force Life Actuarial (A) Task Force Sunday, March 22, 2026 8:00 AM - 10:00 AM PT Manchester Grand Hyatt—Grand Hall D—Level 1 Agenda Materials (Updated 3/18/26) Summary Minutes (Updated 4/16) See all Current Exposure Drafts Exposure Drafts The following documents are being exposed for a 21-day public comment period ending Wednesday June 10 th , 2026. APF 2026-05 APF 2025-18 APF 2025-20 Please send comments to Scott O'Neal and McKayla Doyle by June 10, 2026. Related Documents Actuarial Guideline 55 (AG ReAAT) Life Knowledge Statements Appointed Actuary Knowledge Statement Illustration Actuary Knowledge Statement Qualified Actuary Knowledge Statement FAQ on Qualifications and PBR Report on the Results of the Principle - Based Reserving State Resource Survey VM-20 Impact Study – Towers Watson PBR Company Pilot Project Report Amendment Proposal Form VM-30 Reporting: AG 53 Templates 2025YE AG 53 Guidance 2025YE AG 55 Templates 2025YE Transition from LIBOR to SOFR NAIC Staff Memorandum on Transition from LIBOR to SOFR 2022 VM-20 Estimated SOFR Compared to Published Table J Current Swap Spreads IMR Allocation Guidance Year-end 2023 IMR Allocation Guidance Year-end 2022 IMR Allocation Guidance Generally Recognized Expense Table (\"GRET\"): 2025 Factors Archive PBR Education 2024 PBR Review Report Insurance Topics Our improved resource can help you navigate committee-curated topics for a comprehensive understanding. Explore Related NAIC Publications Committee and task force minutes PDF files will be posted to the Interactive Agenda approximately 10 business days after the conclusion of a national meeting. They are posted to the Interactive Agenda for each meeting tab on the Meetings page . The Proceedings of the NAIC are made available after the minutes are adopted at each subsequent meeting and may be accessed via the NAIC Publications page . Annual and Quarterly Statement Blanks Annual and Quarterly Statement Instructions Compendium of State Laws on Insurance Topics Model Laws, Regulations and Guidelines Contacts Media Inquiries (816) 783-8909 news@naic.org Contacts Scott O'Neal Managing Life Actuary 816-783-8814 Jennifer Frasier Assistant Managing Life Actuary 816-783-8834 Please see the current Committee List for a complete list of committee members.",
+    "doc_page_content": "PK\u0003\u0004\u0014\u0000\u0006\u0000\b\u0000\u0000\u0000!\u0000\u0015��b�\u0001\u0000\u0000�\b\u0000\u0000\u0013\u0000\b\u0002[Content_Types].xml �\u0004\u0002(�\u0000\u0002\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000̖�k�0\u0010�� � �^G���RJ�>�\u0007 ���\u0014�z�Ή�~!]����NL\u0019Y�-�؋�����#Y�ir��l�)��+q^�E�^\u0005m��\u0012\u000f�O�+Qd\u0002��\u0006��Xc\u00167�7g��:b.���J,�ⵔY-�A.CDϑ:$\u0007įi!#� �@y1 _J\u0015<��\u00115\u001ab:��5�,\u0015 ��sG��fQ��\u0012\u001b�J@��( ��G�q\u0019m J�ls�����\u0013����D~o����S����\u000e\u0012݂�,�\u0014��:�����u� ����¾�Q�)(̙��ٲ�80~˿�C�2\u0005��Yi\b�] 1� �Ӌ6z��`?�{2\\�\u0007 ��5C�&���1�_<���\u0007!2�-��\u0013t���H�\u0005�\u0000�(\u000f\"<���d\u0014/�\u0007Aj������1z�A��!���� �'�\b�=\u000f?�Z��,9����a�_�y�B��Q�k���,}����N\u001a��zw�Ցμ�Ϳ\"�\u0006\u0002�\u0005�h?�:�බ������\u0004m��;��z1� \u0000\u0000��\u0003\u0000PK\u0003\u0004\u0014\u0000\u0006\u0000\b\u0000\u0000\u0000!\u0000<]��/\u0001\u0000\u0000s\u0003\u0000\u0000 \u0000\b\u0002_rels/.rels �\u0004\u0002(�\u0000\u0002\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000���J\u00031\u0010��\u0005�!供���Hw{#BAAd}�1�� n2!I�}{�Ң+�ڋ^f���7'd6_��}�\u000f�lɧY�\u0019ZIJ۶�o��䎳\u0010�*��b��\u0018������b\u000f1 �N���� %�bt�B\u0004١���C�: y\u00031 }+ �\u000fhQ\u0014y~+�o\u000f^ <�B��/�\u0015g���)��4Z�\u0003ɥA\u001b\u000f\\!p\u0015�*T\u0013�Ӽ�:m�j�-ƒ+�/� \u00048�%k.\u000e\u0013\u0015�\u0013 �V\u0018�� ���q�g�\u0018\u0003��3���拼\u0012jW ��9Bc��\u0014���$��&\u0001\u0014�ȋ? ��\u0010t\u0012lk=�c?��y �Ӧ�� �\u0011]�3 � ��?\u000f�����T�\u0000\u0000\u0000��\u0003\u0000PK\u0003\u0004\u0014\u0000\u0006\u0000\b\u0000\u0000\u0000!\u0000L��\u0007YH\u0000\u0000\u0005\u0000\u0011\u0000\u0000\u0000word/document.xml�}˒�H��~�� `)ӨJʌ�\u0007� ���6<�SVՕ���c�\u000eA\"\"�E\u0012l����U/g)i#��Z����ԧ�\u0017�'� �o2\u0000\"�@�,�\u0002\u0003\u000f�����׏�{� �u8����$�G?��\u0017蕕�zy?\u001b����>�o�W�d���� �?�zH'�~����� ��yo6LGSK\u00161�\\ݏ{?���N�W����]:L&\u0017ìW��fz�ˇ���M�K/��I\u0010F�׸�{�d\"�\u0017$�/��UY\\��q����^>� �/{wI1M�>���\\\b�t/�͂H���\u0017\u0012�Y\u0014}rQ�R�j� �RA�V\u001b%�j%m�8^�$�Y��V\u0012�,ɩV�\u0006���\u0000���H^�ɋa2�\u0016��ä�m6~# '��:\u001bd�\u0007Y&��b�l�[�\u001aɧ\u0016% i��%��a�O\u0007�?/%��լ\u0018]�ϿY<��~e�/\u000f�'��q���s/ӯ��d:�8����a�Xt�]\u0016�@�c>��e�v\u0018V-M^��\u0017�e_\u0003|\u0019\u000e��ݏ񑢶K���\u001b <��e� \u0007���K���TE,�8� ���d(\u0011���JM�Ը�H�3/�l\u0014�{鑃ż �,��(ݪ��H���czE��=6,>R\u0007�Wf����IE\u0010:��:�Ǘʚ�����\u00157�K�l2M��BhL�7G*�y��R�\u0006`����g���i��\u0016\u0005> ��p|[OP*������^i� U��2��PV)��JhR�2 ����ջ�Q^$�\u0003Y#)���@K����\u0004�:��W}^��q3P?�3K��Wo�\u0011x�� �q,/�W�H�I\u0019\"�p]N�����!t�Ί�<{% ��� _!D=j �8\u0015�7�l0UWb���鷌�\u0017�0\u0019'=�%���f��\u0011\u0005��T�Q_=����\u000795'�ؓ�$\u0012�=���B��\\\u0014e�W����t�J��2�埲a:����[ �a2RuK��ԛd�֋w�h����d������\u0011��XY\u0019mN�/��3.�IZ|I_��9�I-�7�%E� ���O��7+� �����d0�[��_��R/��טV��3� ��>o��ʓ/����̓fG_ϐ�\u0017�8��n��1����\u0006 8a��{��smc ��m|L[R���( 'n��lh~d�/�y�K �k�\u0014��9\\~�⁍^�o dj� �Қ��\u000f3����4�\"2�~�.\u0019�ꩺ �-�\"t�KS�|:�`W��KQ�n ��|VL���k��J�6�� ൕ�6H\u0014a�`]\u0017Yzc��I������4�\u000e���ƚޥV6��ҋ�t�\bh�}��F��}I�qL�1?�\u0005\"�VS��zR �h.\u0007\u0004��ԤR��Kʯ�߼E���f��ȗ�����\u0005�S��Z��",
+    "alert_page_length": 7716
+  },
+  {
+    "index": 6,
+    "alert": {
+      "agent_call_id": "bdbb5a95-68fa-4052-8d67-c0938a750b9d",
+      "run_id": "run-1781727793",
+      "target_id": "naic.e.reinsurance.index",
+      "alert_date_time": "2026-06-17T00:00:00-04:00",
+      "alert_type": "New Agenda & Materials",
+      "alert_title": "Reinsurance (E) Task Force posts agenda and materials for June 22, 2026 meeting",
+      "alert_description": "A new Agenda and Materials PDF was posted for the upcoming June 22, 2026 Reinsurance (E) Task Force meeting concerning derecognized net negative IMR and reinsurance collateral for applicable unauthorized or certified reinsurers.",
+      "alert_url": "https://content.naic.org/cmte_e_reinsurance.htm",
+      "organization": [
+        "Reinsurance (E) Task Force (NAIC RTF)"
+      ],
+      "event_title": "Reinsurance (E) Task Force Meeting",
+      "event_start_date_time": "2026-06-22T12:00:00-04:00",
+      "event_end_date_time": "2026-06-22T13:00:00-04:00",
+      "event_duration": "1 hour",
+      "event_is_full_day": "false",
+      "event_url": "https://naic.webex.com/naic/j.php?MTID=m5ff625edae9c221a9886851abdf84a35",
+      "event_call_in_number_access_code": "N/A",
+      "agenda_item_title_chronicle_topics": [
+        {
+          "agenda_item_title": "Reinsurance collateral treatment of derecognized net negative IMR",
+          "chronicle_topics": [
+            "Negative Interest Maintenance Reserves (IMR)",
+            "Credit for Reinsurance"
+          ],
+          "status": "New"
+        }
+      ],
+      "agenda_item_title_official": [
+        {
+          "official_title": "The purpose of this meeting is to adopt a recommendation to the Statutory Accounting Principles (E) Working Group on the issue of how to treat derecognized net negative IMR (realized losses) in relation to reinsurance collateral required for applicable unauthorized or certified reinsurers.",
+          "status": "New"
+        }
+      ],
+      "library_item_preliminary_title": {
+        "title": "Agenda and Materials for June 22, 2026 Reinsurance (E) Task Force Meeting",
+        "status": "New"
+      },
+      "library_item_url": "https://content.naic.org/sites/default/files/call_materials/rtf-meeting-materials-06-22.pdf",
+      "library_items_file_name": "rtf-meeting-materials-06-22.pdf",
+      "is_the_alert_relevant_for_an_art_newsreel_article": {
+        "details": "true",
+        "status": "Yes"
+      },
+      "bubble_action": {
+        "event": "update",
+        "library_item": "create",
+        "agenda_items": true,
+        "event_preview": {
+          "title": "Reinsurance (E) Task Force Meeting",
+          "start_datetime": "2026-06-22T12:00:00-04:00",
+          "end_datetime": "2026-06-22T13:00:00-04:00",
+          "group": [
+            "Reinsurance (E) Task Force (NAIC RTF)"
+          ],
+          "url": "https://naic.webex.com/naic/j.php?MTID=m5ff625edae9c221a9886851abdf84a35",
+          "call_in": "",
+          "match_key": "Reinsurance (E) Task Force (NAIC RTF) | 2026-06-22",
+          "what_changes": [
+            "Link new agenda/materials documents",
+            "Append agenda items"
+          ],
+          "fields": {
+            "Agenda": "→ Link new agenda/materials documents"
+          },
+          "field_ids": {},
+          "match_search": {
+            "org": "Reinsurance (E) Task Force (NAIC RTF)",
+            "date": "2026-06-22"
+          }
+        },
+        "library_item_preview": {
+          "title": "Agenda and Materials for June 22, 2026 Reinsurance (E) Task Force Meeting",
+          "url": "https://content.naic.org/sites/default/files/call_materials/rtf-meeting-materials-06-22.pdf",
+          "filename": "rtf-meeting-materials-06-22.pdf",
+          "type": "Agenda & Materials",
+          "group": [
+            "Reinsurance (E) Task Force (NAIC RTF)"
+          ],
+          "what_changes": [],
+          "fields": {
+            "Name": "Agenda and Materials for June 22, 2026 Reinsurance (E) Task Force Meeting",
+            "URL": "https://content.naic.org/sites/default/files/call_materials/rtf-meeting-materials-06-22.pdf",
+            "File": "rtf-meeting-materials-06-22.pdf",
+            "Type": "Agenda & Materials",
+            "Organizations": "Reinsurance (E) Task Force (NAIC RTF)",
+            "Status": "Active",
+            "Description": "This document is the agenda and meeting materials for the June 22, 2026 virtual meeting of the Reinsurance (E) Task Force. It includes the meeting logistics, roll call, agenda, and a draft response from the Reinsurance (E) Task Force to the Statutory Accounting Principles (E) Working Group regarding derecognized IMR impact to reinsurance collateral (Ref #2025-22).",
+            "Date": "June 16, 2026",
+            "Doc Type": "Agenda & Materials"
+          },
+          "field_ids": {
+            "name_text": "Agenda and Materials for June 22, 2026 Reinsurance (E) Task Force Meeting",
+            "url_text": "https://content.naic.org/sites/default/files/call_materials/rtf-meeting-materials-06-22.pdf",
+            "file_name_text": "rtf-meeting-materials-06-22.pdf",
+            "organizations_list_custom_organization": [
+              "Reinsurance (E) Task Force (NAIC RTF)"
+            ],
+            "status_option_status": "Active",
+            "description_text": "This document is the agenda and meeting materials for the June 22, 2026 virtual meeting of the Reinsurance (E) Task Force. It includes the meeting logistics, roll call, agenda, and a draft response from the Reinsurance (E) Task Force to the Statutory Accounting Principles (E) Working Group regarding derecognized IMR impact to reinsurance collateral (Ref #2025-22).",
+            "date_date": "June 16, 2026",
+            "type___text_text": "Agenda & Materials"
+          },
+          "match_search": {}
+        },
+        "agenda_item_previews": [],
+        "notes": "New Agenda & Materials"
+      }
+    },
+    "alert_page_content": "Reinsurance (E) Task Force | NAIC Skip to main content Search Search NAIC Search Recommended Insurance Summit International Forum N.A.I.C. Foundation Insurance Departments Contacts Consumer Insurance Search Insurance Terms × Reinsurance (E) Task Force Financial Condition (E) Committee Accounting Practices and Procedures (E) Task Force Blanks (E) Working Group Statutory Accounting Principles (E) Working Group Capital Adequacy (E) Task Force Health Risk-Based Capital (E) Working Group Life Risk-Based Capital (E) Working Group Generator of Economic Scenarios (GOES) (E/A) Subgroup Longevity Risk (E/A) Subgroup Variable Annuities Capital and Reserve (E/A) Subgroup Property and Casualty Risk-Based Capital (E) Working Group Catastrophe Risk (E) Subgroup Risk-Based Capital Investment Risk and Evaluation (E) Working Group Examination Oversight (E) Task Force Electronic Workpaper (E) Working Group Financial Analysis Solvency Tools (E) Working Group Financial Examiners Coordination (E) Working Group Financial Examiners Handbook (E) Technical Group Information Technology (IT) Examination (E) Working Group Financial Analysis (E) Working Group Financial Stability (E) Task Force Macroprudential (E) Working Group Group Capital Calculation (E) Working Group Group Solvency Issues (E) Working Group Own Risk and Solvency Assessment (ORSA) Implementation (E) Subgroup Invested Assets (E) Task Force Credit Rating Provider (E) Working Group Investment Analysis (E) Working Group Investment Designation Analysis (E) Working Group Mutual Recognition of Jurisdictions (E) Working Group NAIC/American Institute of Certified Public Accountants (AICPA) (E) Working Group National Treatment and Coordination (E) Working Group Receivership and Insolvency (E) Task Force Receivership Financial Analysis (E) Working Group Receivership Law (E) Working Group Reinsurance (E) Task Force Reinsurance Financial Analysis (E) Working Group Reciprocal Exchanges (E) Working Group Restructuring Mechanisms (E) Working Group Risk-Focused Surveillance (E) Working Group Risk Retention Group (E) Working Group Valuation Analysis (E) Working Group Reinsurance (E) Task Force Financial Condition (E) Committee Accounting Practices and Procedures (E) Task Force Blanks (E) Working Group Statutory Accounting Principles (E) Working Group Capital Adequacy (E) Task Force Health Risk-Based Capital (E) Working Group Life Risk-Based Capital (E) Working Group Generator of Economic Scenarios (GOES) (E/A) Subgroup Longevity Risk (E/A) Subgroup Variable Annuities Capital and Reserve (E/A) Subgroup Property and Casualty Risk-Based Capital (E) Working Group Catastrophe Risk (E) Subgroup Risk-Based Capital Investment Risk and Evaluation (E) Working Group Examination Oversight (E) Task Force Electronic Workpaper (E) Working Group Financial Analysis Solvency Tools (E) Working Group Financial Examiners Coordination (E) Working Group Financial Examiners Handbook (E) Technical Group Information Technology (IT) Examination (E) Working Group Financial Analysis (E) Working Group Financial Stability (E) Task Force Macroprudential (E) Working Group Group Capital Calculation (E) Working Group Group Solvency Issues (E) Working Group Own Risk and Solvency Assessment (ORSA) Implementation (E) Subgroup Invested Assets (E) Task Force Credit Rating Provider (E) Working Group Investment Analysis (E) Working Group Investment Designation Analysis (E) Working Group Mutual Recognition of Jurisdictions (E) Working Group NAIC/American Institute of Certified Public Accountants (AICPA) (E) Working Group National Treatment and Coordination (E) Working Group Receivership and Insolvency (E) Task Force Receivership Financial Analysis (E) Working Group Receivership Law (E) Working Group Reinsurance (E) Task Force Reinsurance Financial Analysis (E) Working Group Reciprocal Exchanges (E) Working Group Restructuring Mechanisms (E) Working Group Risk-Focused Surveillance (E) Working Group Risk Retention Group (E) Working Group Valuation Analysis (E) Working Group View Membership Report Charges The mission of the Reinsurance (E) Task Force is to monitor and coordinate activities and areas of interest that overlap to some extent the charges of other NAIC groups—specifically, the International Insurance Relations (G) Committee. 2026 Charges The Reinsurance (E) Task Force will: Provide a forum for the consideration of reinsurance-related issues of public policy. Oversee the activities of the Reinsurance Financial Analysis (E) Working Group. Coordinate with the Mutual Recognition of Jurisdictions (E) Working Group on matters regarding reinsurance. Communicate and coordinate with the Federal Insurance Office (FIO), other federal authorities, and international regulators and authorities on matters pertaining to reinsurance. Monitor reinsurance-related activities of other task forces and working groups at the NAIC. Consider any other issues related to Model #785, Model #786 , and Model #787. Monitor the development of international principles, standards, and guidance with respect to reinsurance. This includes, but is not limited to, monitoring the activities of various groups within the International Association of Insurance Supervisors (IAIS), including the Reinsurance and Other Forms of Risk Transfer Subcommittee, the Reinsurance Mutual Recognition Subgroup, and the Reinsurance Transparency Group. Consider the impact of reinsurance-related federal legislation, including, but not limited to, the federal Nonadmitted and Reinsurance Reform Act (NRRA) and the Federal Insurance Office Act, and coordinate any appropriate NAIC action. Continue to monitor the impact of reinsurance-related international agreements, including the “Bilateral Agreement Between the United States of America and the European Union on Prudential Measures Regarding Insurance and Reinsurance” (EU Covered Agreement) and the “Bilateral Agreement Between the United States of America and the United Kingdom on Prudential Measures Regarding Insurance and Reinsurance” (UK Covered Agreement). The following Working Group provides direct support to the Reinsurance (E) Task Force: Reinsurance Financial Analysis (E) Working Group KEY DOCUMENTS OF THE REINSURANCE (E) TASK FORCE Public Notice Certified and Reciprocal Jurisdiction Reinsurers Qualified Jurisdictions Reciprocal Jurisdictions Credit for Reinsurance Model Law (#785) On June 25, 2019, the NAIC Executive (EX) Committee and Plenary adopted revisions to the Credit for Reinsurance Model Law (#785) which incorporate relevant provisions of the Bilateral Agreement Between the United States of America and the European Union on Prudential Measures Regarding Insurance and Reinsurance (\"Covered Agreement\"). Prior adopted revisions to the model are included as a reference. Credit for Reinsurance Model Law (#785): Adopted on 06-25-19 Credit for Reinsurance Model Law (#785): Adopted on 01-08-16 Credit for Reinsurance Model Law (#785): Adopted on 11-06-11 Credit for Reinsurance Model Regulation (#786) On June 25, 2019, the NAIC Executive (EX) Committee and Plenary adopted revisions to the Credit for Reinsurance Model Regulation (#786) which incorporate relevant provisions of the Bilateral Agreement Between the United States of America and the European Union on Prudential Measures Regarding Insurance and Reinsurance (\"Covered Agreement\"). Prior adopted revisions to the model are included as a reference. Credit for Reinsurance Model Regulation (#786): Adopted on 06-25-19 Credit for Reinsurance Model Regulation (#786): Adopted on 11-06-11 Term and Universal Life Insurance Reserve Financing Model Regulation (#787) On December 13, 2016, the NAIC Executive (EX) Committee and Plenary adopted the Term and Universal Life Insurance Reserve Financing Model Regulation (#787). Term and Universal Life Insurance Reserve Financing Model Regulation (#787) Process for Evaluating Qualified and Reciprocal Jurisdictions On August 17, 2021, the NAIC Executive (EX) Committee and Plenary adopted revisions to the Process for Evaluating Qualified and Reciprocal Jurisdictions to incorporate provisions for terminating the status of a qualified jurisdiction or reciprocal jurisdiction and create a passporting process for reciprocal jurisdictions. Process for Evaluating Qualified and Reciprocal Jurisdictions ReFAWG Review Process for Passporting Certified and Reciprocal Jurisdiction Reinsurers On December 16, 2021, the NAIC Executive (EX) Committee and Plenary adopted the ReFAWG Review Process for Passporting Certified and Reciprocal Jurisdiction Reinsurers to clarify the passporting processes for both certified reinsurers and reciprocal jurisdiction reinsurers. ReFAWG Review Process for Passporting Certified and Reciprocal Jurisdiction Reinsurers NAIC List of Reciprocal Jurisdictions NAIC List of Reciprocal Jurisdictions Summary of Findings and Determination for Reciprocal Jurisdictions Bermuda: Bermuda Monetary Authority (BMA) Japan: Financial Services Agency (FSA) Switzerland: Financial Market Supervisory Authority (FINMA) NAIC List of Qualified Jurisdictions NAIC List of Qualified Jurisdictions Summary of Findings and Determination for Qualified Jurisdictions Bermuda: Bermuda Monetary Authority (BMA) France: Autorité de Contrôle Prudentiel et de Résolution (ACPR) Germany: Bundesanstalt für Finanzdienstleistungsaufsicht (BaFin) Ireland: Central Bank of Ireland Japan: Financial Services Agency (FSA) Switzerland: Financial Market Supervisory Authority (FINMA) United Kingdom: Prudential Regulation Authority of the Bank of England Meeting Materials Exposure Drafts Documents Calendar Sort by Date Choose the order in which meetings are listed. Sort by Call Date and Time (field_call_date) Order Oldest to Newest Newest to Oldest Reinsurance (E) Task Force Meeting Public Webex Meeting Monday, June 22, 2026 12:00 PM ET, 11:00 AM CT, 10:00 AM MT, 9:00 AM PT Expected Duration: 1 hour Webex Link The purpose of this meeting is to adopt a recommendation to the Statutory Accounting Principles (E) Working Group on the issue of how to treat derecognized net negative IMR (realized losses) in relation to reinsurance collateral required for applicable unauthorized or certified reinsurers. Agenda and Materials Featured Reinsurance (E) Task Force Public Webex Meeting Monday, March 02, 2026 2:00 PM ET, 1:00 PM CT, 12:00 PM MT, 11:00 AM PT Expected Duration: 60 minutes Webex Link The purpose of this meeting is to consider the adoption of meeting minutes, receive working group reports, and discuss any other matters. Agenda and Materials Minutes There are no meeting materials at this time. See all Current Exposure Drafts Exposure Drafts There are no exposure drafts at this time. Related Documents Uniform Application Checklist for Certified Reinsurers Uniform Checklist for Reciprocal Jurisdiction Reinsurers Form RJ-1 Form CR-1 Form AR-1 Reinsurance Worksheet Instructions for Form CR-F and CR-S, as adopted by the Reinsurance Task Force August 13, 2012. CR-F CR-S Reinsurance Regulatory Modernization Framework Proposal Memorandum - The Sep. 12, 2008 proposal was adopted by the NAIC during the Winter 2008 National Meeting. Captives and Special Purpose Vehicles White Paper 2006 Reinsurance Whitepaper Qualified Financial Institutions List - Insurers (Only AVS+ subscribers have access) Insurance Topics Our improved resource can help you navigate committee-curated topics for a comprehensive understanding. Explore 2019 REVISIONS TO THE CREDIT FOR REINSURANCE MODELS – STATE ADOPTION STATUS Final State Adoption Maps Related NAIC Publications Committee and task force minutes PDF files will be posted to the Interactive Agenda approximately 10 business days after the conclusion of a national meeting. They are posted to the Interactive Agenda for each meeting tab on the Meetings page . The Proceedings of the NAIC are made available after the minutes are adopted at each subsequent meeting and may be accessed via the NAIC Publications page . Contacts Media Inquiries (816) 783-8909 news@naic.org Contacts Jake Stultz Manager II – Accounting Policy 816-783-8481 Dan Schelp Chief Counsel, Regulatory Affairs 816-783-8027 Please see the current Committee List for a complete list of committee members.",
+    "doc_page_content": "%PDF-1.7 %���� 360 0 obj < >stream h��V�N�H\u0010��~\u0004���~�FH!!\u0010i�\"`&����\u0010O�6$������Sm;��E,b���jWUW��ϩX:�8��3!\u0014d`�\b&=g��� f���,�Sz\u0005?� ^�\u0002��0!5�Z&�%_Ǆ�\u0006 �$��K*l\u000fة5�\u00019L�:��� \u00142:�>|�\u0006��켜�DaW��3e���\u0002����bRͧX~\u0019 \u0007��N������q6\\��0��(\u0006���bpͬj ȥ*g�\u0015�����SqW ��uY�\u0015�_���ò�>�ϲ��bZR���^o\u0016�k�f�?!�\u00178��ʻ2���q����32�UR&���[U� 5�G-}��\\OJ�O\u000fF\u0013D��\u000f��E9�V���7Y\\��ȱ\\6 \u0019O{z�\u001b�q�g���q5Y���D�/��e5�mL��q;��\u0019Ί�)��ur��Ϗ ��lt��v�d V�\u0012G���V������\u0007�����Ŭ���� 7�4��h �Mo>���g ���(��.���7��4�6Reu�\\/�쏶`�q|���p\u0017U.�eƅ(\\n�fF�(un������� L�\u0019��a�*j�K#��\u0012!ZD� ��\u000026:�[+�G`�b��V1h�\u0016\u0005�\b� \u0011R�(�ɍu�\u0007 ���&�@�2�\u00042\u0018��\u001ap�5��u�Q\u0006�+n�R�w\"*m�]�Kţ�\u00022@R^�k�N�\u000e\u0014I���\u0017A5{�I�\u0010#�� xr\u0001�L��% � �$s�6��\u0014�\u0006���o�7�,�\u0019�ȥ\u0005' 5\u0002�z\u001b�שv�g\b�ݣ'4\u000fp� m�h: �uA)�S�B�E\u0004BO�UI'� ��hp��\u0002 F��4|\bd�^-�F���2�h� � �\u000e`Ҡ�= �<\b[[\b��i�%��4˰z���+�\u0002��u�� e��ͦ���MfJƳ���y\u0005��I�T�)������U�(�m��T+�J\u0006t� �$�mIh܎\u0004���`\u0019�XZ�cƫ&� �p0���� �f�5E�*�\u0000ga���1,�yZ�v�s��F\u0006��t\"݃��\u0010�4떣�\\+\u0013/\u00198���&F�C�r\u00106���}��� |oC`��q5��W��~Xիu���;�=��I���h]� ���W Z�\u0011�V齠��} �;4�E�}\u0006�b\u000f�g��~���%\u0012 �E�������_�f!�z=s�f <\u0004�g�\bz1��&`�����7�tF45*PE�-AW���^�\u0011M~\u0007M½ M�e4)�og)\u0006G�&��&����\u000e�,f�m,��\u0006�\u0017 ��ې$d��F�z �,� K40���L/��\u0019�.�;�4�ds�E\u0015ƕÅqe�?aX\u0007\u001a������@\u0016ٍ�\u0002�\u0015Ʀ�.�R��w\u000fm{�~\u001bւ��\u001af�+�\u0016d��_\u0002 \u0000!$u� endstream endobj 361 0 obj < >stream h�225Q0P���w,-��/��J�M-V\b��O��w.JM,���sI,I�p�220230347�0�4��50U70P��\u0002���L.�/�O+Y\u0007�^����_�\u0000\u0017S063����OA7����� nV@Q~Jir*Q��d��jh��\u0001\u0004\u0018\u0000�};� endstream endobj 362 0 obj < >stream h�|��n�0 �_�O06i��@\u0011 [=,��\u0000ksh� h����V��l�ӏ\u0016\u0013ק]���H�b��\u0015\u0017�b^̋�eqs],����u��vw\u0007_1�w�G�A�@�(��WN��\u0019t\u0017�/x��r\u0018 S\u0015�{�'~��\u0013\u0006v��&z�}}�x�1\b�����{S��W\u0014^�WPy:\u0010(��\u0007e�J]m�\u000fh\u0017Q)�\u0012m�\u001b����\"����\u000e�KB4VSqy �E �T�.��x�b6_B���\b\u001a����+ d��\u0007\u0013�:��\u0005�󫶎\u0013C�QE��4�؜�R ?-o�6Bg�\u0014`O>�.\u0005쵴��+ �hd�l\b��O�ę�g >stream h�225V0P���w�/�+Q0���L)�62�\u0000�\u0006)\u0018�IS\u0010\u0019� RY�� ���Zlg\u0007\u0010`\u0000��\u000ew endstream endobj 364 0 obj < >stream hެ��O�0\u0010����\u001b�@Z:�1CH\b\u0013�8]\u0006 \u000fƐ���d�H�\u0019���\u0013ծ#�\u0003��Csw��}�Gy8\u0004\u0006<����\u00110���\u0006�=��\u0011p�ġ�x��7d0 �\u0019֥\u0001N繮�K2H�t�p�����Cm��T�db��������0�Z507JJW׮�C�P]ƶL�9ߦ��vY\u001a��C� .1\u0012�^�SY�\u0010?y��\u0004\u0006a5M6 ��2Na�E!-[\u0016���e��&�c����\u0006�P<�\u0015]�\u001aOI�~O/�=��5�X\u0019�I#�\u0007�Mi���`\u0007o���3��<� 6�Y�δ�&�2��u�+θ`b\u0010�\u0011��3��X礲� �$&9�\u0011M�T��!�\u0004����d��;\u000f.�xD\u0010�Gc��n�h����~���[ 0\u0000�N endstream endobj 365 0 obj < >stream hެ�MS�H ��J w/ؒ�s+E-�l*\u0014$K1I�05\u000738��0���J��Gm�\u0013 ӗ=0R�ՏԒ�m�3����`|0$d|4�|2� E�&yCɓI:��3)\u001a�9��Tz1Tת$� \u0019&v��*N�բ�����USũb�*^�X�\u0012 ��Z�b3G�\u0012t\u0015)��H�֪/�c\u001b�CJv��H���'JvI��d?M)�;\u0005�c�Q�!%� \u0006+985f%��6��#�'J�N����4��Tb%'��+9��9\u001a�s�\u0010���*�����J!�OX��]�\b�\u000f�U��)gD2Y�*9�\u0012T�)\u0017%[��\b�ٗU�e�d�4�Z q9\u001b�\u001a�\u0015��ɴe�d�3o� 򾬒�S\u0017�\u0001 9 -�DM i\"dڲSr�S:��W�\u0002I\u0019���/ul� �\u0016�ֹ�.��3�e�9m���yD�V%��6�e� yVE ���rn\u001bo�\u0015M�\u0017�IΝ6�yu� �v|?�m�˧O޵_Ɠ����y�i�6��g�����m�\u0018���dw����b�����.���vl.��Ѧ�Ƌ�U���Q�d����nY/s�uvJ�,\u0019R -����\u00012B�Y�N������ \u0007?\u000e~ �8�q��v��s�{�<x <\u000f�\u0007σ����y�<x\u0001�\u0000^\u0000/�\u0017� �\u0005�\u0002x\u0001�\u0000^\u0004/�\u0017���E�\"x\u0011�\b^\u0004/���K�%�\u0012x �\u0004^\u0002/���K3��\u001a� \u0019R -����\u00012B�G�\u0011x\u0004 �G�\u0011x\u0004 �G�\u0011x ���1x ���1x �'� x\u0002��'� x\u0002 ���ό�f�\u001bƹa�\u001bƹa�\u001bƹa�\u001bƹa�\u001bƹa�\u000f��Ǌ�( ��z��\u0011�G� �z��\u0011�G� �z��\u0011�G� �z��\u0011�G� �z��\u0011�G� �z��\u0011�G� �z��\u0011�G� ��[٥ \u0012A$�H\u0004�\b\"\u0011D\"�D\u0010� \u0012A$�H\u0004�\b\"\u0011D�\u0004 ��,�\u000f}&�3A� �L�g��z\u0018�?��*_�SD���|���c3v��Z��:\u001a��S��4��\u0019 �w�m;�C��M~� m���P-n�m��k���z�]�\u000fm n��GK��^���z�^�",
+    "alert_page_length": 12236
+  },
+  {
+    "index": 7,
+    "alert": {
+      "agent_call_id": "3660f815-7b88-4af2-954a-24770897a7cb",
+      "run_id": "run-1781706216",
+      "target_id": "naic.e.property_casualty_rbc_wg",
+      "alert_date_time": "2026-06-17T00:00:00-04:00",
+      "alert_type": "New Agenda & Materials",
+      "alert_title": "Agenda & materials posted for June 17, 2026 joint P&C RBC Working Group/Catastrophe Risk Subgroup meeting",
+      "alert_description": "A new Agenda & Materials PDF was added for the June 17, 2026 Public Webex joint meeting of the Property and Casualty Risk-Based Capital (E) Working Group and Catastrophe Risk (E) Subgroup.",
+      "alert_url": "https://content.naic.org/committees/e/property-casualty-risk-based-capital-wg",
+      "organization": [
+        "Property & Casualty Risk-Based Capital (E) Working Group (NAIC P&C-RBC-WG)"
+      ],
+      "event_title": "Joint Meeting of the Property and Casualty Risk-Based Capital (E) Working Group and Catastrophe Risk (E) Subgroup",
+      "event_start_date_time": "2026-06-17T14:00:00-04:00",
+      "event_end_date_time": "2026-06-17T15:00:00-04:00",
+      "event_duration": "1 hour",
+      "event_is_full_day": "false",
+      "event_url": "https://naic.webex.com/naic/j.php?MTID=m2c604712eee46b9701868bd04a03b7b5",
+      "event_call_in_number_access_code": "N/A",
+      "agenda_item_title_chronicle_topics": [
+        {
+          "agenda_item_title": "Consider adoption of Proposal 2026-11-P on underwriting risk line 1 factors",
+          "chronicle_topics": [
+            "N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "Consider adoption of Proposal 2025-21-P on premium and loss concentration factors",
+          "chronicle_topics": [
+            "N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "Severe convective storm impact analysis update",
+          "chronicle_topics": [
+            "N/A"
+          ],
+          "status": "New"
+        },
+        {
+          "agenda_item_title": "Climate impact disclosures discussion",
+          "chronicle_topics": [
+            "N/A"
+          ],
+          "status": "New"
+        }
+      ],
+      "agenda_item_title_official": [
+        {
+          "official_title": "Proposal 2026-11-P (Underwriting Risk Line 1 Factors)",
+          "status": "New"
+        },
+        {
+          "official_title": "Proposal 2025-21-P (Premium and Loss Concentration Factors)",
+          "status": "New"
+        },
+        {
+          "official_title": "hear updates on the severe convective storm impact analysis",
+          "status": "New"
+        },
+        {
+          "official_title": "discuss climate impact disclosures",
+          "status": "New"
+        }
+      ],
+      "library_item_preliminary_title": {
+        "title": "Joint Meeting Agenda & Materials - June 17, 2026",
+        "status": "New"
+      },
+      "library_item_url": "https://content.naic.org/sites/default/files/call_materials/jtpccatris-agenda%26aaterials-0617.pdf",
+      "library_items_file_name": "jtpccatris-agenda%26aaterials-0617.pdf",
+      "is_the_alert_relevant_for_an_art_newsreel_article": {
+        "details": "true",
+        "status": "Yes"
+      },
+      "bubble_action": {
+        "event": "update",
+        "library_item": "create",
+        "agenda_items": true,
+        "event_preview": {
+          "title": "Joint Meeting of the Property and Casualty Risk-Based Capital (E) Working Group and Catastrophe Risk (E) Subgroup",
+          "start_datetime": "2026-06-17T14:00:00-04:00",
+          "end_datetime": "2026-06-17T15:00:00-04:00",
+          "group": [
+            "Property & Casualty Risk-Based Capital (E) Working Group (NAIC P&C-RBC-WG)"
+          ],
+          "url": "https://naic.webex.com/naic/j.php?MTID=m2c604712eee46b9701868bd04a03b7b5",
+          "call_in": "",
+          "match_key": "Property & Casualty Risk-Based Capital (E) Working Group (NAIC P&C-RBC-WG) | 2026-06-17",
+          "what_changes": [
+            "Link new agenda/materials documents",
+            "Append agenda items"
+          ],
+          "fields": {
+            "Agenda": "→ Link new agenda/materials documents"
+          },
+          "field_ids": {},
+          "match_search": {
+            "org": "Property & Casualty Risk-Based Capital (E) Working Group (NAIC P&C-RBC-WG)",
+            "date": "2026-06-17"
+          }
+        },
+        "library_item_preview": {
+          "title": "Joint Meeting Agenda & Materials - June 17, 2026",
+          "url": "https://content.naic.org/sites/default/files/call_materials/jtpccatris-agenda%26aaterials-0617.pdf",
+          "filename": "jtpccatris-agenda%26aaterials-0617.pdf",
+          "type": "Agenda & Materials",
+          "group": [
+            "Property & Casualty Risk-Based Capital (E) Working Group (NAIC P&C-RBC-WG)"
+          ],
+          "what_changes": [],
+          "fields": {
+            "Name": "Joint Meeting Agenda & Materials - June 17, 2026",
+            "URL": "https://content.naic.org/sites/default/files/call_materials/jtpccatris-agenda%26aaterials-0617.pdf",
+            "File": "jtpccatris-agenda%26aaterials-0617.pdf",
+            "Type": "Agenda & Materials",
+            "Organizations": "Property & Casualty Risk-Based Capital (E) Working Group (NAIC P&C-RBC-WG)",
+            "Status": "Active",
+            "Description": "This document is the agenda and supporting materials for the June 17, 2026 virtual joint meeting of the Property and Casualty Risk-Based Capital (E) Working Group and the Catastrophe Risk (E) Subgroup. It includes the meeting agenda and attachments for Proposal 2026-11-P and Proposal 2025-21-P.",
+            "Date": "June 11, 2026",
+            "Doc Type": "Agenda & Materials"
+          },
+          "field_ids": {
+            "name_text": "Joint Meeting Agenda & Materials - June 17, 2026",
+            "url_text": "https://content.naic.org/sites/default/files/call_materials/jtpccatris-agenda%26aaterials-0617.pdf",
+            "file_name_text": "jtpccatris-agenda%26aaterials-0617.pdf",
+            "organizations_list_custom_organization": [
+              "Property & Casualty Risk-Based Capital (E) Working Group (NAIC P&C-RBC-WG)"
+            ],
+            "status_option_status": "Active",
+            "description_text": "This document is the agenda and supporting materials for the June 17, 2026 virtual joint meeting of the Property and Casualty Risk-Based Capital (E) Working Group and the Catastrophe Risk (E) Subgroup. It includes the meeting agenda and attachments for Proposal 2026-11-P and Proposal 2025-21-P.",
+            "date_date": "June 11, 2026",
+            "type___text_text": "Agenda & Materials"
+          },
+          "match_search": {}
+        },
+        "agenda_item_previews": [],
+        "notes": "New Agenda & Materials"
+      }
+    },
+    "alert_page_content": "Property and Casualty Risk-Based Capital (E) Working Group | NAIC Skip to main content Search Search NAIC Search Recommended Insurance Summit International Forum N.A.I.C. Foundation Insurance Departments Contacts Consumer Insurance Search Insurance Terms × Property and Casualty Risk-Based Capital (E) Working Group Financial Condition (E) Committee Accounting Practices and Procedures (E) Task Force Blanks (E) Working Group Statutory Accounting Principles (E) Working Group Capital Adequacy (E) Task Force Health Risk-Based Capital (E) Working Group Life Risk-Based Capital (E) Working Group Generator of Economic Scenarios (GOES) (E/A) Subgroup Longevity Risk (E/A) Subgroup Variable Annuities Capital and Reserve (E/A) Subgroup Property and Casualty Risk-Based Capital (E) Working Group Catastrophe Risk (E) Subgroup Risk-Based Capital Investment Risk and Evaluation (E) Working Group Examination Oversight (E) Task Force Electronic Workpaper (E) Working Group Financial Analysis Solvency Tools (E) Working Group Financial Examiners Coordination (E) Working Group Financial Examiners Handbook (E) Technical Group Information Technology (IT) Examination (E) Working Group Financial Analysis (E) Working Group Financial Stability (E) Task Force Macroprudential (E) Working Group Group Capital Calculation (E) Working Group Group Solvency Issues (E) Working Group Own Risk and Solvency Assessment (ORSA) Implementation (E) Subgroup Invested Assets (E) Task Force Credit Rating Provider (E) Working Group Investment Analysis (E) Working Group Investment Designation Analysis (E) Working Group Mutual Recognition of Jurisdictions (E) Working Group NAIC/American Institute of Certified Public Accountants (AICPA) (E) Working Group National Treatment and Coordination (E) Working Group Receivership and Insolvency (E) Task Force Receivership Financial Analysis (E) Working Group Receivership Law (E) Working Group Reinsurance (E) Task Force Reinsurance Financial Analysis (E) Working Group Reciprocal Exchanges (E) Working Group Restructuring Mechanisms (E) Working Group Risk-Focused Surveillance (E) Working Group Risk Retention Group (E) Working Group Valuation Analysis (E) Working Group Property and Casualty Risk-Based Capital (E) Working Group Financial Condition (E) Committee Accounting Practices and Procedures (E) Task Force Blanks (E) Working Group Statutory Accounting Principles (E) Working Group Capital Adequacy (E) Task Force Health Risk-Based Capital (E) Working Group Life Risk-Based Capital (E) Working Group Generator of Economic Scenarios (GOES) (E/A) Subgroup Longevity Risk (E/A) Subgroup Variable Annuities Capital and Reserve (E/A) Subgroup Property and Casualty Risk-Based Capital (E) Working Group Catastrophe Risk (E) Subgroup Risk-Based Capital Investment Risk and Evaluation (E) Working Group Examination Oversight (E) Task Force Electronic Workpaper (E) Working Group Financial Analysis Solvency Tools (E) Working Group Financial Examiners Coordination (E) Working Group Financial Examiners Handbook (E) Technical Group Information Technology (IT) Examination (E) Working Group Financial Analysis (E) Working Group Financial Stability (E) Task Force Macroprudential (E) Working Group Group Capital Calculation (E) Working Group Group Solvency Issues (E) Working Group Own Risk and Solvency Assessment (ORSA) Implementation (E) Subgroup Invested Assets (E) Task Force Credit Rating Provider (E) Working Group Investment Analysis (E) Working Group Investment Designation Analysis (E) Working Group Mutual Recognition of Jurisdictions (E) Working Group NAIC/American Institute of Certified Public Accountants (AICPA) (E) Working Group National Treatment and Coordination (E) Working Group Receivership and Insolvency (E) Task Force Receivership Financial Analysis (E) Working Group Receivership Law (E) Working Group Reinsurance (E) Task Force Reinsurance Financial Analysis (E) Working Group Reciprocal Exchanges (E) Working Group Restructuring Mechanisms (E) Working Group Risk-Focused Surveillance (E) Working Group Risk Retention Group (E) Working Group Valuation Analysis (E) Working Group View Membership Report Charges 2026 Charges The Property and Casualty Risk-Based Capital (E) Working Group will: Evaluate refinements to the existing NAIC RBC formulas implemented in the prior year. Consider improvements and revisions to the various RBC blanks to: 1) conform the RBC blanks to changes made in other areas of the NAIC to promote uniformity; and 2) oversee the development of additional reporting formats within the existing RBC blanks as needs are identified. Any proposal that affects the RBC structure must be adopted no later than May 15 of the reporting year, and any proposal that affects a non-structural change to the RBC Blanks, RBC factors and/or instructions must be adopted no later than June 30 of the reporting year. Adopted changes will be forwarded to the Financial Condition (E) Committee by the next scheduled meeting or conference call. Any adoptions made to the annual financial statement blanks or statutory accounting principles that affect an RBC change adopted by June 30 and result in an amended change may be considered and adopted by July 30, where the Capital Adequacy (E) Task Force votes to pursue by two-thirds consent of members. Monitor changes in accounting and reporting requirements resulting from the adoption and continuing maintenance of the revised Accounting Practices and Procedures Manual (AP&P Manual) to ensure that model laws, publications, formulas, analysis tools, etc. supported by the Task Force continue to meet regulatory objectives. Review the effectiveness of the NAIC’s RBC policies and procedures as they affect the accuracy, audit ability, timeliness of reporting access to RBC results, and comparability among the RBC formulas. Report on data quality problems in the prior year RBC filings at the summer and fall national meetings. The following Subgroup reports to the Property and Casualty Risk-Based Capital (E) Working Group: Catastrophe Risk Subgroup Upcoming Meeting Jt. Meeting of the Property and Casualty Risk-Based Capital (E) Working Group and Catastrophe Risk (E) Subgroup Joint Meeting: Property and Casualty Risk-Based Capital (E) Working Group Catastrophe Risk (E) Subgroup Public Webex Meeting Thursday, July 09, 2026 12:00 PM ET, 11:00 AM CT, 10:00 AM MT, 9:00 AM PT Expected Duration: 1 hour Webex Link The purpose of this meeting is to 1) consider adoption of the Working Group and Subgroup’s May 12 and June 17 minutes; 2) consider adoption of the P/C 2026 Newsletter; 3) discuss P/C 2025 RBC statistics; 4) hear updates on the severe convective storm impact analysis; and 5) discuss climate impact disclosures. Meeting Materials Exposure Drafts Documents Calendar Sort by Date Choose the order in which meetings are listed. Sort by Call Date and Time (field_call_date) Order Oldest to Newest Newest to Oldest Jt. Meeting of the Property and Casualty Risk-Based Capital (E) Working Group and Catastrophe Risk (E) Subgroup Joint Meeting: Property and Casualty Risk-Based Capital (E) Working Group Catastrophe Risk (E) Subgroup Public Webex Meeting Thursday, July 09, 2026 12:00 PM ET, 11:00 AM CT, 10:00 AM MT, 9:00 AM PT Expected Duration: 1 hour Webex Link The purpose of this meeting is to 1) consider adoption of the Working Group and Subgroup’s May 12 and June 17 minutes; 2) consider adoption of the P/C 2026 Newsletter; 3) discuss P/C 2025 RBC statistics; 4) hear updates on the severe convective storm impact analysis; and 5) discuss climate impact disclosures. Jt. Call of the Property and Casualty Risk-Based Capital (E) Working Group and Catastrophe Risk (E) Subgroup Joint Meeting: Property and Casualty Risk-Based Capital (E) Working Group Catastrophe Risk (E) Subgroup Public Webex Meeting Wednesday, June 17, 2026 2:00 PM ET, 1:00 PM CT, 12:00 PM MT, 11:00 AM PT Expected Duration: 1 hour Webex Link The purpose of this meeting is to 1) consider adoption of Proposal 2026-11-P (Underwriting Risk Line 1 Factors); 2) consider adoption of Proposal 2025-21-P (Premium and Loss Concentration Factors); 3) hear updates on the severe convective storm impact analysis; and 4) discuss climate impact disclosures. Agenda & Materials Spring National Meeting Joint Meeting of Catastrophe Risk (E) Subgroup and Property and Casualty Risk-Based Capital (E) Working Group Joint Meeting of Catastrophe Risk (E) Subgroup and Property and Casualty Risk-Based Capital (E) Working Group Monday, March 23, 2026 10:30 AM - 11:30 AM PT Manchester Grand Hyatt—Grand Hall B—Level 1 Agenda Agenda & Materials Summary See all Current Exposure Drafts Exposure Drafts The following documents are exposed for a 30-day comment period ending June 11, 2026 , please submit comments to Eva Yeung . 2026-11-P (Underwriting Risk Line 1 Factors) 2025-21-P (Premium and Loss Concentration Factors) Related Documents RBC Proposal Form RBC Proposal Instructions Bonds Joint Property/Casualty and Health Academy July 30, 2018 Bond Report 2019 Lloyd’s of London Schedule F reporting Guideline 2024 Aggregate Property/Casualty RBC Results 2023 Aggregate Property/Casualty RBC Results Additional Property RBC Guidance Year-end 2009 Property RBC additional deferred tax asset sensitivity test Excel spreadsheet. The spreadsheet would be used for any state that requests a hard copy version or e-mail version of the additional disclosure of the effect the admission of the additional deferred tax has on the RBC calculation. PR026 DTA Sensitivity Spreadsheet Optional year-end 2009 additional guidance for Property RBC page PR013 Miscellaneous Off-Balance Sheet Items regarding the Federal Reserve's Term Asset Loan Facility (TALF) adopted at the 11/3/2009 conference call of the Capital Adequacy (E) Task Force: PR013 TALF Guidance Property and Casualty Risk-Based Capital Newsletter August 2025 September 2024 September 2023 July 2022 July 2021 August 2020 August 2019 August 2018 Insurance Topics Our improved resource can help you navigate committee-curated topics for a comprehensive understanding. Explore Related NAIC Publications Committee and task force minutes PDF files will be posted to the Interactive Agenda approximately 10 business days after the conclusion of a national meeting. They are posted to the Interactive Agenda for each meeting tab on the Meetings page . The Proceedings of the NAIC are made available after the minutes are adopted at each subsequent meeting and may be accessed via the NAIC Publications page . NAIC Model Laws, Regulations, Guidelines and Other Resources Risk-Based Capital Forecasting Contacts Media Inquiries (816) 783-8909 news@naic.org Contacts Eva Yeung Senior Property/Casualty RBC Specialist & Technical Lead 816-783-8407 Maggie Chang Manager II, Solvency Policy 816-783-8976 Please see the current Committee List for a complete list of committee members.",
+    "doc_page_content": "%PDF-1.6 %���� 2611 0 obj < > endobj 2633 0 obj < >/Filter/FlateDecode/ID[<11A9D11B5CF49E4A9A2EC6F1525CA462> ]/Index[2611 38]/Info 2610 0 R/Length 109/Prev 1454927/Root 2612 0 R/Size 2649/Type/XRef/W[1 3 1]>>stream h�bbd`\u0010``b``1\u0002��\u001a`2\u0007D���H&?��\u0016��\u0003,�\u0003Vo\u0002&+��!\u0010�<\u001b�N\u0002��A�3De ���� b{Y\u0003I��� ��4��8 H~�������\u00056\u0007h\u001b��� ?n|\u0006\b0\u0000��\u0012^ endstream endobj startxref 0 %%EOF 2648 0 obj < >stream h�b```b``6c`e`�Pf\u0010a@\u0000\u0011\u0006\u0016\u00066 � Š���2E�i�\u0006�z%\u0007.\u0005�S r� �&� f�������@U��D���'\u0013\u000e�^�k�̙��ޅ\u0019����g���yRbjT센�oW,��v ��u��lȋ �n��ק!��\"e�ł4�\u0014�\u0017�\u001ag8Nx���-�͹qW���Iv�Voz��h��\u0015OV�\\�,\u0012�X�\u000e$��m�M�\u001b�e�λ����;�,�i�Y��� \u0015 B\u0015 � @�� \u000e\"�l\u0006 �\u0001,�\u000ed��\u0018�&� &e���9�l`\u0014\u0002 1\b��8L`yb�\u0001��H\u0006��Vp`20���\u0014�\u0016.`�`P���A�:��\u0007f\u0017\u0006� �i F\u0017����\u0016�h�\u001b=�dc�b�}�ɦ�x�Ab\u0003�n\u0006�\u000fQ� �\u0001g�\u0001��\u0003� \u0003� �B\u0000�\u0003P6ϘA��ɒA4���A��1�A�\u0002\u0013\u000f��\u0002VM�\u0018���\u0017�\u0011[� ڳ H3\u0002�;�.e\u0010�� �3݃�*c\u0010�p HK20L���Nd\u00103J��ex\u0003\u0010`\u0000%�� endstream endobj 2612 0 obj < >/Metadata 143 0 R/OCProperties< >/OCGs[2635 0 R 2636 0 R 2637 0 R]>>/Outlines 195 0 R/Pages 2606 0 R/StructTreeRoot 207 0 R/Type/Catalog>> endobj 2613 0 obj < >/Font< >/XObject< >>>/Rotate 0/StructParents 0/Tabs/S/Type/Page>> endobj 2614 0 obj < >stream hެVmO�8\u0010�+�\bZq~�ciU�/��ӱT� �E|\b��D�&U\u0012V˿�\u0019��/\u0007\u0005z�(��3 �3�<\u0013a�\"�\b#5ᜣ`\bO$ �\b�QH�\u0014\u0002\u0005G\u0014O@P�\u0018�3�\u0013.8\u001a)A�R\u0016%I�aAR�J�w\u0005&�+� z �%����g�k�С�A$� �7'��w\u0005��bZβb\u000e�����\u0004\u0011̀�U�E�eр>�\u0017 OsE���{\u0018�h�F��g��]�\u0005�_Ӆ?\u0019�t�\u001a�� �?4�HA{>��$\u0017����\u001a�\u0012��锿o�4�A\u0007@\u0001ؠ������,:�yv_e�q.�=�JؐE��wC��z��姕m� 7�o�\u000f���M J1F�4`:m\u0017��\u0013FǍ_�M\u0012\u0016\u000f��\u0018t�-����VgQƆ�v�ڣ���k�ћ�h\u0017u�<�gU�t �j}��X3x��ҕ 7�9\u0013�C\biR^\u0017\u0019��\u0007�nB��f�C}+\u0004\u0002~���f�FYh cm \"\u0013C4\u0014�kw\\-L��M[G4T���`\u0010*I��\u000er̉\u00112z�`#\u0018Qp'� X��\b��%�JX/�\u001a��\u0018\u0018A\u001bK\u0012��qf7z�� �\u0007|��\u0003���U���\u0010\u000e8\u0003|�([\u0017�5�\u0003�p^�t�H��\u0007��b�\u0012��{�}�r�9޺\u0012��v�C����l\u0015��/\u0015�1:耫\u0018 \u000ev��]ei�W\u001a�ni �����O��brli$\u0007KCs�[\u001a{� Y\u001a� >stream H�\\��j�@\u0010E���^&��WUu ��� x1\u000f�3 KmG\u0010KB�\u0017���\u001b20\u0006[G���хR����}7���44�0�S׷S�\u000e�� �\u0018�]��k�f�<[~�K=&i\\|�_�p���!�*���\u0017��tw\u000f�v8��$�1�a���{��=<��p\u001bǏp ��2�^�6�bзz�^_�K�eO�6^���S\\����1�b9�)� m��u\u0013��?����g����Y'�o��n�e�S�^OIU��,�����g���\u0002o�[���\u0003��_�o�iU2�Df��spA.�%�\u0004 Y�JV�� �!o\" 3\u0005��LA�0S�)�\u0014d 3\u0005��LA�x�\u0007��\u0005�.|v�� ��e�\u0017� ��\b:\u0011v\"�D؉�\u0013a'�N��(:Q�+��� ���_��W�+��� ���_�p6�\u001b���|c�!ߘo�7�\u001b���|c�!�؏� �^���~ �\u0018�1�c��Џ� C?�~ �\u0018�1��ُG?�� Ξ� Ξ� Ξ� Ξ� Ξ� Ξ� Ξ� �+�Sd9r6�? 0,�S������f��MS ��\u0015��!&����[b F\u0017W��\u0015`\u0000\u000f�\u0005� endstream endobj 2616 0 obj < >stream H�\\��j� \u0010��>� w\u000f�ٜ%P�\u0014r� ��\u0001�NR�\u0019eb\u000ey��6l�\u0003*����s���)d�o ݀\u0019�@�q�\u001b;�\u0011�@�ڂ\u000f. ]��b��\u0002\u000f��q�i��\u0018��\"��w8=�8�Y�W�ȁf8}ކ3�aK�\u001b\u0017� t x��g�^삠+v��!�\u0017a� {Bhk� ��5Y�liFe\u001a�\u000e̓T���?����}YV�-ަ��x��B��� �m̒�N��(\u0001\u0002�}H)&\u0010�,�#�\u0000��o0 endstream endobj 2617 0 obj < >stream H�\\�ێ�0\u0010��y�^�� ��\u0010\u0012EM��C��\u0007�vpI��\u0014���w�c�d�@����W�qu9^l7���\u000f��I��5 ���5�+�:\u001b��0�� ���}�\u0018�� �3�G�33�\u0014�<0vȒY\u0012+f�,���!�^�������\u001b� 1geȲ�$ ������@\\1W��)�S��O��,�Y��\u0015�]��\" �>�|\u0014�(�Q|.E�ڑ[��y(��SI��g���{,u�^��T����\u0006�� L�\u0013� 0\u0000\b��� endstream endobj 2618 0 obj < >stream H��V�r�6\u0010}�W��\u0019B����dƲ��I��5�L�΃jˮ;��������\u0005\b��e�у\b\u0002��ݳ\u0007\u0007����ࡽ�Y^������m�W����bZ7_��t6k�� ���rK�֢*r2F����TB\u001a ������h�n��^=д�o�������k��������i]KRT�$JS& /��B,��BS�N&��$G'�>z9�YӶͺ�0�EUIE�H\u0019m�9-���r-���)�i�v_�R亠�\u0004�8� d�p� V��\u000f~� �I���g*��oA��x��p�\u001a/KQV��!w`�;DLj�Q�8\u000f�J�rg��\u0016\u001b%�}",
+    "alert_page_length": 10891
+  }
+]
