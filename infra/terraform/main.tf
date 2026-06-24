@@ -263,7 +263,16 @@ resource "aws_iam_role_policy" "task" {
         Sid      = "S3ReadArtifacts"
         Effect   = "Allow"
         Action   = ["s3:GetObject"]
-        Resource = "arn:aws:s3:::${aws_s3_bucket.artifacts.id}/*"
+        Resource = [
+          "arn:aws:s3:::${aws_s3_bucket.artifacts.id}/*",
+          "arn:aws:s3:::recordings-bucket-1/*",
+        ]
+      },
+      {
+        Sid      = "S3ListRecordings"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = "arn:aws:s3:::recordings-bucket-1"
       },
       {
         Sid      = "S3WriteArtifacts"
