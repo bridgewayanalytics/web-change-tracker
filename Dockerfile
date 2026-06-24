@@ -2,7 +2,7 @@
 # Uses official Playwright Python base with Chromium pre-installed for reliable ECS runs
 # https://playwright.dev/python/docs/docker
 
-ARG PLAYWRIGHT_VERSION=v1.59.0-noble
+ARG PLAYWRIGHT_VERSION=v1.60.0-noble
 FROM mcr.microsoft.com/playwright/python:${PLAYWRIGHT_VERSION}
 
 WORKDIR /app

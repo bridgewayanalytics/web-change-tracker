@@ -186,7 +186,7 @@ resource "aws_s3_bucket_notification" "recordings" {
 
   lambda_function {
     lambda_function_arn = aws_lambda_function.recording_ingest.arn
-    events              = ["s3:ObjectCreated:Put"]
+    events              = ["s3:ObjectCreated:*"]
     filter_suffix       = ".mp3"
   }
 
