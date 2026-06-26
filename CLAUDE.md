@@ -135,11 +135,15 @@ Ongoing automated evaluation of web tracking agent output. Triggered after each 
 | `eval/html_fetcher.py` | Fetches before/after HTML snapshots from S3 for each row |
 | `eval/context_builder.py` | Searches `art-chronicles` and `art-newsreels` pgvector namespaces for relevant context |
 | `eval/eval_agent.py` | Calls `chat:eval-agent` (DynamoDB config) — one call per row, returns per-field scores |
-| `eval/result_store.py` | Appends results to `alerts/eval_results_table.jsonl`; writes `alerts/eval_results_latest.json` |
+| `eval/result_store.py` | Upserts results into `alerts/eval_results_table.jsonl` keyed by `agent_call_id`; `delete_eval_result()` removes individual entries |
 
 **Agent config:** `chat:eval-agent` in DynamoDB `chatkit_production_config`. System instructions and rubric configured in Bubble admin, same pattern as `web-tracking-agent`.
 
+**Storage:** `alerts/eval_results_table.jsonl` — upsert keyed by `agent_call_id`. Re-running QA on a row replaces its entry (no duplicates). Dashboard DELETE removes individual entries via `eval/result_store.delete_eval_result()`.
+
 **Output schema per row:** original alert fields + `eval_run_id`, `eval_timestamp`, `eval_scores` (dict of field → `{score, reasoning}`), `overall_summary`.
+
+**ECS trigger:** dashboard fires `POST /api/eval { agent_call_id }` → ECS RunTask CMD override `["python", "eval/run_eval.py", "--agent-call-ids", "<id>"]`. Works because `entrypoint.sh` `exec "$@"` when `$1 == python`.
 
 ## Agent configuration (DynamoDB)
 
