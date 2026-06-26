@@ -113,36 +113,33 @@ Full spec: `docs/rerun-feature.md`
 | `scripts/backfill_bubble_action.py` | Backfill `bubble_action` on existing `alerts_table.jsonl` rows using the classifier (idempotent, `--force` to re-classify). Enriches with doc extraction keyed by `library_item_url` (not `agent_call_id`) — required for multi-document page changes where one call_id produces N library items. |
 | `scripts/backfill_recordings.py` | Backfill `recording_s3_key` on alerts that have `event_title`+`event_start_date_time` but no recording match yet. Two-pass: standard find_recording() then filename-based fallback for rows where event date is N/A. |
 | `scripts/backfill_transcripts.py` | Backfill `transcript_s3_key` on alerts that have a `recording_s3_key` but haven't been transcribed yet. Groups by `agent_call_id` to transcribe once per recording. `--local` flag uses local Whisper model. |
-| `scripts/fetch_eval_data.py` | Sample 20 alerts from S3 + scrape live pages for general accuracy eval → `analysis/accuracy_eval/eval_data.json` |
-| `scripts/fetch_eval_data_targeted.py` | Field-specific samples: `--mode chronicle_topics\|events\|documents`. Pulls rows where the target field is actually exercised, eliminating N/A inflation. → `eval_data_<mode>.json` |
-| `scripts/fetch_eval_data_doc_extraction.py` | Sample doc extraction rows (newsreel_relevance, Yes/No balanced) for document agent eval → `eval_data_doc_extraction.json` |
-| `scripts/generate_eval_excel.py` | Generate scored eval Excel workbook from general eval data |
-| `scripts/generate_eval_excel_targeted.py` | Generate scored eval Excel workbook from targeted eval data |
-| `scripts/generate_eval_excel_doc_extraction.py` | Generate scored eval Excel workbook for document extraction agent newsreel accuracy |
+## QA Evaluation Pipeline
 
-## Accuracy Evaluation
+Ongoing automated evaluation of web tracking agent output. Triggered after each Newsreel publication. Evaluates rows where the associated event or library item exists in Bubble (i.e., `bubble_action` is set). One agent call per alert row.
 
-Field-level accuracy results as of June 2026 (see `analysis/accuracy_eval/` for full scoresheets and workbooks):
+**Entry point:** `python3 -m eval.run_eval`
 
-| Field | Accuracy | Notes |
-|-------|----------|-------|
-| Document URL | 100% | |
-| Document Filename | 100% | |
-| Alert Type | 92.5% | Newsroom articles misclassified as New Meeting |
-| Alert Title | 92.5% | |
-| Alert Description | 92.5% | Too brief on multi-RFC pages |
-| Event URL (Webex) | 91.7% | |
-| Organization | 90% | Joint meetings only partially captured |
-| Call-In / Access Code | 83.3% | |
-| Newsreel Relevance | 82.5% | Part 1 of instruction too broad → inflates Yes |
-| Event Start/End Time | 80.8% | "Updated Start Date & Time" narrative breaks datetime parsing |
-| Document Title | 73.3% | Filenames used as titles; agenda PDFs missed |
-| Chronicle Topics | 70% | N/A escape hatch overused; no canonical topic list in prompt |
-| Event Title (format) | 61.5% | No format specified → 4 different invented conventions |
+| Flag | Description |
+|------|-------------|
+| `--limit N` | Evaluate last N eligible rows (default 50) |
+| `--since TIMESTAMP` | Only rows at or after Unix timestamp |
+| `--agent-call-ids a,b` | Evaluate specific rows by agent_call_id |
+| `--dry-run` | Print selected rows without calling agent |
 
-Document extraction agent newsreel relevance: **50%** (targeted eval, June 2026). False positives: scheduling calendars, editorial corrections. False negatives: NAIC advocacy letters to Congress.
+**Pipeline modules (`eval/`):**
 
-Prompt improvement recommendations for all fields below 100%: `analysis/accuracy_eval/prompt_improvement_recommendations_2026_06_24.md`
+| File | Purpose |
+|------|---------|
+| `eval/run_eval.py` | Entry point — orchestrates full eval run |
+| `eval/row_selector.py` | Loads eligible rows from `alerts_table.jsonl` (rows with `bubble_action` set) |
+| `eval/html_fetcher.py` | Fetches before/after HTML snapshots from S3 for each row |
+| `eval/context_builder.py` | Searches `art-chronicles` and `art-newsreels` pgvector namespaces for relevant context |
+| `eval/eval_agent.py` | Calls `chat:eval-agent` (DynamoDB config) — one call per row, returns per-field scores |
+| `eval/result_store.py` | Appends results to `alerts/eval_results_table.jsonl`; writes `alerts/eval_results_latest.json` |
+
+**Agent config:** `chat:eval-agent` in DynamoDB `chatkit_production_config`. System instructions and rubric configured in Bubble admin, same pattern as `web-tracking-agent`.
+
+**Output schema per row:** original alert fields + `eval_run_id`, `eval_timestamp`, `eval_scores` (dict of field → `{score, reasoning}`), `overall_summary`.
 
 ## Agent configuration (DynamoDB)
 
