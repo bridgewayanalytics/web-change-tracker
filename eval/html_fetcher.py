@@ -30,8 +30,15 @@ def _s3_client():
     return boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
 
 
-def _base_key(target_id: str, run_id: str, run_timestamp: int) -> str:
-    dt = datetime.fromtimestamp(int(run_timestamp), tz=timezone.utc)
+def _parse_timestamp(run_timestamp) -> datetime:
+    if isinstance(run_timestamp, str):
+        from datetime import datetime as dt
+        return dt.fromisoformat(run_timestamp.replace("Z", "+00:00")).astimezone(timezone.utc)
+    return datetime.fromtimestamp(int(run_timestamp), tz=timezone.utc)
+
+
+def _base_key(target_id: str, run_id: str, run_timestamp) -> str:
+    dt = _parse_timestamp(run_timestamp)
     return f"pages/{target_id}/{dt.year:04d}/{dt.month:02d}/{dt.day:02d}/{run_id}"
 
 
