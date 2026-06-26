@@ -1,11 +1,13 @@
 """
 Select alert rows eligible for QA evaluation.
 
-Eligible rows: have bubble_action set (classified as applicable for Bubble),
-meaning they represent a real event, library item, or resource — not a
-carousel change or irrelevant alert.
+Eligible rows: ingest_status == "approved" — meaning a human reviewed the
+content and published it (approved for newsreel ingest). At that point the
+newsreel relevance decision has been made and chronicles are updated,
+providing the ground truth context the eval agent needs.
 
-Can be filtered further by date range or limited to a sample size.
+Rows that were only classified (bubble_action set) but never reviewed/approved
+are excluded — there is no human-validated ground truth to evaluate against.
 """
 
 import json
@@ -38,7 +40,7 @@ def load_eligible_rows(
     agent_call_ids: list[str] | None = None,
 ) -> list[dict]:
     """
-    Load alert rows eligible for evaluation.
+    Load alert rows eligible for evaluation (ingest_status == "approved").
 
     Args:
         limit: max rows to return (most recent first)
@@ -66,7 +68,7 @@ def load_eligible_rows(
         except json.JSONDecodeError:
             continue
 
-        if not row.get("bubble_action"):
+        if row.get("ingest_status") != "approved":
             continue
 
         if since_run_timestamp is not None:
