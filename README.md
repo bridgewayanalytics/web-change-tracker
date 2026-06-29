@@ -138,18 +138,23 @@ python scripts/backfill_document_extractions.py --limit 10
 
 All backfill scripts support `--dry-run` and `--limit N`.
 
-### Accuracy eval scripts
+### QA evaluation pipeline
 
-| Script | What it does |
-|--------|-------------|
-| `fetch_eval_data.py` | Sample 20 alerts from S3 + scrape their live pages → `analysis/accuracy_eval/eval_data.json` |
-| `fetch_eval_data_targeted.py` | Field-specific samples (chronicle_topics / events / documents modes) → `eval_data_<mode>.json` |
-| `fetch_eval_data_doc_extraction.py` | Sample doc extraction rows (newsreel_relevance, Yes/No balanced) → `eval_data_doc_extraction.json` |
-| `generate_eval_excel.py` | Scored Excel workbook from general eval data |
-| `generate_eval_excel_targeted.py` | Scored Excel workbook from targeted eval data |
-| `generate_eval_excel_doc_extraction.py` | Scored Excel workbook for doc extraction newsreel accuracy |
+The automated QA eval pipeline lives in `eval/` and runs via ECS RunTask. Use the dashboard "Re-run QA" button per row, or run directly:
 
-Run with `AWS_PROFILE=bridgeway python3 scripts/<script>.py`.
+```bash
+python3 -m eval.run_eval --limit 20        # evaluate 20 most recent approved rows
+python3 -m eval.run_eval --dry-run         # print selected rows without calling agent
+python3 -m eval.run_eval --agent-call-ids a,b  # evaluate specific rows
+```
+
+| Module | Purpose |
+|--------|---------|
+| `eval/run_eval.py` | Entry point; loads OpenAI + DB creds from SSM |
+| `eval/row_selector.py` | Selects `ingest_status == "approved"` rows, deduplicates by `agent_call_id` |
+| `eval/context_builder.py` | Builds eval context: org tree, Bubble ground truth, newsreel backend presence check, semantic search |
+| `eval/eval_agent.py` | Calls `chat:eval-agent` config from DynamoDB |
+| `eval/result_store.py` | Upserts to `alerts/eval_results_table.jsonl` |
 
 ---
 
@@ -273,15 +278,7 @@ python scripts/backfill_alerts.py --dry-run --limit 5            # Test agent pi
 
 ## Accuracy evaluation
 
-Field-level accuracy results and improvement recommendations live in `analysis/accuracy_eval/`:
-
-| File | Contents |
-|------|----------|
-| `scoresheet_2026_06_23.md` | General eval: 20 rows, 85.4% overall, field-by-field breakdown |
-| `accuracy_audit.xlsx` | Scored general eval workbook |
-| `accuracy_audit_targeted.xlsx` | Targeted evals: chronicle topics (70%), events (61.5% on title), documents (73.3% on title) |
-| `accuracy_audit_doc_extraction.xlsx` | Doc extraction agent: newsreel relevance 50% |
-| `prompt_improvement_recommendations_2026_06_24.md` | Field-by-field prompt fixes for all fields below 100% |
+Historical one-time accuracy audits (June 2026) are archived in `analysis/accuracy_eval/`. The production QA evaluation pipeline (`eval/`) is now the live source of truth — results appear on the dashboard alongside each alert row.
 
 ---
 

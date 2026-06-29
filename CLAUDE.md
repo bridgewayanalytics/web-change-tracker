@@ -94,7 +94,7 @@ Full spec: `docs/rerun-feature.md`
 - `bubble/transcriber.py` — `transcribe_recording(recording_s3_key)` converts mp3 → timestamped text via Whisper (`verbose_json` format, `[HH:MM:SS] text` per segment), stores under `transcripts/` in artifacts bucket. `format_with_timestamps(segments)` shared with backfill script.
 - `bubble/newsreel_ingest.py` — `ingest_for_newsreel(document_url, filename)` pushes documents and transcripts (via presigned URL) to ChatKit newsreel-generation knowledge base
 - `bubble/org_tree.py` — `get_org_tree()` fetches the live Bubble org hierarchy (143 orgs) and formats it as dash-depth text for injection into agent context. 30-min in-process cache; falls back to `prompts/org_tree.txt`.
-- `bubble/bubble_sync_classifier.py` — `classify_alert(alert) → BubbleSyncPlan` pure classifier; stamps `bubble_action` on applicable alerts. `enrich_with_doc_extraction(bubble_action, extraction)` merges doc extraction fields (description, date, type, chronicle topics) into previews. No I/O. See `bubble_action` field docs below.
+- `bubble/bubble_sync_classifier.py` — `classify_alert(alert) → BubbleSyncPlan` pure classifier; stamps `bubble_action` on applicable alerts. `enrich_with_doc_extraction(bubble_action, extraction)` merges doc extraction fields (description, date, type, chronicle topics) into previews. No I/O. `_build_agenda_previews()` reads flat-schema `agenda_item_title_chronicle_topics` first, falls back to old nested-schema `agenda_item_title_and_chronicle_topics` for backward compatibility. See `bubble_action` field docs below.
 - `bubble/bubble_sync.py` — `sync_alert(agent_call_id)` real Bubble sync executor: resolves org names → IDs, CREATE/UPDATE libraryitem + calendaritem using `field_ids` from preview, links them via `relevant_resources_list_custom_resource`. Triggered via ECS RunTask from dashboard route.
 - `storage/alert_s3.py` — Alert storage, flat/nested schema detection, Excel export, `patch_jsonl_row()` utility
 - `storage/ingest_actions.py` — Ingest gate: `approve_transcript_ingest()`, `approve_document_ingest()`, `ingest_manual_document_url()`, `reject_ingest()`, `generate_presigned_url()`, `generate_presigned_upload_url()`
@@ -130,10 +130,10 @@ Ongoing automated evaluation of web tracking agent output. Triggered after each 
 
 | File | Purpose |
 |------|---------|
-| `eval/run_eval.py` | Entry point — orchestrates full eval run |
-| `eval/row_selector.py` | Loads eligible rows from `alerts_table.jsonl` (rows with `bubble_action` set) |
+| `eval/run_eval.py` | Entry point — calls `_load_secrets()` to load OpenAI + DB creds from SSM, then orchestrates full eval run |
+| `eval/row_selector.py` | Loads eligible rows from `alerts_table.jsonl` (`ingest_status == "approved"`), deduplicates by `agent_call_id` before applying limit |
 | `eval/html_fetcher.py` | Fetches before/after HTML snapshots from S3 for each row |
-| `eval/context_builder.py` | Searches `art-chronicles` and `art-newsreels` pgvector namespaces for relevant context |
+| `eval/context_builder.py` | Builds multi-section context: (1) live org tree for org field validation, (2) Bubble ground truth (agenda item chronicle topics from `bubble_action`), (3) filename presence check in `newsreel-generation:ART`, (4) semantic search in `ba:chronicles` + `ba:newsreels`, (5) semantic search in `newsreel-generation:ART`. Strips `"NEW ORGANIZATION: "` prefix from org values before building pgvector queries. |
 | `eval/eval_agent.py` | Calls `chat:eval-agent` (DynamoDB config) — one call per row, returns per-field scores |
 | `eval/result_store.py` | Upserts results into `alerts/eval_results_table.jsonl` keyed by `agent_call_id`; `delete_eval_result()` removes individual entries |
 
@@ -143,7 +143,7 @@ Ongoing automated evaluation of web tracking agent output. Triggered after each 
 
 **Output schema per row:** original alert fields + `eval_run_id`, `eval_timestamp`, `eval_scores` (dict of field → `{score, reasoning}`), `overall_summary`.
 
-**ECS trigger:** dashboard fires `POST /api/eval { agent_call_id }` → ECS RunTask CMD override `["python", "eval/run_eval.py", "--agent-call-ids", "<id>"]`. Works because `entrypoint.sh` `exec "$@"` when `$1 == python`.
+**ECS trigger:** dashboard fires `POST /api/eval { agent_call_id }` → ECS RunTask CMD override `["python", "-m", "eval.run_eval", "--agent-call-ids", "<id>"]`. Works because `entrypoint.sh` `exec "$@"` when `$1 == python`. Must use `-m eval.run_eval` (module form), not `eval/run_eval.py` (file form), to resolve internal imports correctly.
 
 ## Agent configuration (DynamoDB)
 
