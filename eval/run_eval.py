@@ -95,7 +95,17 @@ def run(
     return eval_rows
 
 
+def _load_secrets() -> None:
+    try:
+        from bubble.ssm_loader import load_openai_env_from_ssm, load_db_env_from_ssm
+        load_openai_env_from_ssm()
+        load_db_env_from_ssm()
+    except Exception as e:
+        log.debug("SSM loader skipped or failed: %s", e)
+
+
 def main():
+    _load_secrets()
     parser = argparse.ArgumentParser(description="Run QA evaluation pipeline")
     parser.add_argument("--limit", type=int, default=_DEFAULT_LIMIT)
     parser.add_argument("--since", type=int, default=None, dest="since_run_timestamp")
