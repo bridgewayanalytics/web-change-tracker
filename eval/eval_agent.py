@@ -74,10 +74,15 @@ def _build_user_message(
         parts += ["\n" + reference_context]
 
     parts.append(
-        "\nEvaluate every field in the Agent Output above. "
-        "Return a JSON object where each key is a field name and each value is "
-        '{"score": "Correct" | "Partially Correct" | "Incorrect", "reasoning": "<one sentence>"}. '
-        'Include an "overall_summary" key with total counts and any patterns worth noting.'
+        "\nEvaluate every field in the Agent Output above against the HTML snapshots and reference context provided. "
+        "Return a JSON object where each key is a field name and each value is:\n"
+        '{"score": "Correct" | "Partially Correct" | "Incorrect", "reasoning": "<evidence-based explanation>"}\n\n'
+        "Reasoning MUST be auditable — cite specific evidence:\n"
+        "- Quote or reference the HTML or context that supports your score\n"
+        "- For agenda_item_title_chronicle_topics: state what the correct chronicle topics ARE based on the Bubble ground truth and chronicles context, not just whether the agent got them right\n"
+        "- For is_the_alert_relevant_for_an_art_newsreel_article: cite the newsreel backend presence check result and any newsreel/chronicle mentions found — explain the reasoning behind relevance or non-relevance\n"
+        "- If the agent output is wrong, state what the correct answer should be\n\n"
+        'Include an "overall_summary" key: {"correct": N, "partially_correct": N, "incorrect": N, "total": N, "pattern": "<any systematic patterns>"}'
     )
 
     return "\n".join(parts)
