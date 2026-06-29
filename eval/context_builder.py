@@ -65,13 +65,17 @@ WHERE namespace = 'newsreel-generation:ART'
 """
 
 
+def _clean_org(org: str) -> str:
+    return org.removeprefix("NEW ORGANIZATION: ").strip()
+
+
 def _build_query(row: dict) -> str:
     parts = []
     orgs = row.get("organization")
     if isinstance(orgs, list):
-        parts.extend(orgs)
+        parts.extend(_clean_org(o) for o in orgs if o)
     elif isinstance(orgs, str) and orgs:
-        parts.append(orgs)
+        parts.append(_clean_org(orgs))
 
     title = row.get("alert_title", "")
     if title:
@@ -180,9 +184,18 @@ def _extract_bubble_ground_truth(row: dict) -> str:
     return "\n".join(lines)
 
 
+def _get_org_tree() -> str:
+    try:
+        from bubble.org_tree import get_org_tree
+        return get_org_tree()
+    except Exception:
+        return ""
+
+
 def fetch_context(row: dict) -> str:
     """
     Return formatted context for the eval agent:
+    - Org tree (for verifying organization field accuracy)
     - Bubble ground truth (agenda topics from bubble_action)
     - Filename presence check in newsreel-generation:ART
     - Semantic search results from ba:chronicles + ba:newsreels
@@ -226,6 +239,14 @@ def fetch_context(row: dict) -> str:
         filename_found = None
 
     lines = []
+
+    # 0. Org tree — for verifying organization field accuracy
+    org_tree = _get_org_tree()
+    if org_tree:
+        lines.append("## Reference: Valid NAIC Organization Names")
+        lines.append("Use this to verify that the `organization` field contains exact, valid org names from the Bubble hierarchy:\n")
+        lines.append(org_tree)
+        lines.append("")
 
     # 1. Bubble ground truth
     bubble_gt = _extract_bubble_ground_truth(row)

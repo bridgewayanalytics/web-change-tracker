@@ -334,7 +334,7 @@ def _build_library_item_preview(alert: dict, alert_type: str, lib_action: str | 
 
 
 def _build_agenda_previews(alert: dict) -> list[dict]:
-    items = alert.get("agenda_item_title_and_chronicle_topics")
+    items = alert.get("agenda_item_title_chronicle_topics") or alert.get("agenda_item_title_and_chronicle_topics")
     if not isinstance(items, list):
         return []
     result = []
