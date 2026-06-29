@@ -85,8 +85,24 @@ def load_eligible_rows(
     # Most recent first
     rows.sort(key=lambda r: r.get("run_timestamp", 0), reverse=True)
 
-    if limit is not None:
-        rows = rows[:limit]
+    # Deduplicate by agent_call_id — one agent call may produce multiple approved
+    # rows (e.g. multiple library items). Evaluate each agent call only once,
+    # keeping the first (most recent) representative row.
+    seen: set[str] = set()
+    deduped = []
+    for row in rows:
+        cid = row.get("agent_call_id", "")
+        if cid and cid not in seen:
+            seen.add(cid)
+            deduped.append(row)
+        elif not cid:
+            deduped.append(row)
 
-    log.info("Selected %d eligible rows for evaluation", len(rows))
-    return rows
+    if limit is not None:
+        deduped = deduped[:limit]
+
+    log.info(
+        "Selected %d unique agent calls for evaluation (%d total approved rows)",
+        len(deduped), len(rows),
+    )
+    return deduped
