@@ -95,7 +95,7 @@ Full spec: `docs/rerun-feature.md`
 - `bubble/newsreel_ingest.py` — `ingest_for_newsreel(document_url, filename)` pushes documents and transcripts (via presigned URL) to ChatKit newsreel-generation knowledge base
 - `bubble/org_tree.py` — `get_org_tree()` fetches the live Bubble org hierarchy (143 orgs) and formats it as dash-depth text for injection into agent context. 30-min in-process cache; falls back to `prompts/org_tree.txt`.
 - `bubble/bubble_sync_classifier.py` — `classify_alert(alert) → BubbleSyncPlan` pure classifier; stamps `bubble_action` on applicable alerts. `enrich_with_doc_extraction(bubble_action, extraction)` merges doc extraction fields (description, date, type, chronicle topics) into previews. No I/O. `_build_agenda_previews()` reads flat-schema `agenda_item_title_chronicle_topics` first, falls back to old nested-schema `agenda_item_title_and_chronicle_topics` for backward compatibility. See `bubble_action` field docs below.
-- `bubble/bubble_sync.py` — `sync_alert(agent_call_id)` real Bubble sync executor: resolves org names → IDs, CREATE/UPDATE libraryitem + calendaritem using `field_ids` from preview, links them via `relevant_resources_list_custom_resource`. Triggered via ECS RunTask from dashboard route.
+- `bubble/bubble_sync.py` — `sync_alert(agent_call_id)` real Bubble sync executor: resolves org names → IDs, CREATE/UPDATE libraryitem + calendaritem using `field_ids` from preview, links them via `relevant_resources_list_custom_resource` (the write field ID for the `Agenda` display-name field on calendaritem — list of libraryitem IDs). Triggered via ECS RunTask from dashboard route.
 - `storage/alert_s3.py` — Alert storage, flat/nested schema detection, Excel export, `patch_jsonl_row()` utility
 - `storage/ingest_actions.py` — Ingest gate: `approve_transcript_ingest()`, `approve_document_ingest()`, `ingest_manual_document_url()`, `reject_ingest()`, `generate_presigned_url()`, `generate_presigned_upload_url()`
 - `infra/lambda/validate_config_sync/handler.py` — DynamoDB Streams Lambda; auto-corrects `chatkit_production_config` on every Bubble sync (label count, garbage keys, schema normalization, column registry)
@@ -131,15 +131,15 @@ Ongoing automated evaluation of web tracking agent output. Triggered after each 
 | File | Purpose |
 |------|---------|
 | `eval/run_eval.py` | Entry point — calls `_load_secrets()` to load OpenAI + DB creds from SSM, then orchestrates full eval run |
-| `eval/row_selector.py` | Loads eligible rows from `alerts_table.jsonl` (`ingest_status == "approved"`), deduplicates by `agent_call_id` before applying limit |
+| `eval/row_selector.py` | Loads eligible rows from `alerts_table.jsonl` (`ingest_status == "approved"`). Applies limit at the agent-call level but returns ALL rows per selected call (siblings included). Sibling rows share `agent_call_id` and are grouped in `run_eval.py`. |
 | `eval/html_fetcher.py` | Fetches before/after HTML snapshots from S3 for each row |
 | `eval/context_builder.py` | Builds multi-section context: (1) live org tree for org field validation, (2) Bubble ground truth (agenda item chronicle topics from `bubble_action`), (3) filename presence check in `newsreel-generation:ART`, (4) semantic search in `ba:chronicles` + `ba:newsreels`, (5) semantic search in `newsreel-generation:ART`. Strips `"NEW ORGANIZATION: "` prefix from org values before building pgvector queries. |
-| `eval/eval_agent.py` | Calls `chat:eval-agent` (DynamoDB config) — one call per row, returns per-field scores |
-| `eval/result_store.py` | Upserts results into `alerts/eval_results_table.jsonl` keyed by `agent_call_id`; `delete_eval_result()` removes individual entries |
+| `eval/eval_agent.py` | Calls `chat:eval-agent` (DynamoDB config) — one call per row, returns per-field scores. Accepts optional `sibling_rows` list; when present, injects a sibling summary block so the agent knows which other documents came from the same run and doesn't penalize a row for content that belongs to a sibling. |
+| `eval/result_store.py` | Upserts results into `alerts/eval_results_table.jsonl` keyed by `eval_row_key`. Single-row calls: key = `agent_call_id` (backward compatible). Sibling rows: key = `agent_call_id|library_item_url`. `delete_eval_result()` removes all entries for a given `agent_call_id`. |
 
 **Agent config:** `chat:eval-agent` in DynamoDB `chatkit_production_config`. System instructions and rubric configured in Bubble admin, same pattern as `web-tracking-agent`.
 
-**Storage:** `alerts/eval_results_table.jsonl` — upsert keyed by `agent_call_id`. Re-running QA on a row replaces its entry (no duplicates). Dashboard DELETE removes individual entries via `eval/result_store.delete_eval_result()`.
+**Storage:** `alerts/eval_results_table.jsonl` — upsert keyed by `eval_row_key`. Single-row agent calls use `agent_call_id` as the key (backward compatible with prior stored results). Sibling rows (multiple rows sharing one `agent_call_id`) use `agent_call_id|library_item_url` as the key so each gets its own entry. Re-running QA replaces prior entries. Dashboard DELETE removes all entries for a given `agent_call_id` via `eval/result_store.delete_eval_result()`.
 
 **Output schema per row:** original alert fields + `eval_run_id`, `eval_timestamp`, `eval_scores` (dict of field → `{score, reasoning}`), `overall_summary`.
 
@@ -326,9 +326,11 @@ Dashboard shows "Sync to Bubble" button on rows with `bubble_action` set and no 
 1. Resolve org display names → Bubble `_id` values (list all organizations)
 2. If `library_item == "create"`: POST to `libraryitem` with `field_ids`; capture returned ID
 3. If `library_item == "update"`: find by `match_search` (URL then title), PATCH with `field_ids`
-4. If `event == "create"`: POST to `calendaritem` with `field_ids`; set `relevant_resources_list_custom_resource` to library item ID if present
+4. If `event == "create"`: POST to `calendaritem` with `field_ids`; set `relevant_resources_list_custom_resource` to `[library_item_id]` if library item present
 5. If `event == "update"`: find by `match_search` (org + date), PATCH with `field_ids` + library item link
 6. Patch JSONL with `bubble_sync_status: "synced"`, `bubble_event_id`, `bubble_library_item_id`
+
+**Note:** The current executor does NOT sync `agenda_items` (agendaitem records) — it only syncs calendaritem and libraryitem. Agenda item creation/update is deferred to the forthcoming Eidarix sync API (see `docs/bubble_sync_payload_spec.json`). The `agenda_items` list in `bubble_action` is shown in the dashboard preview modal but not executed by `bubble_sync.py`.
 
 ## Conventions
 

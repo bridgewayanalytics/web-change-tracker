@@ -46,11 +46,27 @@ def _get_reasoning_effort() -> str:
     return cfg.get("reasoning_effort") or "low"
 
 
+def _build_sibling_summary(sibling_rows: list[dict]) -> str:
+    """Compact summary of sibling rows — key fields only, no HTML."""
+    lines = []
+    for i, r in enumerate(sibling_rows, 1):
+        lib_title = r.get("library_item_preliminary_title") or {}
+        if isinstance(lib_title, dict):
+            lib_title = lib_title.get("title") or ""
+        lines.append(
+            f"  Row {i}: alert_type={r.get('alert_type')} | "
+            f"library_item={lib_title or r.get('library_items_file_name') or 'N/A'} | "
+            f"library_item_url={r.get('library_item_url') or 'N/A'}"
+        )
+    return "\n".join(lines)
+
+
 def _build_user_message(
     row: dict,
     before_html: str,
     after_html: str,
     reference_context: str,
+    sibling_rows: list[dict] | None = None,
 ) -> str:
     alert_json = json.dumps(
         {k: v for k, v in row.items() if not k.startswith("bubble_action")},
@@ -59,10 +75,19 @@ def _build_user_message(
     )
 
     parts = [
-        "## Agent Output (the alert to evaluate)\n```json",
+        "## Agent Output (the alert row to evaluate)\n```json",
         alert_json,
         "```",
     ]
+
+    if sibling_rows:
+        parts += [
+            f"\n## Sibling Rows from the Same Run ({len(sibling_rows)} other row(s))",
+            "This alert is one of multiple rows produced from the same HTML change. "
+            "The following rows cover the other documents or items detected in the same page update. "
+            "Score ONLY the primary row above. Do NOT penalize it for content that appears on a sibling row.",
+            _build_sibling_summary(sibling_rows),
+        ]
 
     if before_html:
         parts += ["\n## Before HTML (what the page looked like before the change)", before_html]
@@ -93,6 +118,7 @@ def evaluate_row(
     before_html: str,
     after_html: str,
     reference_context: str,
+    sibling_rows: list[dict] | None = None,
 ) -> dict:
     """
     Run the eval agent on one alert row.
@@ -104,7 +130,7 @@ def evaluate_row(
     system_prompt = _get_system_prompt()
     model = _get_model()
     reasoning_effort = _get_reasoning_effort()
-    user_message = _build_user_message(row, before_html, after_html, reference_context)
+    user_message = _build_user_message(row, before_html, after_html, reference_context, sibling_rows)
 
     messages = [
         {"role": "system", "content": system_prompt},

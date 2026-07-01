@@ -6,6 +6,7 @@ Sequence:
   2. Library item: CREATE or find-and-UPDATE (using field_ids from preview)
   3. Calendar item: CREATE or find-and-UPDATE (using field_ids from preview),
      then link the library item via relevant_resources_list_custom_resource
+     (the write field ID for the "Agenda" display-name field — list<libraryitem>)
 
 Finding existing records:
   - calendaritem: match by space + org ID + date range (from match_search in preview)

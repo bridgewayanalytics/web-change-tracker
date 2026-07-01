@@ -1,8 +1,13 @@
 """
 Store QA evaluation results to S3.
 
-Uses eval_results_table.jsonl keyed by agent_call_id (upsert, not append).
-Re-running QA on a row replaces its existing entry.
+Uses eval_results_table.jsonl keyed by eval_row_key (upsert, not append).
+Re-running QA on a row replaces its prior entry.
+
+eval_row_key:
+  - Single-row agent calls: agent_call_id (backward compatible)
+  - Multi-row agent calls (siblings): agent_call_id + "|" + library_item_url
+    Each sibling row gets its own entry, distinguished by library_item_url.
 """
 
 import json
@@ -28,8 +33,18 @@ def _s3_client():
     return boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
 
 
+def _row_key(row: dict) -> str:
+    """
+    Stable unique key per eval row.
+    Single-row agent calls: agent_call_id (backward compatible with prior stored results).
+    Multi-row sibling groups: agent_call_id + "|" + library_item_url.
+    The eval_row_key field is stamped on each row before storage.
+    """
+    return row.get("eval_row_key") or row.get("agent_call_id") or ""
+
+
 def _load_existing(client, bucket: str) -> dict[str, dict]:
-    """Return existing eval results as {agent_call_id: row}."""
+    """Return existing eval results as {eval_row_key: row}."""
     try:
         body = client.get_object(Bucket=bucket, Key=_RESULTS_KEY)["Body"].read().decode("utf-8")
     except Exception:
@@ -41,9 +56,9 @@ def _load_existing(client, bucket: str) -> dict[str, dict]:
             continue
         try:
             r = json.loads(line)
-            cid = r.get("agent_call_id", "")
-            if cid:
-                existing[cid] = r
+            key = _row_key(r)
+            if key:
+                existing[key] = r
         except json.JSONDecodeError:
             pass
     return existing
@@ -64,7 +79,7 @@ def _write(client, bucket: str, rows: dict[str, dict], eval_run_id: str) -> None
 
 def store_eval_results(eval_rows: list[dict], eval_run_id: str) -> None:
     """
-    Upsert eval_rows into eval_results_table.jsonl keyed by agent_call_id.
+    Upsert eval_rows into eval_results_table.jsonl keyed by eval_row_key.
     Re-running QA on the same row replaces the prior entry.
     """
     if not eval_rows:
@@ -76,9 +91,9 @@ def store_eval_results(eval_rows: list[dict], eval_run_id: str) -> None:
     try:
         existing = _load_existing(client, bucket)
         for row in eval_rows:
-            cid = row.get("agent_call_id", "")
-            if cid:
-                existing[cid] = row
+            key = _row_key(row)
+            if key:
+                existing[key] = row
         _write(client, bucket, existing, eval_run_id)
         log.info("Upserted %d eval rows into %s", len(eval_rows), _RESULTS_KEY)
     except Exception as e:
@@ -86,16 +101,22 @@ def store_eval_results(eval_rows: list[dict], eval_run_id: str) -> None:
 
 
 def delete_eval_result(agent_call_id: str) -> None:
-    """Remove the eval result for a given agent_call_id."""
+    """
+    Remove eval result(s) for a given agent_call_id.
+    Deletes all entries whose eval_row_key starts with agent_call_id
+    (covers both single-row and sibling-group entries).
+    """
     bucket = _get_bucket()
     client = _s3_client()
     try:
         existing = _load_existing(client, bucket)
-        if agent_call_id not in existing:
+        keys_to_delete = [k for k in existing if k == agent_call_id or k.startswith(agent_call_id + "|")]
+        if not keys_to_delete:
             log.info("No eval result found for agent_call_id=%s — nothing to delete", agent_call_id)
             return
-        del existing[agent_call_id]
+        for k in keys_to_delete:
+            del existing[k]
         _write(client, bucket, existing, "delete")
-        log.info("Deleted eval result for agent_call_id=%s", agent_call_id)
+        log.info("Deleted %d eval result(s) for agent_call_id=%s", len(keys_to_delete), agent_call_id)
     except Exception as e:
         log.error("Failed to delete eval result for %s: %s", agent_call_id, e)

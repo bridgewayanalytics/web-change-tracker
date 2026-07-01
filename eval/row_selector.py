@@ -85,24 +85,28 @@ def load_eligible_rows(
     # Most recent first
     rows.sort(key=lambda r: r.get("run_timestamp", 0), reverse=True)
 
-    # Deduplicate by agent_call_id — one agent call may produce multiple approved
-    # rows (e.g. multiple library items). Evaluate each agent call only once,
-    # keeping the first (most recent) representative row.
+    # Deduplicate by agent_call_id to count distinct agent calls, then apply limit
+    # at the agent-call level — but return ALL rows per selected call (siblings included).
+    # Siblings share the same agent_call_id and are grouped together in run_eval.py
+    # so the eval agent can score each row with full context of the run.
     seen: set[str] = set()
-    deduped = []
+    selected_call_ids: list[str] = []
     for row in rows:
         cid = row.get("agent_call_id", "")
         if cid and cid not in seen:
             seen.add(cid)
-            deduped.append(row)
+            selected_call_ids.append(cid)
         elif not cid:
-            deduped.append(row)
+            selected_call_ids.append("")
 
     if limit is not None:
-        deduped = deduped[:limit]
+        selected_call_ids = selected_call_ids[:limit]
+
+    selected_set = set(selected_call_ids)
+    result = [r for r in rows if r.get("agent_call_id", "") in selected_set]
 
     log.info(
-        "Selected %d unique agent calls for evaluation (%d total approved rows)",
-        len(deduped), len(rows),
+        "Selected %d agent calls (%d total rows including siblings) for evaluation",
+        len(selected_call_ids), len(result),
     )
-    return deduped
+    return result

@@ -67,28 +67,64 @@ def run(
             }, indent=2))
         return rows
 
+    # Group rows by agent_call_id so siblings are evaluated together.
+    # Siblings share the same HTML — fetch once per group.
+    groups: dict[str, list[dict]] = {}
+    ungrouped: list[dict] = []
+    for row in rows:
+        cid = row.get("agent_call_id", "")
+        if cid:
+            groups.setdefault(cid, []).append(row)
+        else:
+            ungrouped.append(row)
+
+    def _eval_row_key(row: dict, group: list[dict]) -> str:
+        """Stable unique key: agent_call_id alone for single rows, composite for siblings."""
+        cid = row.get("agent_call_id", "")
+        if len(group) > 1:
+            lib_url = str(row.get("library_item_url") or "").strip()
+            return f"{cid}|{lib_url}" if lib_url and lib_url.lower() != "n/a" else f"{cid}|{row.get('alert_title', '')}"
+        return cid
+
     eval_rows = []
-    for i, row in enumerate(rows, 1):
-        call_id = row.get("agent_call_id", "unknown")
-        log.info("[%d/%d] Evaluating agent_call_id=%s", i, len(rows), call_id)
+    group_list = list(groups.values()) + [[r] for r in ungrouped]
+    total_rows = sum(len(g) for g in group_list)
+    evaluated = 0
 
-        before_html, after_html = fetch_html_snapshots(row)
-        reference_context = fetch_context(row)
+    for group in group_list:
+        representative = group[0]
+        call_id = representative.get("agent_call_id", "unknown")
 
-        scores = evaluate_row(
-            row=row,
-            before_html=before_html,
-            after_html=after_html,
-            reference_context=reference_context,
-        )
+        # Fetch HTML once — all siblings share the same run/target/HTML
+        before_html, after_html = fetch_html_snapshots(representative)
+        reference_context = fetch_context(representative)
 
-        eval_row = {
-            **{k: v for k, v in row.items()},
-            "eval_run_id": eval_run_id,
-            "eval_timestamp": eval_timestamp,
-            "eval_scores": scores,
-        }
-        eval_rows.append(eval_row)
+        for row in group:
+            evaluated += 1
+            siblings = [r for r in group if r is not row]
+            log.info(
+                "[%d/%d] Evaluating agent_call_id=%s library_item=%s (%d sibling(s))",
+                evaluated, total_rows, call_id,
+                row.get("library_items_file_name") or row.get("alert_type"), len(siblings),
+            )
+
+            scores = evaluate_row(
+                row=row,
+                before_html=before_html,
+                after_html=after_html,
+                reference_context=reference_context,
+                sibling_rows=siblings if siblings else None,
+            )
+
+            eval_row_key = _eval_row_key(row, group)
+            eval_row = {
+                **{k: v for k, v in row.items()},
+                "eval_run_id": eval_run_id,
+                "eval_timestamp": eval_timestamp,
+                "eval_scores": scores,
+                "eval_row_key": eval_row_key,
+            }
+            eval_rows.append(eval_row)
 
     store_eval_results(eval_rows, eval_run_id)
     log.info("Eval run %s complete — %d rows evaluated", eval_run_id, len(eval_rows))

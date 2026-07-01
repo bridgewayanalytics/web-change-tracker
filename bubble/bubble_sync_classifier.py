@@ -234,7 +234,7 @@ def _build_event_preview(alert: dict, alert_type: str, event_action: str | None)
             # Only change is linking/updating a library item — executor handles this dynamically
             link_label = _EVENT_AGENDA_LINK_LABEL.get(alert_type, "→ Update document reference")
             fields = {"Agenda": link_label}
-            field_ids = {}  # relevant_resources_list_custom_resource filled by executor after lib item
+            field_ids = {}  # relevant_resources_list_custom_resource filled by executor after lib item is created/found
 
     else:
         fields = {}
