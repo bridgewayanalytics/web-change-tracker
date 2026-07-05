@@ -32,6 +32,13 @@ log = logging.getLogger(__name__)
 _ALERTS_TABLE_KEY = "alerts/alerts_table.jsonl"
 _DOC_EXTRACTIONS_KEY = "alerts/document_extractions_table.jsonl"
 
+# Eidarix workflow API — version-aware base URL for write operations
+_EIDARIX_VERSION = os.environ.get("EIDARIX_VERSION", "test")
+_EIDARIX_SPACE_IDS = {
+    "test": "1768998437948x865417918648382000",
+    "live": "1770642377799x775210694699370900",
+}
+
 
 def _get_bucket() -> str:
     return os.environ.get("CHANGELOG_BUCKET") or os.environ.get("BUBBLE_ARTIFACT_BUCKET", "")
@@ -233,6 +240,71 @@ def _clean(field_ids: dict) -> dict:
     return {k: v for k, v in field_ids.items() if v is not None and v != "" and v != []}
 
 
+def _eidarix_wf_post(workflow: str, payload: dict) -> dict:
+    """POST to one of Mori's Eidarix workflow endpoints. Returns the parsed JSON response."""
+    import requests
+    from bubble.bridgemind import BUBBLE_API_KEY
+    version = _EIDARIX_VERSION
+    url = f"https://eidarix.bridgewayanalytics.com/version-{version}/api/1.1/wf/{workflow}/"
+    resp = requests.post(url, json=payload, headers={"Authorization": f"Bearer {BUBBLE_API_KEY}"}, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _create_agenda_items(row: dict, agent_call_id: str, topic_name_to_id: dict[str, str]) -> list[str]:
+    """
+    Create one Eidarix agendaitem per entry in agenda_item_title_chronicle_topics[].
+    Skips N/A entries. Returns list of created Bubble IDs.
+    """
+    agenda_entries = row.get("agenda_item_title_chronicle_topics") or []
+    official_titles = row.get("agenda_item_title_official") or []
+    standardized_ids = row.get("agenda_item_standardized_id") or []
+
+    space_id = _EIDARIX_SPACE_IDS.get(_EIDARIX_VERSION, _EIDARIX_SPACE_IDS["test"])
+    created_ids: list[str] = []
+
+    for i, entry in enumerate(agenda_entries):
+        title = (entry.get("agenda_item_title") or "").strip()
+        if not title or title.upper() == "N/A":
+            continue
+
+        topic_names = entry.get("chronicle_topics") or []
+        topic_ids = [topic_name_to_id[t] for t in topic_names if t in topic_name_to_id]
+
+        off_entry = official_titles[i] if i < len(official_titles) else {}
+        std_entry = standardized_ids[i] if i < len(standardized_ids) else {}
+
+        official_title = (off_entry.get("official_title") or "").strip()
+        reference_id = (std_entry.get("standardized_id") or "").strip()
+        if official_title.upper() == "N/A":
+            official_title = ""
+        if reference_id.upper() == "N/A":
+            reference_id = ""
+
+        payload = {
+            "title": title,
+            "official_title": official_title,
+            "reference_id": reference_id,
+            "chronicle_topics": topic_ids,
+            "alert_id": agent_call_id,
+            "space_id": space_id,
+        }
+
+        try:
+            result = _eidarix_wf_post("create-agenda-item", payload)
+            # Eidarix workflow response: {"bubble_id": "..."}
+            item_id = result.get("bubble_id") or result.get("id") or result.get("_id")
+            if item_id:
+                created_ids.append(item_id)
+                log.info("eidarix: created agenda item '%s' → id=%s", title, item_id)
+            else:
+                log.warning("eidarix: create-agenda-item returned no id for '%s': %s", title, result)
+        except Exception as exc:
+            log.error("eidarix: failed to create agenda item '%s': %s", title, exc)
+
+    return created_ids
+
+
 def sync_alert(agent_call_id: str, action: str = "all") -> dict:
     """
     Execute Bubble sync for an alert identified by agent_call_id.
@@ -292,6 +364,7 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
 
     bubble_library_item_id: str | None = None
     bubble_event_id: str | None = None
+    agenda_item_ids: list[str] = []
 
     # When syncing event-only, carry forward any library item ID already on the row
     # so we can link it to the calendar item.
@@ -302,6 +375,27 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
             log.info("bubble_sync: action=event — linking existing bubble_library_item_id=%s", bubble_library_item_id)
 
     try:
+        # ── Agenda items (Eidarix) ────────────────────────────────────────────
+        # Created first — agenda items → library item → event (Mori's required order)
+        if plan.get("agenda_items") and action in ("all",):
+            # Build topic name→ID map from the row's agenda item entries
+            agenda_entries = row.get("agenda_item_title_chronicle_topics") or []
+            all_topic_names = list({
+                t
+                for entry in agenda_entries
+                for t in (entry.get("chronicle_topics") or [])
+                if isinstance(t, str)
+            })
+            topic_name_to_id: dict[str, str] = {}
+            if all_topic_names:
+                from bubble.bridgemind import TYPE_CHRONICLE_TOPIC, SPACE_CONSTRAINT
+                for topic in client.list_all(TYPE_CHRONICLE_TOPIC, constraints=SPACE_CONSTRAINT):
+                    name = (topic.get("Title") or "").strip()
+                    if name in all_topic_names:
+                        topic_name_to_id[name] = topic.get("_id") or ""
+            agenda_item_ids = _create_agenda_items(row, agent_call_id, topic_name_to_id)
+            log.info("bubble_sync: created %d agenda item(s) via Eidarix", len(agenda_item_ids))
+
         # ── Library item ─────────────────────────────────────────────────────
         if run_lib:
             if lib_action == "create":
@@ -364,6 +458,8 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
         patch_fields["bubble_event_id"] = bubble_event_id
     if bubble_library_item_id and run_lib:
         patch_fields["bubble_library_item_id"] = bubble_library_item_id
+    if agenda_item_ids:
+        patch_fields["eidarix_agenda_item_ids"] = agenda_item_ids
 
     if patch_fields:
         patched = patch_jsonl_row(
@@ -382,4 +478,5 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
         "plan": plan,
         "bubble_event_id": bubble_event_id,
         "bubble_library_item_id": bubble_library_item_id,
+        "eidarix_agenda_item_ids": agenda_item_ids,
     }
