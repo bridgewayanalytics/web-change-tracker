@@ -87,7 +87,7 @@ Full spec: `docs/rerun-feature.md`
 - `targets.json` — Target URL config with extract rules per URL
 - `config/run_spec.py` — RunSpec: single source of truth for runtime behavior
 - `config/chatkit_config.py` — Loads agent config from DynamoDB `chatkit_production_config`
-- `bubble/page_change_agent.py` — Page change RAG agent (`extract_page_change()`, `_unwrap_alerts()`, `_sanitize_schema_for_openai()`, `get_config_hash()`). Calls `get_org_tree()` on every invocation to inject the live Bubble org hierarchy into the agent's user message.
+- `bubble/page_change_agent.py` — Page change RAG agent (`extract_page_change()`, `_unwrap_alerts()`, `_sanitize_schema_for_openai()`, `get_config_hash()`). Calls `get_org_tree()` on every invocation to inject the live Bubble org hierarchy into the agent's user message. Also injects the current pipeline run time (Eastern Time) into the context block so the agent can accurately output `alert_date_time`.
 - `bubble/document_agent.py` — Document matching RAG agent (`extract_document_data(document_name, document_url, pdf_text=None, text_limit=None)`, two-step pgvector enforcement). Also used for transcript extraction with `text_limit=40_000` — `extraction_source: "transcript"` distinguishes those rows in `document_extractions_table.jsonl`.
 - `bubble/openai_client.py` — OpenAI Responses API client; `chat_json()` supports both `json_object` and `json_schema` structured outputs
 - `bubble/recording_matcher.py` — `find_recording(event_title, event_start_date_time)` matches alerts to mp3s in `recordings-bucket-1` by date + acronym scoring

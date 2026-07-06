@@ -1,13 +1,13 @@
 {
-  "_version": "1.1",
-  "_date": "2026-06-30",
-  "_description": "Specification for the JSON payload the Alert Tool sends to the Eidarix sync API. One payload per alert row. The Eidarix processor handles field name mapping, ID resolution (org names → Bubble IDs, topic names → Bubble IDs), and record linking.",
+  "_version": "1.2",
+  "_date": "2026-07-06",
+  "_description": "Specification for the JSON payload the Alert Tool sends to the Eidarix sync API. One payload per alert row. The Eidarix processor handles field name mapping and record linking.",
 
   "_processing_rules": [
-    "1. ORDERING: library_item is always processed before event, event before agenda_items. Order is fixed.",
-    "2. LINKING (handled by processor, no field needed): After library_item CREATE, new ID is added to calendaritem.Agenda. After agenda_item CREATEs, their IDs are added to calendaritem.attached_agenda_items and libraryitem.Agenda_items.",
-    "3. UPDATE requires a 'match' block. CREATE must not have a 'match' block. Null or absent section = skip.",
-    "4. 'organizations' and 'chronicle_topics' are plain name strings — processor resolves to Bubble IDs.",
+    "1. ORDERING: agenda_items are always processed first, then library_item, then event. This is because the event and library item need to reference the agenda item IDs created in step 1.",
+    "2. LINKING (handled by processor, no field needed): After agenda_item CREATEs, their IDs are added to calendaritem.attached_agenda_items and libraryitem.Agenda_items. After library_item CREATE, new ID is added to calendaritem.Agenda.",
+    "3. UPDATE requires a 'match' block with the Bubble unique ID returned when the record was first created. CREATE must not have a 'match' block. Null or absent section = skip.",
+    "4. 'organizations' are plain name strings — processor resolves to Bubble IDs. 'chronicle_topics' are Bubble unique ID strings (fetched from Eidarix API at runtime).",
     "5. 'alert_id' and 'alert_type' are for tracing only — not written to Bubble.",
     "6. Fields marked AUTO are set by Bubble's own workflows and should NOT be included in the payload.",
     "7. agenda_items are ALWAYS 'create' — never updated. An updated agenda means new items were added to the revised PDF; existing agendaitem records in Bubble are not mutated."
@@ -48,12 +48,11 @@
       "organizations":         "array of org name strings",
       "location_url":          "string — Webex or other meeting URL, or null",
       "phone_and_access_code": "string — dial-in number + access code, or null",
-      "chronicle_topics":      "array of chronicle topic name strings",
+      "chronicle_topics":      "array of Bubble chronicle topic ID strings (fetched from Eidarix /obj/chronicletopic at runtime)",
       "timezone":              "always America/New_York",
       "event_description":     "string — plain text description of the event/change, or null",
       "_match_fields_for_update": {
-        "organization":        "primary org name — used to find the existing record in Bubble",
-        "date":                "YYYY-MM-DD — used to find the existing record in Bubble"
+        "bubble_id":           "Bubble unique ID returned by the create response — primary and only match key for updates"
       }
     },
 
@@ -62,23 +61,23 @@
       "url":                   "string — direct URL to the document, or null if transcript",
       "file_name":             "string — filename, e.g. vm22_exposure_draft.pdf",
       "organizations":         "array of org name strings",
-      "item_type":             "string — one of: Agenda, Materials, Meeting Transcript, RFC, Report, Other. Maps to 'Type - DT' lookup.",
+      "item_type":             "string — valid Bubble type values TBD with Mori. Maps to 'Type - DT' lookup.",
       "date":                  "YYYY-MM-DD — document publication date or associated meeting date",
-      "date_display":          "string — one of: Full date, Month Year, Year. Use 'Full date' when exact date is known. Note: Bubble stores this as 'Month, Year' (with comma) but use plain strings here; processor maps to Bubble option values.",
-      "chronicle_topics":      "array of chronicle topic name strings",
+      "date_display":          "string — one of: Full date, Month Year, Year. Use 'Full date' when exact date is known.",
+      "chronicle_topics":      "array of Bubble chronicle topic ID strings (fetched from Eidarix /obj/chronicletopic at runtime)",
+      "hidden":                "boolean — true for transcripts (hidden by default), false otherwise",
       "status":                "always Active for new items",
       "summary":               "string — AI-generated document summary, or null",
       "_match_fields_for_update": {
-        "url":                 "exact URL — primary match key",
-        "title":               "title string — fallback match key if URL is absent or changed"
+        "bubble_id":           "Bubble unique ID returned by the create response — primary and only match key for updates"
       }
     },
 
     "agendaitem (Agenda Item)": {
       "title":                 "string — our preliminary/BA title for the agenda item. Maps to 'BA title'.",
       "official_title":        "string — NAIC official title. Maps to 'NAIC Title'. Null if unknown.",
-      "reference_id":          "string — our standardized reference ID, e.g. LATF#APF-2025-14. Maps to 'BA Ref #'. Null if unknown.",
-      "chronicle_topics":      "array of chronicle topic name strings",
+      "reference_id":          "string — standardized reference ID in format ORG_ABBREV#TopicKeyword, e.g. LATF#APF-2025-14. Maps to 'BA Ref #'. Null if unknown.",
+      "chronicle_topics":      "array of Bubble chronicle topic ID strings (fetched from Eidarix /obj/chronicletopic at runtime)",
       "_action":               "always 'create' — agenda items are never updated in place. A revised agenda adds new items; it does not mutate existing records.",
       "_note": "Agenda items are always linked to both the event (calendaritem.attached_agenda_items) and the library item (libraryitem.Agenda_items) by the processor."
     }
@@ -161,7 +160,7 @@
     "3_new_agenda_and_materials": {
       "_alert_type": "New Agenda & Materials",
       "_description": "Agenda PDF posted for the first time. Library item created, existing event updated and linked. Agenda line items created and linked to both event and library item.",
-      "_processing_order": "Step 1: CREATE library_item → get ID. Step 2: UPDATE event, processor links library_item ID into event.Agenda. Step 3: CREATE each agenda_item, processor links IDs into event.attached_agenda_items and library_item.Agenda_items.",
+      "_processing_order": "Step 1: CREATE each agenda_item → get IDs. Step 2: CREATE library_item → get ID, processor links agenda_item IDs into library_item.Agenda_items. Step 3: UPDATE event, processor links library_item ID into event.Agenda and agenda_item IDs into event.attached_agenda_items.",
       "alert_id": "98fd7948-f232-470c-8bc9-e025cb752dec",
       "alert_type": "New Agenda & Materials",
       "library_item": {
