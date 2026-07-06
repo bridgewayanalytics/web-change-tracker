@@ -495,12 +495,22 @@ def extract_page_change(
         group = target_context.get("group", "")
         tags = target_context.get("tags", [])
 
+        from datetime import datetime
+        try:
+            from zoneinfo import ZoneInfo
+            _et = ZoneInfo("America/New_York")
+        except ImportError:
+            import pytz
+            _et = pytz.timezone("America/New_York")
+        run_time_et = datetime.now(tz=_et).isoformat(timespec="seconds")
+
         context_block = (
             f"Page: {label}\n"
             f"URL: {url}\n"
             f"Org path: {' > '.join(org_path) if isinstance(org_path, list) else org_path}\n"
             f"Group: {group}\n"
-            f"Tags: {', '.join(tags) if isinstance(tags, list) else tags}"
+            f"Tags: {', '.join(tags) if isinstance(tags, list) else tags}\n"
+            f"Pipeline run time (Eastern): {run_time_et}"
         )
 
         output_schema = _get_output_schema_str()
