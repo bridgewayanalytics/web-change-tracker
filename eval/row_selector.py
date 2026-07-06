@@ -151,6 +151,10 @@ def load_eligible_rows(
                 rows.append(row)
             continue
 
+        # Transcript alert rows have no ground truth in Bubble — skip
+        if row.get("alert_type") == "New Meeting Transcript Available":
+            continue
+
         # Must have bubble_action set (classifier determined it should be in Bubble)
         if not row.get("bubble_action"):
             continue
