@@ -74,4 +74,29 @@ def fetch_html_snapshots(row: dict) -> tuple[str, str]:
 
     before = _get(f"{base}/before.html")
     after = _get(f"{base}/after.html")
+
+    # Fallback: if run_timestamp was updated by a rerun, the date-derived path is wrong.
+    # Search S3 for the actual location of this run_id.
+    if not before and not after:
+        actual_base = _find_base_key(client, bucket, target_id, run_id)
+        if actual_base and actual_base != base:
+            log.debug("html_fetcher: fallback path %s", actual_base)
+            before = _get(f"{actual_base}/before.html")
+            after = _get(f"{actual_base}/after.html")
+
     return before, after
+
+
+def _find_base_key(client, bucket: str, target_id: str, run_id: str) -> str | None:
+    """Search S3 for the actual date path when run_timestamp-derived path misses."""
+    paginator = client.get_paginator("list_objects_v2")
+    prefix = f"pages/{target_id}/"
+    try:
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+                if key.endswith(f"/{run_id}/before.html"):
+                    return key[: -len("/before.html")]
+    except Exception as e:
+        log.warning("html_fetcher: S3 search failed for target_id=%s run_id=%s: %s", target_id, run_id, e)
+    return None
