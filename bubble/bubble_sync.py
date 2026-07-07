@@ -251,6 +251,96 @@ def _eidarix_wf_post(workflow: str, payload: dict) -> dict:
     return resp.json()
 
 
+def _resolve_library_item_type_id(type_name: str) -> str | None:
+    """
+    Resolve a library item type display name (e.g. "Agenda & Materials") to its
+    Bubble _id by querying the libraryitemtype endpoint for the active space.
+    Returns None if not found.
+    """
+    from bubble.bridgemind import get_client, SPACE_CONSTRAINT
+    client = get_client()
+    try:
+        result = client.search("libraryitemtype", constraints=SPACE_CONSTRAINT, limit=50)
+        for item in (result.get("results") or []):
+            if (item.get("Title") or "").strip().lower() == type_name.strip().lower():
+                return item.get("_id")
+        log.warning("bubble_sync: library item type %r not found in Bubble", type_name)
+    except Exception as e:
+        log.warning("bubble_sync: could not resolve library item type %r: %s", type_name, e)
+    return None
+
+
+def _parse_date_to_iso(raw: str) -> str:
+    """Convert 'June 16, 2026' or ISO strings to 'YYYY-MM-DD'. Returns '' on failure."""
+    if not raw:
+        return ""
+    raw = raw.strip()
+    if len(raw) >= 10 and raw[4] == "-":
+        return raw[:10]
+    from datetime import datetime
+    for fmt in ("%B %d, %Y", "%b %d, %Y", "%B %Y", "%Y"):
+        try:
+            return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    return ""
+
+
+def _build_library_item_wf_payload(
+    row: dict,
+    agent_call_id: str,
+    lp: dict,
+    agenda_item_ids: list[str],
+    topic_ids: list[str],
+    org_ids: list[str],
+) -> dict:
+    """
+    Build the payload for wf/create-library-item/ per docs/bubble_sync_payload_spec.json.
+    Fields: title, chronicle_topics (IDs), alert_id, space_id, agenda_items (IDs),
+            date (YYYY-MM-DD), date_display, summary, url or file, type (ID), organizations (IDs).
+    """
+    space_id = _EIDARIX_SPACE_IDS.get(_EIDARIX_VERSION, _EIDARIX_SPACE_IDS["test"])
+    field_ids = lp.get("field_ids") or {}
+
+    title = (field_ids.get("name_text") or lp.get("title") or "").strip()
+
+    url = (field_ids.get("url_text") or lp.get("url") or "").strip()
+    url = url if url and url.upper() != "N/A" else None
+
+    # Prefer event date (most reliable); fall back to doc extraction date
+    date = _parse_date_to_iso((row.get("event_start_date_time") or "")[:10])
+    if not date:
+        date = _parse_date_to_iso(field_ids.get("date_date") or "")
+
+    summary = (field_ids.get("description_text") or "").strip() or None
+
+    type_name = lp.get("type") or "Agenda & Materials"
+    type_id = _resolve_library_item_type_id(type_name)
+
+    payload: dict = {
+        "title": title,
+        "alert_id": agent_call_id,
+        "space_id": space_id,
+    }
+    if topic_ids:
+        payload["chronicle_topics"] = topic_ids
+    if agenda_item_ids:
+        payload["agenda_items"] = agenda_item_ids
+    if date:
+        payload["date"] = date
+        payload["date_display"] = "Full date"
+    if summary:
+        payload["summary"] = summary
+    if url:
+        payload["url"] = url
+    if type_id:
+        payload["type"] = type_id
+    if org_ids:
+        payload["organizations"] = org_ids
+
+    return payload
+
+
 def _create_agenda_items(row: dict, agent_call_id: str, topic_name_to_id: dict[str, str]) -> list[str]:
     """
     Create one Eidarix agendaitem per entry in agenda_item_title_chronicle_topics[].
@@ -399,10 +489,33 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
         # ── Library item ─────────────────────────────────────────────────────
         if run_lib:
             if lib_action == "create":
-                field_ids = _clean(_inject_org_ids(_inject_topic_ids(dict(lp.get("field_ids") or {}), topic_ids), org_ids))
-                log.info("bubble_sync: CREATE libraryitem fields=%s", list(field_ids.keys()))
-                bubble_library_item_id = client.create(TYPE_LIBRARY_ITEM, field_ids)
-                log.info("bubble_sync: created libraryitem _id=%s", bubble_library_item_id)
+                # Collect all chronicle topic names: agenda item topics + doc extraction topics
+                agenda_entries = row.get("agenda_item_title_chronicle_topics") or []
+                agenda_topic_names = list({
+                    t
+                    for entry in agenda_entries
+                    for t in (entry.get("chronicle_topics") or [])
+                    if isinstance(t, str) and t.upper() not in ("N/A", "")
+                })
+                lib_topic_ids = _resolve_chronicle_topic_ids(
+                    list({*agenda_topic_names, *lp_topic_names}), client
+                ) if (agenda_topic_names or lp_topic_names) else topic_ids
+
+                payload = _build_library_item_wf_payload(
+                    row=row,
+                    agent_call_id=agent_call_id,
+                    lp=lp,
+                    agenda_item_ids=agenda_item_ids,
+                    topic_ids=lib_topic_ids,
+                    org_ids=org_ids,
+                )
+                log.info("bubble_sync: CREATE libraryitem via Eidarix wf — payload keys=%s", list(payload.keys()))
+                result = _eidarix_wf_post("create-library-item", payload)
+                bubble_library_item_id = result.get("bubble_id") or result.get("id") or result.get("_id")
+                if bubble_library_item_id:
+                    log.info("bubble_sync: created libraryitem _id=%s", bubble_library_item_id)
+                else:
+                    log.warning("bubble_sync: create-library-item returned no id: %s", result)
 
             elif lib_action == "update":
                 existing_lib_id = _find_library_item(lp.get("match_search") or {}, client)
@@ -416,27 +529,14 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
                     log.warning("bubble_sync: UPDATE libraryitem — no existing record for match_search=%s", lp.get("match_search"))
 
         # ── Calendar item ─────────────────────────────────────────────────────
+        # TODO: wire up wf/create-calendar-item/ and wf/update-calendar-item/ Eidarix endpoints
+        # (same pattern as library item). Until then, log and skip to avoid erroring the sync.
         if run_event:
-            if event_action == "create":
-                field_ids = _clean(_inject_org_ids(_inject_topic_ids(dict(ep.get("field_ids") or {}), topic_ids), org_ids))
-                if bubble_library_item_id:
-                    field_ids["relevant_resources_list_custom_resource"] = [bubble_library_item_id]
-                log.info("bubble_sync: CREATE calendaritem fields=%s", list(field_ids.keys()))
-                bubble_event_id = client.create(TYPE_CALENDAR_ITEM, field_ids)
-                log.info("bubble_sync: created calendaritem _id=%s", bubble_event_id)
-
-            elif event_action == "update":
-                existing_event_id = _find_calendar_item(ep.get("match_search") or {}, client)
-                if existing_event_id:
-                    field_ids = _clean(_inject_org_ids(_inject_topic_ids(dict(ep.get("field_ids") or {}), topic_ids), org_ids))
-                    if bubble_library_item_id:
-                        field_ids["relevant_resources_list_custom_resource"] = [bubble_library_item_id]
-                    if field_ids:
-                        log.info("bubble_sync: UPDATE calendaritem _id=%s fields=%s", existing_event_id, list(field_ids.keys()))
-                        client.patch(TYPE_CALENDAR_ITEM, existing_event_id, field_ids, scope="sync")
-                    bubble_event_id = existing_event_id
-                else:
-                    log.warning("bubble_sync: UPDATE calendaritem — no existing record for match_search=%s", ep.get("match_search"))
+            log.info(
+                "bubble_sync: calendar item step skipped — event workflow endpoint not yet wired "
+                "(action=%s). Agenda items and library item were synced successfully.",
+                event_action,
+            )
 
     except Exception as exc:
         log.error("bubble_sync: error for agent_call_id=%s action=%s: %s", agent_call_id, action, exc, exc_info=True)

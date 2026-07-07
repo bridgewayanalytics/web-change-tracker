@@ -95,7 +95,7 @@ Full spec: `docs/rerun-feature.md`
 - `bubble/newsreel_ingest.py` — `ingest_for_newsreel(document_url, filename)` pushes documents and transcripts (via presigned URL) to ChatKit newsreel-generation knowledge base
 - `bubble/org_tree.py` — `get_org_tree()` fetches the live Bubble org hierarchy (143 orgs) and formats it as dash-depth text for injection into agent context. 30-min in-process cache; falls back to `prompts/org_tree.txt`.
 - `bubble/bubble_sync_classifier.py` — `classify_alert(alert) → BubbleSyncPlan` pure classifier; stamps `bubble_action` on applicable alerts. `enrich_with_doc_extraction(bubble_action, extraction)` merges doc extraction fields (description, date, type, chronicle topics) into previews. No I/O. `_build_agenda_previews()` reads flat-schema `agenda_item_title_chronicle_topics` first, falls back to old nested-schema `agenda_item_title_and_chronicle_topics` for backward compatibility. See `bubble_action` field docs below.
-- `bubble/bubble_sync.py` — `sync_alert(agent_call_id)` real Bubble sync executor. Processing order: (1) agenda items via Eidarix workflow API, (2) library item via Bubble Data API, (3) calendar item via Bubble Data API. Resolves org names → IDs and chronicle topic names → IDs via Bubble Data API. Writes via `relevant_resources_list_custom_resource` to link library items to calendar items. Stamps `eidarix_agenda_item_ids`, `bubble_library_item_id`, `bubble_event_id` on the alert row. Triggered via ECS RunTask from dashboard route. `EIDARIX_VERSION` env var controls test vs live (default: `"test"`).
+- `bubble/bubble_sync.py` — `sync_alert(agent_call_id)` real Bubble sync executor. Processing order: (1) agenda items via `wf/create-agenda-item/`, (2) library item via `wf/create-library-item/`, (3) calendar item via workflow (not yet wired — skipped with log). All writes go through Mori's Eidarix workflow endpoints, NOT the Bubble Data API directly. Resolves org names → IDs and chronicle topic names → IDs; resolves library item type name → ID via `libraryitemtype` endpoint. Stamps `eidarix_agenda_item_ids`, `bubble_library_item_id`, `bubble_event_id` on the alert row. Triggered via ECS RunTask from dashboard route. `EIDARIX_VERSION` env var controls test vs live (default: `"test"`). Full payload spec: `docs/bubble_sync_payload_spec.json`.
 - `storage/alert_s3.py` — Alert storage, flat/nested schema detection, Excel export, `patch_jsonl_row()` utility
 - `storage/ingest_actions.py` — Ingest gate: `approve_transcript_ingest()`, `approve_document_ingest()`, `ingest_manual_document_url()`, `reject_ingest()`, `generate_presigned_url()`, `generate_presigned_upload_url()`
 - `infra/lambda/validate_config_sync/handler.py` — DynamoDB Streams Lambda; auto-corrects `chatkit_production_config` on every Bubble sync (label count, garbage keys, schema normalization, column registry)
@@ -323,21 +323,23 @@ The `match_search` dict is used by the executor to find existing records before 
 Dashboard shows "Sync to Bubble" button on rows with `bubble_action` set and no `bubble_sync_status`. Clicking opens a preview modal showing exact field values (CREATE/UPDATE cards) before confirming. After confirm, `/api/bubble/sync` fires an ECS RunTask (same cluster as reruns) that runs `bubble_sync.sync_alert(agent_call_id)`.
 
 **Executor sequence in `bubble_sync.py`:**
-1. Resolve org display names → Bubble `_id` values; resolve chronicle topic names → Bubble `_id` values (both via Bubble Data API, space-constrained)
-2. If `agenda_items == true`: POST each agenda item to Eidarix workflow endpoint `version-{EIDARIX_VERSION}/api/1.1/wf/create-agenda-item/`. Payload: `{title, official_title, reference_id, chronicle_topics: [ids], alert_id, space_id}`. Response: `{"bubble_id": "..."}`. Collected IDs stamped as `eidarix_agenda_item_ids`.
-3. If `library_item == "create"`: POST to `libraryitem` with `field_ids`; capture returned ID
-4. If `library_item == "update"`: find by `match_search` (URL then title), PATCH with `field_ids`
-5. If `event == "create"`: POST to `calendaritem` with `field_ids`; set `relevant_resources_list_custom_resource` to `[library_item_id]` if library item present
-6. If `event == "update"`: find by `match_search` (org + date), PATCH with `field_ids` + library item link
-7. Patch JSONL with `bubble_sync_status: "synced"`, `bubble_event_id`, `bubble_library_item_id`, `eidarix_agenda_item_ids`
+1. Resolve org display names → Bubble `_id` values (via `/obj/organization`, space-constrained); resolve chronicle topic names → `_id` values (via `/obj/chronicletopic`, space-constrained)
+2. If `agenda_items == true`: POST each to `wf/create-agenda-item/`. Payload: `{title, official_title, reference_id, chronicle_topics: [ids], alert_id, space_id}`. Response: `{"bubble_id": "..."}`. IDs collected as `agenda_item_ids` for step 3.
+3. If `library_item == "create"`: POST to `wf/create-library-item/`. Payload: `{title, url, chronicle_topics: [ids], organizations: [ids], type: type_id, agenda_items: [ids_from_step2], date: "YYYY-MM-DD", date_display, summary, alert_id, space_id}`. `type` ID resolved at runtime from `/obj/libraryitemtype`. Chronicle topics = union of all agenda item topics + doc extraction topics.
+4. If `library_item == "update"`: find existing record by URL/title via Bubble Data API, PATCH via Data API (TODO: migrate to workflow)
+5. If `event == "create"` or `"update"`: **calendar item workflow not yet wired** — step is logged and skipped. To be implemented as `wf/create-calendar-item/` and `wf/update-calendar-item/`.
+6. Patch JSONL with `bubble_sync_status: "synced"`, `bubble_event_id`, `bubble_library_item_id`, `eidarix_agenda_item_ids`
 
 **Eidarix API:**
-- Base URL: `https://eidarix.bridgewayanalytics.com/version-{version}/api/1.1/`
-- Auth: `Authorization: Bearer <BUBBLE_API_KEY>` (same key as Bubble Data API, from `bubble/bridgemind.py`)
+- Workflow base URL (writes): `https://eidarix.bridgewayanalytics.com/version-{version}/api/1.1/wf/`
+- Data API base URL (reads/lookups): `https://eidarix.bridgewayanalytics.com/api/1.1/obj/` (no version — use space constraint to target correct space)
+- Auth: `Authorization: Bearer <BUBBLE_API_KEY>` (from `bubble/bridgemind.py`)
 - Space IDs: test = `1768998437948x865417918648382000`, live = `1770642377799x775210694699370900`
 - `EIDARIX_VERSION` env var switches test/live (default: `"test"`)
-- Chronicle topic IDs for agenda items are fetched from Bubble Data API (`/obj/chronicletopic`) filtered by space, then mapped name→ID at runtime
+- **File upload** (transcripts): `POST https://eidarix.bridgewayanalytics.com/version-{version}/fileupload` — multipart/form-data with `private=false`, `name=filename`, `contents=file_binary`
+- Full payload spec and examples: `docs/bubble_sync_payload_spec.json`
 - Agenda item field mapping: `title` ← `agenda_item_title_chronicle_topics[i].agenda_item_title`, `official_title` ← `agenda_item_title_official[i].official_title`, `reference_id` ← `agenda_item_standardized_id[i].standardized_id` (skips N/A)
+- **`organizations` in workflow payloads** = Bubble `_id` strings (executor resolves names→IDs before calling workflow). **`chronicle_topics`** = Bubble `_id` strings. **`type`** (library item) = Bubble `_id` from `libraryitemtype` lookup.
 
 ## Conventions
 
