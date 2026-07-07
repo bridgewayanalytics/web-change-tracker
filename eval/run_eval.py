@@ -137,7 +137,9 @@ def _load_secrets() -> None:
         load_openai_env_from_ssm()
         load_db_env_from_ssm()
     except Exception as e:
-        log.debug("SSM loader skipped or failed: %s", e)
+        log.warning("SSM loader failed — running without loaded secrets: %s", e)
+    if not os.environ.get("OPENAI_API_KEY"):
+        log.warning("OPENAI_API_KEY not set after secret loading — eval agent calls will fail")
 
 
 def main():
