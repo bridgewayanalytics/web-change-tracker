@@ -6,6 +6,10 @@
 
 set -e
 
+# Ensure /app is always on PYTHONPATH so sub-commands like
+# "python -m eval.run_eval" can import bubble.*, eval.*, etc.
+export PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}"
+
 # Map env aliases to app-native vars (if native var not already set)
 [[ -n "${DDB_TABLE:-}" && -z "${STATE_TABLE:-}" ]] && export STATE_TABLE="$DDB_TABLE"
 [[ -n "${S3_BUCKET:-}" && -z "${CHANGELOG_BUCKET:-}" ]] && export CHANGELOG_BUCKET="$S3_BUCKET"
