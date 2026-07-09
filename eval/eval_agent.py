@@ -11,7 +11,7 @@ import logging
 
 log = logging.getLogger(__name__)
 
-_CHAT_ID = "eval-agent"
+_CHAT_ID = "web-extraction-qa-agent"
 
 _FALLBACK_SYSTEM_PROMPT = """\
 You are a QA evaluation agent. Evaluate the accuracy of each field in the
