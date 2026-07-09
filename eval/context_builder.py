@@ -16,6 +16,7 @@ if present on the row.
 import asyncio
 import logging
 import os
+from urllib.parse import urlparse
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +64,21 @@ WHERE namespace = 'newsreel-generation:ART'
   AND metadata->>'title' ILIKE $1
   AND (expires_at IS NULL OR expires_at > NOW())
 """
+
+_SQL_URL_CHECK = """
+SELECT COUNT(*) AS cnt
+FROM documents
+WHERE namespace = 'newsreel-generation:ART'
+  AND source_uri ILIKE $1
+  AND (expires_at IS NULL OR expires_at > NOW())
+"""
+
+
+def _url_basename(url: str) -> str:
+    try:
+        return urlparse(url).path.rstrip("/").split("/")[-1] or ""
+    except Exception:
+        return ""
 
 
 def _clean_org(org: str) -> str:
@@ -137,16 +153,38 @@ async def _search_async(query: str, namespaces: list[str], n: int) -> list[dict]
         await close_pg_pool()
 
 
-async def _check_filename_async(filename: str) -> bool:
+async def _check_presence_async(filename: str, url: str) -> tuple[bool, str]:
+    """
+    Returns (found, matched_on) where matched_on is 'filename', 'url_basename', or 'url'.
+    Checks: filename → URL basename (same logic as newsreel_ingest) → source_uri.
+    """
     from bubble.pgvector.client import init_pg_pool, get_pg_pool, close_pg_pool
 
     await init_pg_pool()
     try:
         pool = get_pg_pool()
         if pool is None:
-            return False
-        row = await pool.fetchrow(_SQL_FILENAME_CHECK, filename)
-        return (row["cnt"] > 0) if row else False
+            return False, ""
+
+        if filename and filename not in ("N/A", "-", ""):
+            row = await pool.fetchrow(_SQL_FILENAME_CHECK, filename)
+            if row and row["cnt"] > 0:
+                return True, "filename"
+
+        # Same fallback logic as newsreel_ingest.py: use URL basename as effective filename
+        basename = _url_basename(url) if url and url not in ("N/A", "-", "") else ""
+        if basename and basename != filename:
+            row = await pool.fetchrow(_SQL_FILENAME_CHECK, basename)
+            if row and row["cnt"] > 0:
+                return True, "url_basename"
+
+        # Source URI match
+        if url and url not in ("N/A", "-", ""):
+            row = await pool.fetchrow(_SQL_URL_CHECK, url)
+            if row and row["cnt"] > 0:
+                return True, "url"
+
+        return False, ""
     finally:
         await close_pg_pool()
 
@@ -213,30 +251,38 @@ def fetch_context(row: dict) -> str:
     async def _noop() -> None:
         return None
 
+    lib_filename = row.get("library_items_file_name", "")
+    lib_url = row.get("library_item_url", "")
+    has_library_item = (
+        (lib_filename and lib_filename not in ("N/A", "-", ""))
+        or (lib_url and lib_url not in ("N/A", "-", ""))
+    )
+
     async def _gather():
         cn_task = _search_async(query, _CHRONICLE_NEWSREEL_NS, _MAX_RESULTS)
         backend_task = _search_async(query, _BACKEND_NS, 4)
-        filename = row.get("library_items_file_name", "")
-        filename_check_task = (
-            _check_filename_async(filename)
-            if filename and filename not in ("N/A", "-", "")
+        presence_task = (
+            _check_presence_async(lib_filename, lib_url)
+            if has_library_item
             else _noop()
         )
-        return await asyncio.gather(cn_task, backend_task, filename_check_task,
+        return await asyncio.gather(cn_task, backend_task, presence_task,
                                     return_exceptions=True)
 
     try:
-        cn_results, backend_results, filename_found = asyncio.run(_gather())
+        cn_results, backend_results, presence_result = asyncio.run(_gather())
     except Exception as e:
         log.warning("pgvector context fetch failed: %s", e)
-        cn_results, backend_results, filename_found = [], [], None
+        cn_results, backend_results, presence_result = [], [], None
 
     if isinstance(cn_results, Exception):
         cn_results = []
     if isinstance(backend_results, Exception):
         backend_results = []
-    if isinstance(filename_found, Exception):
-        filename_found = None
+    if isinstance(presence_result, Exception):
+        presence_result = None
+
+    presence_found, presence_matched_on = presence_result if isinstance(presence_result, tuple) else (None, "")
 
     lines = []
 
@@ -253,20 +299,27 @@ def fetch_context(row: dict) -> str:
     if bubble_gt:
         lines.append(bubble_gt)
 
-    # 2. Newsreel backend presence check (filename-based)
-    filename = row.get("library_items_file_name", "")
-    if filename and filename not in ("N/A", "-", ""):
+    # 2. Newsreel backend presence check
+    if has_library_item:
         lines.append("## Newsreel Backend Presence Check")
-        if filename_found:
+        display_name = lib_filename if lib_filename and lib_filename not in ("N/A", "-", "") else lib_url
+        if presence_found:
+            matched_desc = {
+                "filename": f"filename \"{lib_filename}\"",
+                "url_basename": f"URL basename \"{_url_basename(lib_url)}\"",
+                "url": f"source URL \"{lib_url}\"",
+            }.get(presence_matched_on, display_name)
             lines.append(
-                f"**FOUND**: The file \"{filename}\" IS present in the newsreel-generation backend "
-                f"(newsreel-generation:ART). This document was ingested for newsreel creation."
+                f"**FOUND** (matched on {matched_desc}): This document IS present in the "
+                f"newsreel-generation backend (newsreel-generation:ART) and was ingested for newsreel creation."
+            )
+        elif presence_found is False:
+            lines.append(
+                f"**NOT FOUND**: \"{display_name}\" was NOT found in the newsreel-generation backend. "
+                f"It may not have been ingested yet, or the URL/filename differs from what was submitted."
             )
         else:
-            lines.append(
-                f"**NOT FOUND**: The file \"{filename}\" was NOT found in the newsreel-generation backend. "
-                f"It may not have been ingested, or the filename may differ slightly."
-            )
+            lines.append("Presence check unavailable (pgvector connection failed).")
         lines.append("")
 
     # 3. Chronicle and newsreel article context
