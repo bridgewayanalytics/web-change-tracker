@@ -324,11 +324,12 @@ Dashboard shows "Sync to Bubble" button on rows with `bubble_action` set and no 
 
 **Executor sequence in `bubble_sync.py`:**
 1. Resolve org display names → Bubble `_id` values (via `/obj/organization`, space-constrained); resolve chronicle topic names → `_id` values (via `/obj/chronicletopic`, space-constrained)
-2. If `agenda_items == true`: POST each to `wf/create-agenda-item/`. Payload: `{title, official_title, reference_id, chronicle_topics: [ids], alert_id, space_id}`. Response: `{"bubble_id": "..."}`. IDs collected as `agenda_item_ids` for step 3.
+2. If `agenda_items == true`: POST each to `wf/create-agenda-item/`. Payload: `{title, official_title, reference_id, chronicle_topics: [ids], alert_id, space_id}`. Response: `{"bubble_id": "..."}`. IDs collected as `agenda_item_ids` for steps 3 and 4.
 3. If `library_item == "create"`: POST to `wf/create-library-item/`. Payload: `{title, url, chronicle_topics: [ids], organizations: [ids], type: type_id, agenda_items: [ids_from_step2], date: "YYYY-MM-DD", date_display, summary, alert_id, space_id}`. `type` ID resolved at runtime from `/obj/libraryitemtype`. Chronicle topics = union of all agenda item topics + doc extraction topics.
 4. If `library_item == "update"`: find existing record by URL/title via Bubble Data API, PATCH via Data API (TODO: migrate to workflow)
-5. If `event == "create"` or `"update"`: **calendar item workflow not yet wired** — step is logged and skipped. To be implemented as `wf/create-calendar-item/` and `wf/update-calendar-item/`.
-6. Patch JSONL with `bubble_sync_status: "synced"`, `bubble_event_id`, `bubble_library_item_id`, `eidarix_agenda_item_ids`
+5. If `event == "create"`: POST to `wf/create-event`. Payload: `{chronicle_topics: [ids], alert_id, space_id, agenda_items: [ids_from_step2], agenda: [library_item_id_from_step3], start_datetime, end_datetime, location_url, phone_and_access_code, type: type_id, organizations: [ids]}`. `type` ID resolved at runtime from `/obj/calendaritemtype` (see known issues below). `agenda` = list of library item Bubble IDs. `agenda_items` = list of agenda item Bubble IDs.
+6. If `event == "update"`: same payload as create, routed to `wf/update-event` (endpoint TBD from Mori).
+7. Patch JSONL with `bubble_sync_status: "synced"`, `bubble_event_id`, `bubble_library_item_id`, `eidarix_agenda_item_ids`
 
 **Eidarix API:**
 - Workflow base URL (writes): `https://eidarix.bridgewayanalytics.com/version-{version}/api/1.1/wf/`
@@ -339,7 +340,39 @@ Dashboard shows "Sync to Bubble" button on rows with `bubble_action` set and no 
 - **File upload** (transcripts): `POST https://eidarix.bridgewayanalytics.com/version-{version}/fileupload` — multipart/form-data with `private=false`, `name=filename`, `contents=file_binary`
 - Full payload spec and examples: `docs/bubble_sync_payload_spec.json`
 - Agenda item field mapping: `title` ← `agenda_item_title_chronicle_topics[i].agenda_item_title`, `official_title` ← `agenda_item_title_official[i].official_title`, `reference_id` ← `agenda_item_standardized_id[i].standardized_id` (skips N/A)
-- **`organizations` in workflow payloads** = Bubble `_id` strings (executor resolves names→IDs before calling workflow). **`chronicle_topics`** = Bubble `_id` strings. **`type`** (library item) = Bubble `_id` from `libraryitemtype` lookup.
+- **`organizations` in workflow payloads** = Bubble `_id` strings (executor resolves names→IDs before calling workflow). **`chronicle_topics`** = Bubble `_id` strings. **`type`** (library item and event) = Bubble `_id` from type lookup endpoint.
+
+**Eidarix workflow endpoints (confirmed working as of 2026-07-08):**
+| Endpoint | Method | Purpose | Status |
+|----------|--------|---------|--------|
+| `wf/create-agenda-item/` | POST | Create agenda item | ✅ Working |
+| `wf/create-library-item/` | POST | Create library item | ✅ Working |
+| `wf/create-event` | POST | Create calendar event | 🔲 Pending test (blocked on calendaritemtype) |
+| `obj/libraryitemtype` | GET | Resolve library item type name → ID | ✅ Working |
+| `obj/calendaritemtype` | GET | Resolve event type name → ID | ❌ Returns 404 "Type not found" on both version-test and version-live — awaiting Mori fix |
+| `obj/chronicletopic` | GET | Resolve chronicle topic name → ID | ✅ Working |
+| `obj/organization` | GET | Resolve org name → ID | ✅ Working (test space only has 3 placeholder orgs — real NAIC orgs only in live) |
+
+**Test run results (2026-07-08, version-test space):**
+- Row 1: Reinsurance (E) Task Force — June 22, 2026 meeting (`agent_call_id: bdbb5a95-68fa-4052-8d67-c0938a750b9d`)
+  - Agenda item created: `1783443783207x526404831658494850` — "Reinsurance collateral treatment of derecognized net negative IMR"
+  - Library item created: `1783443784335x202353868930715620` — "Agenda and Materials for June 22, 2026 Reinsurance (E) Task Force Meeting"
+  - Chronicle topics sent: `1772364054767x145757227501820640` (Negative Interest Maintenance Reserves), `1772364053949x539517646942305700` (Credit for Reinsurance)
+  - Organizations: empty — "Reinsurance (E) Task Force (NAIC RTF)" not in test space
+- Row 2: RBC Investment Risk & Evaluation WG — June 23, 2026 meeting (`agent_call_id: c986df63-5b93-48ab-9e18-987e9f963324`)
+  - Agenda item created: `1783443787240x479948023981900740` — "CLO RBC factor proposal"
+  - Library item created: `1783443788905x770165781732295300` — "RBCIREWG 06-23-26 Agenda & Materials"
+  - Chronicle topics sent: `1772364051422x161004932788948450` (Collateralized Loan Obligations)
+  - Missing topic: "RBC Covariance & Asset Concentration Risk" — not found in test space; correct name is "Life RBC Covariance & Asset Concentration Risk"
+  - Organizations: empty — "Risk Based Capital Investment Risk & Evaluation (E) Working Group (NAIC RBC-IRE-WG)" not in test space
+- Event creation: not yet tested — blocked on `calendaritemtype` endpoint being 404
+
+**Known issues / gaps in Eidarix integration (as of 2026-07-09):**
+1. **`calendaritemtype` endpoint 404** — `GET /version-{version}/api/1.1/obj/calendaritemtype` returns "Type not found" on both test and live. Reported to Mori. Blocks event creation test.
+2. **Organizations empty in test space** — test space has only 3 placeholder orgs. Real NAIC org names only exist in live space. Organization field will be empty in all test-space syncs.
+3. **Chronicle topic name mismatch** — agent outputs "RBC Covariance & Asset Concentration Risk" but the correct Bubble name is "Life RBC Covariance & Asset Concentration Risk". Executor does exact-match lookup; fix is to normalize/fuzzy-match or update the agent instructions to use the full name.
+4. **`wf/update-event` endpoint** — not yet provided by Mori. Required for alert types where `event == "update"`.
+5. **Orphan agenda item** — `1783442800085x...` created during a failed first test run (before library item fix). Left in test space; Mori aware.
 
 ## Conventions
 

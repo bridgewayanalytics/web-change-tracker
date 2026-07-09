@@ -1,16 +1,76 @@
 {
-  "_version": "1.2",
-  "_date": "2026-07-06",
+  "_version": "1.3",
+  "_date": "2026-07-09",
   "_description": "Specification for the JSON payload the Alert Tool sends to the Eidarix sync API. One payload per alert row. The Eidarix processor handles field name mapping and record linking.",
 
+  "_eidarix_endpoints": {
+    "create_agenda_item":  "POST https://eidarix.bridgewayanalytics.com/version-{version}/api/1.1/wf/create-agenda-item/  — WORKING",
+    "create_library_item": "POST https://eidarix.bridgewayanalytics.com/version-{version}/api/1.1/wf/create-library-item/  — WORKING",
+    "create_event":        "POST https://eidarix.bridgewayanalytics.com/version-{version}/api/1.1/wf/create-event  — PENDING TEST (blocked on calendaritemtype)",
+    "update_event":        "POST https://eidarix.bridgewayanalytics.com/version-{version}/api/1.1/wf/update-event  — ENDPOINT TBD from Mori",
+    "lookup_libraryitemtype":  "GET https://eidarix.bridgewayanalytics.com/api/1.1/obj/libraryitemtype?constraints=[space filter]  — WORKING",
+    "lookup_calendaritemtype": "GET https://eidarix.bridgewayanalytics.com/version-{version}/api/1.1/obj/calendaritemtype?constraints=[space filter]  — 404 TYPE NOT FOUND, awaiting Mori fix",
+    "lookup_chronicletopic":   "GET https://eidarix.bridgewayanalytics.com/api/1.1/obj/chronicletopic?constraints=[space filter]  — WORKING",
+    "lookup_organization":     "GET https://eidarix.bridgewayanalytics.com/api/1.1/obj/organization?constraints=[space filter]  — WORKING",
+    "space_ids": {
+      "test": "1768998437948x865417918648382000",
+      "live": "1770642377799x775210694699370900"
+    },
+    "auth": "Authorization: Bearer <BUBBLE_API_KEY>"
+  },
+
+  "_create_event_payload": {
+    "_note": "Payload spec confirmed by Mori 2026-07-09. All fields required for fully populated test.",
+    "chronicle_topics":       "array of Bubble _id strings for associated chronicle topics",
+    "alert_id":               "agent_call_id — for tracing only, not written to Bubble",
+    "space_id":               "test or live space ID",
+    "agenda_items":           "array of Bubble _id strings returned from create-agenda-item responses (step 1)",
+    "agenda":                 "array of Bubble _id strings returned from create-library-item responses (step 2) — links materials doc to event",
+    "start_datetime":         "ISO 8601 with timezone offset, e.g. 2026-06-11T14:00:00-04:00",
+    "end_datetime":           "ISO 8601 with timezone offset, or null",
+    "location_url":           "Webex or other meeting URL, or null",
+    "phone_and_access_code":  "dial-in number + access code string, or null",
+    "type":                   "Bubble _id for event type — resolved from calendaritemtype lookup (currently 404)",
+    "organizations":          "array of Bubble _id strings — resolved from organization lookup"
+  },
+
+  "_known_issues_2026_07_09": {
+    "calendaritemtype_404": "GET /version-{version}/api/1.1/obj/calendaritemtype returns 404 Type Not Found on both test and live. Reported to Mori. Blocks event creation test.",
+    "test_space_orgs": "Test space only has 3 placeholder orgs. Real NAIC org names (e.g. 'Reinsurance (E) Task Force (NAIC RTF)') only exist in live space. Organizations field will be empty in all test-space syncs.",
+    "chronicle_topic_name_mismatch": "Agent outputs 'RBC Covariance & Asset Concentration Risk' but correct Bubble name is 'Life RBC Covariance & Asset Concentration Risk'. Executor exact-match fails silently.",
+    "update_event_endpoint": "wf/update-event endpoint not yet provided by Mori. Required for alert types where event action = update.",
+    "orphan_agenda_item": "1783442800085x... created during failed first test run 2026-07-08. Left in test space."
+  },
+
+  "_test_results_2026_07_08": {
+    "version": "test",
+    "row_1": {
+      "agent_call_id": "bdbb5a95-68fa-4052-8d67-c0938a750b9d",
+      "alert_title": "Reinsurance (E) Task Force posts agenda and materials for June 22, 2026 meeting",
+      "agenda_item_id": "1783443783207x526404831658494850",
+      "library_item_id": "1783443784335x202353868930715620",
+      "chronicle_topics_sent": ["1772364054767x145757227501820640 (Negative IMR)", "1772364053949x539517646942305700 (Credit for Reinsurance)"],
+      "organizations_sent": "empty — org not in test space"
+    },
+    "row_2": {
+      "agent_call_id": "c986df63-5b93-48ab-9e18-987e9f963324",
+      "alert_title": "Agenda and materials posted for June 23, 2026 RBC Investment Risk and Evaluation Working Group meeting",
+      "agenda_item_id": "1783443787240x479948023981900740",
+      "library_item_id": "1783443788905x770165781732295300",
+      "chronicle_topics_sent": ["1772364051422x161004932788948450 (CLOs and ABS)"],
+      "missing_topic": "RBC Covariance & Asset Concentration Risk — name mismatch, not resolved",
+      "organizations_sent": "empty — org not in test space"
+    }
+  },
+
   "_processing_rules": [
-    "1. ORDERING: agenda_items are always processed first, then library_item, then event. This is because the event and library item need to reference the agenda item IDs created in step 1.",
-    "2. LINKING (handled by processor, no field needed): After agenda_item CREATEs, their IDs are added to calendaritem.attached_agenda_items and libraryitem.Agenda_items. After library_item CREATE, new ID is added to calendaritem.Agenda.",
+    "1. ORDERING: agenda_items are always processed first, then library_item, then event. Event needs agenda item IDs (from step 1) and library item ID (from step 2).",
+    "2. LINKING: 'agenda_items' in create-event payload = IDs from create-agenda-item responses. 'agenda' in create-event payload = IDs from create-library-item responses.",
     "3. UPDATE requires a 'match' block with the Bubble unique ID returned when the record was first created. CREATE must not have a 'match' block. Null or absent section = skip.",
-    "4. 'organizations' are plain name strings — processor resolves to Bubble IDs. 'chronicle_topics' are Bubble unique ID strings (fetched from Eidarix API at runtime).",
-    "5. 'alert_id' and 'alert_type' are for tracing only — not written to Bubble.",
+    "4. 'organizations' = Bubble _id strings (executor resolves names at runtime). 'chronicle_topics' = Bubble _id strings (executor resolves names at runtime).",
+    "5. 'alert_id' is for tracing only — not written to Bubble.",
     "6. Fields marked AUTO are set by Bubble's own workflows and should NOT be included in the payload.",
-    "7. agenda_items are ALWAYS 'create' — never updated. An updated agenda means new items were added to the revised PDF; existing agendaitem records in Bubble are not mutated."
+    "7. agenda_items are ALWAYS 'create' — never updated. An updated agenda means new items were added; existing agendaitem records in Bubble are not mutated."
   ],
 
   "_auto_managed_by_bubble": {

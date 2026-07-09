@@ -242,11 +242,14 @@ def _clean(field_ids: dict) -> dict:
 
 def _eidarix_wf_post(workflow: str, payload: dict) -> dict:
     """POST to one of Mori's Eidarix workflow endpoints. Returns the parsed JSON response."""
+    import json
     import requests
     from bubble.bridgemind import BUBBLE_API_KEY
     version = _EIDARIX_VERSION
     url = f"https://eidarix.bridgewayanalytics.com/version-{version}/api/1.1/wf/{workflow}/"
+    log.info("eidarix: POST %s payload=%s", workflow, json.dumps(payload, default=str))
     resp = requests.post(url, json=payload, headers={"Authorization": f"Bearer {BUBBLE_API_KEY}"}, timeout=30)
+    log.info("eidarix: %s response status=%d body=%s", workflow, resp.status_code, resp.text[:500])
     resp.raise_for_status()
     return resp.json()
 
