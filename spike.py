@@ -2866,6 +2866,18 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
     except Exception:
         pass
 
+    # Preserve identity fields from the original rows on the rerun output so
+    # that agent_call_id (QA eval key) and alert_date_time never change across
+    # re-evaluations of the same alert.
+    if original_rows:
+        orig_call_id = original_rows[0].get("agent_call_id")
+        orig_alert_dt = original_rows[0].get("alert_date_time")
+        for r in new_rows:
+            if orig_call_id:
+                r["agent_call_id"] = orig_call_id
+            if orig_alert_dt:
+                r["alert_date_time"] = orig_alert_dt
+
     # Fetch original doc extraction rows for diff
     doc_original_rows: list[dict] = []
     try:
