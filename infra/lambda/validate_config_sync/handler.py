@@ -45,6 +45,10 @@ MAX_LABEL_LENGTH = 80
 # (e.g. keys that would lose "&" or other meaningful characters via .title()).
 # Used by _fix_label_count when padding missing labels.
 CANONICAL_LABELS: dict[str, str] = {
+    "alert_date_time": "Alert Date & Time",
+    "event_start_date_time": "Event Start Date & Time",
+    "event_end_date_time": "Event End Date & Time",
+    "event_call_in_number_access_code": "Event Call-In Number & Access Code",
     "agenda_item_title_chronicle_topics": "Agenda Item Title & Chronicle Topics",
 }
 
@@ -501,6 +505,13 @@ def _update_column_registry(registry, new_labels, config_key):
                     suffix += 1
             existing_ids.add(new_id)
             updated.append({"id": new_id, "label": label})
+
+    # Enforce canonical labels — overrides whatever Bubble or key-derivation produced.
+    # Prevents re-syncs from stripping & or - that can't survive snake_case round-trips.
+    for entry in updated:
+        canonical = CANONICAL_LABELS.get(entry["id"])
+        if canonical and entry.get("label") != canonical:
+            entry["label"] = canonical
 
     changed = updated != registry
     return updated, changed
