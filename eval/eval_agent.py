@@ -1,13 +1,19 @@
 """
 QA evaluation agent — one call per alert row.
 
-Loads system instructions from DynamoDB (chat:eval-agent), same pattern
-as document_agent.py. Passes the alert output, before/after HTML, and
-reference context. Returns a dict of per-field scores and an overall summary.
+When PGVECTOR_ENABLED=true and DB credentials are present, runs via the
+OpenAI Agents SDK with pgvector tools (same two-step pattern as
+document_agent.py): Step 1 searches the knowledge base and gathers
+evidence; Step 2 formats the analysis into per-field JSON scores.
+
+Falls back to direct chat_json (with pre-fetched reference_context) when
+pgvector is unavailable.
 """
 
+import asyncio
 import json
 import logging
+import os
 
 log = logging.getLogger(__name__)
 
@@ -19,6 +25,8 @@ provided alert output against the source HTML and reference content.
 For each field return: score (Correct / Partially Correct / Incorrect) and
 a one-sentence reasoning. Return a JSON object with a key per field.
 """
+
+_FALLBACK_PGVECTOR_NAMESPACES = ["ba:chronicles", "ba:newsreels", "newsreel-generation:ART"]
 
 _dynamo_config: dict | None = None
 
@@ -46,8 +54,27 @@ def _get_reasoning_effort() -> str:
     return cfg.get("reasoning_effort") or "low"
 
 
+def _get_pgvector_namespaces() -> list[str]:
+    cfg = _load_config()
+    ns = cfg.get("pgvector_namespaces")
+    if isinstance(ns, list):
+        return ns
+    return _FALLBACK_PGVECTOR_NAMESPACES
+
+
+def _pgvector_enabled() -> bool:
+    if os.environ.get("PGVECTOR_ENABLED", "").strip().lower() not in ("1", "true", "yes"):
+        return False
+    required = ("DATABASE_IP", "DATABASE_NAME")
+    if not all(os.environ.get(k, "").strip() for k in required):
+        return False
+    return bool(
+        os.environ.get("DATABASE_PASSWORD_CHATKIT", "").strip()
+        or os.environ.get("DATABASE_PASSWORD", "").strip()
+    )
+
+
 def _build_sibling_summary(sibling_rows: list[dict]) -> str:
-    """Compact summary of sibling rows — key fields only, no HTML."""
     lines = []
     for i, r in enumerate(sibling_rows, 1):
         lib_title = r.get("library_item_preliminary_title") or {}
@@ -113,6 +140,68 @@ def _build_user_message(
     return "\n".join(parts)
 
 
+async def _run_with_pgvector(
+    system_prompt: str,
+    user_content: str,
+    model: str,
+    reasoning_effort: str,
+    namespaces: list[str],
+) -> dict:
+    """
+    Two-step evaluation with pgvector tool access:
+      1. Agents SDK run — agent searches chronicles, newsreels, and ART documents
+         as needed, then writes a free-text evaluation analysis.
+      2. chat_json() call — formats the free-text into structured per-field scores.
+    """
+    from agents import Agent, Runner, ModelSettings
+    from agents.model_settings import Reasoning
+    from bubble.pgvector.client import init_pg_pool, close_pg_pool
+    from bubble.pgvector.search_tool import (
+        set_pgvector_namespaces,
+        search_knowledge_base,
+        list_available_documents,
+    )
+
+    await init_pg_pool()
+    try:
+        set_pgvector_namespaces(namespaces)
+        agent = Agent(
+            name=_CHAT_ID,
+            instructions=system_prompt,
+            tools=[search_knowledge_base, list_available_documents],
+            model=model,
+            model_settings=ModelSettings(
+                reasoning=Reasoning(effort=reasoning_effort),
+                verbosity=reasoning_effort,
+            ),
+        )
+        result = await Runner.run(agent, input=user_content)
+        gathered = result.final_output or ""
+    finally:
+        await close_pg_pool()
+
+    if not gathered:
+        return {"error": "Agent returned empty output"}
+
+    # Step 2: format gathered analysis into structured per-field JSON scores
+    from bubble.openai_client import chat_json
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a JSON formatter. Given the QA evaluation analysis below, produce a JSON object "
+                "where each key is a field name from the evaluated alert and each value is: "
+                '{"score": "Correct" | "Partially Correct" | "Incorrect", "reasoning": "<evidence-based explanation>"}. '
+                'Also include an "overall_summary" key: '
+                '{"correct": N, "partially_correct": N, "incorrect": N, "total": N, "pattern": "<systematic patterns>"}. '
+                "Use only the analysis provided — do not invent or omit scores."
+            ),
+        },
+        {"role": "user", "content": gathered},
+    ]
+    return chat_json(messages, model=model, reasoning_effort=reasoning_effort)
+
+
 def evaluate_row(
     row: dict,
     before_html: str,
@@ -125,24 +214,40 @@ def evaluate_row(
     Returns a dict with per-field scores and overall_summary.
     On failure returns {"error": "<message>"}.
     """
-    from bubble.openai_client import chat_json
-
     system_prompt = _get_system_prompt()
     model = _get_model()
     reasoning_effort = _get_reasoning_effort()
     user_message = _build_user_message(row, before_html, after_html, reference_context, sibling_rows)
 
+    if _pgvector_enabled():
+        namespaces = _get_pgvector_namespaces()
+        log.info(
+            "eval_agent: running with pgvector tools (model=%s namespaces=%s) for agent_call_id=%s",
+            model, namespaces, row.get("agent_call_id"),
+        )
+        try:
+            result = asyncio.run(
+                _run_with_pgvector(system_prompt, user_message, model, reasoning_effort, namespaces)
+            )
+            if not isinstance(result, dict):
+                return {"error": "Agent returned non-dict response"}
+            return result
+        except Exception as e:
+            log.error("Eval agent (pgvector path) failed for agent_call_id=%s: %s", row.get("agent_call_id"), e)
+            return {"error": str(e)}
+
+    # Fallback: direct chat_json with pre-fetched reference_context
+    from bubble.openai_client import chat_json
+    log.info(
+        "eval_agent: running via direct API (model=%s) for agent_call_id=%s",
+        model, row.get("agent_call_id"),
+    )
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_message},
     ]
-
     try:
-        result = chat_json(
-            messages,
-            model=model,
-            reasoning_effort=reasoning_effort,
-        )
+        result = chat_json(messages, model=model, reasoning_effort=reasoning_effort)
         if not isinstance(result, dict):
             return {"error": "Agent returned non-dict response"}
         return result

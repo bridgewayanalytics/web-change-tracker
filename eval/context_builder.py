@@ -230,6 +230,77 @@ def _get_org_tree() -> str:
         return ""
 
 
+def fetch_non_search_context(row: dict) -> str:
+    """
+    Return non-search context only: org tree + Bubble ground truth + presence check.
+
+    Used when the eval agent has direct pgvector tool access and will perform its
+    own chronicle/newsreel/ART searches during the Agents SDK run. Calling this
+    avoids redundant pre-fetches while still injecting deterministic signals that
+    the agent cannot derive from semantic search alone (presence check, org tree).
+    """
+    lib_filename = row.get("library_items_file_name", "")
+    lib_url = row.get("library_item_url", "")
+    has_library_item = (
+        (lib_filename and lib_filename not in ("N/A", "-", ""))
+        or (lib_url and lib_url not in ("N/A", "-", ""))
+    )
+
+    async def _run():
+        if has_library_item:
+            return await _check_presence_async(lib_filename, lib_url)
+        return None
+
+    try:
+        presence_result = asyncio.run(_run())
+    except Exception as e:
+        log.warning("fetch_non_search_context: presence check failed: %s", e)
+        presence_result = None
+
+    presence_found, presence_matched_on = (
+        presence_result if isinstance(presence_result, tuple) else (None, "")
+    )
+
+    lines = []
+
+    org_tree = _get_org_tree()
+    if org_tree:
+        lines.append("## Reference: Valid NAIC Organization Names")
+        lines.append("Use this to verify that the `organization` field contains exact, valid org names:\n")
+        lines.append(org_tree)
+        lines.append("")
+
+    bubble_gt = _extract_bubble_ground_truth(row)
+    if bubble_gt:
+        lines.append(bubble_gt)
+
+    if has_library_item:
+        lines.append("## Newsreel Backend Presence Check")
+        display_name = (
+            lib_filename if lib_filename and lib_filename not in ("N/A", "-", "") else lib_url
+        )
+        if presence_found:
+            matched_desc = {
+                "filename": f"filename \"{lib_filename}\"",
+                "url_basename": f"URL basename \"{_url_basename(lib_url)}\"",
+                "url": f"source URL \"{lib_url}\"",
+            }.get(presence_matched_on, display_name)
+            lines.append(
+                f"**FOUND** (matched on {matched_desc}): This document IS present in the "
+                f"newsreel-generation backend (newsreel-generation:ART) and was ingested for newsreel creation."
+            )
+        elif presence_found is False:
+            lines.append(
+                f"**NOT FOUND**: \"{display_name}\" was NOT found in the newsreel-generation backend. "
+                f"It may not have been ingested yet, or the URL/filename differs from what was submitted."
+            )
+        else:
+            lines.append("Presence check unavailable (pgvector connection failed).")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def fetch_context(row: dict) -> str:
     """
     Return formatted context for the eval agent:
