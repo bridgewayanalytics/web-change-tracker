@@ -41,6 +41,13 @@ DEBOUNCE_SECONDS = 10
 # Labels longer than this are likely garbage (instruction text leaked in)
 MAX_LABEL_LENGTH = 80
 
+# Canonical human-readable labels for fields whose keys can't be derived cleanly
+# (e.g. keys that would lose "&" or other meaningful characters via .title()).
+# Used by _fix_label_count when padding missing labels.
+CANONICAL_LABELS: dict[str, str] = {
+    "agenda_item_title_chronicle_topics": "Agenda Item Title & Chronicle Topics",
+}
+
 # Phrases that indicate a label is actually instruction text
 GARBAGE_PHRASES = [
     "report",
@@ -374,10 +381,10 @@ def _fix_label_count(labels, required_keys):
         # Trim excess from end
         labels = labels[: len(required_keys)]
     elif len(labels) < len(required_keys):
-        # Pad with key names converted to title case
+        # Pad with canonical label if known, else title-cased key name
         for i in range(len(labels), len(required_keys)):
             key = required_keys[i]
-            label = key.replace("_", " ").title()
+            label = CANONICAL_LABELS.get(key) or key.replace("_", " ").title()
             labels.append(label)
 
     return labels
