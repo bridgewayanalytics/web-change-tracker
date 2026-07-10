@@ -506,11 +506,13 @@ def _update_column_registry(registry, new_labels, config_key):
             existing_ids.add(new_id)
             updated.append({"id": new_id, "label": label})
 
-    # Enforce canonical labels — overrides whatever Bubble or key-derivation produced.
-    # Prevents re-syncs from stripping & or - that can't survive snake_case round-trips.
+    # Enforce canonical labels only when the stored label looks auto-generated from the
+    # field key (i.e. matches key.replace("_"," ").title()). Intentional admin renames
+    # (e.g. "Alert Date + Time") don't match that pattern and pass through unchanged.
     for entry in updated:
         canonical = CANONICAL_LABELS.get(entry["id"])
-        if canonical and entry.get("label") != canonical:
+        key_derived = entry["id"].replace("_", " ").title()
+        if canonical and entry.get("label") == key_derived:
             entry["label"] = canonical
 
     changed = updated != registry
