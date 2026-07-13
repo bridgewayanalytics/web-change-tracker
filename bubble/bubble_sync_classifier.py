@@ -178,6 +178,8 @@ def _build_event_preview(alert: dict, alert_type: str, event_action: str | None)
             fields["End"] = end
         if org:
             fields["Groups"] = ", ".join(org)
+        if not _is_na(url):
+            fields["Location"] = url
         if not _is_na(call_in):
             fields["Call-in"] = call_in
         fields["Timezone"] = "America/New_York"
@@ -335,10 +337,12 @@ def _build_library_item_preview(alert: dict, alert_type: str, lib_action: str | 
 
 def _build_agenda_previews(alert: dict) -> list[dict]:
     items = alert.get("agenda_item_title_chronicle_topics") or alert.get("agenda_item_title_and_chronicle_topics")
+    official_titles = alert.get("agenda_item_title_official") or []
+    standardized_ids = alert.get("agenda_item_standardized_id") or []
     if not isinstance(items, list):
         return []
     result = []
-    for item in items:
+    for i, item in enumerate(items):
         if not isinstance(item, dict):
             continue
         title = _str(item.get("agenda_item_title") or item.get("title") or "")
@@ -347,7 +351,16 @@ def _build_agenda_previews(alert: dict) -> list[dict]:
         topics = item.get("chronicle_topics") or []
         if not isinstance(topics, list):
             topics = []
-        result.append({"title": title, "chronicle_topics": [str(t) for t in topics if t]})
+        off_entry = official_titles[i] if i < len(official_titles) and isinstance(official_titles[i], dict) else {}
+        std_entry = standardized_ids[i] if i < len(standardized_ids) and isinstance(standardized_ids[i], dict) else {}
+        official_title = _str(off_entry.get("official_title") or "")
+        reference_id = _str(std_entry.get("standardized_id") or "")
+        result.append({
+            "title": title,
+            "chronicle_topics": [str(t) for t in topics if t],
+            "official_title": official_title if not _is_na(official_title) else "",
+            "reference_id": reference_id if not _is_na(reference_id) else "",
+        })
     return result
 
 
