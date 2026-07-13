@@ -485,11 +485,17 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
         if existing_lib_id:
             bubble_library_item_id = existing_lib_id
             log.info("bubble_sync: action=event — linking existing bubble_library_item_id=%s", bubble_library_item_id)
+        # Pick up already-created agenda item IDs so the event can link them
+        existing_agenda_ids = row.get("eidarix_agenda_item_ids") or []
+        if existing_agenda_ids:
+            agenda_item_ids = [str(i) for i in existing_agenda_ids if i]
+            log.info("bubble_sync: action=event — linking existing eidarix_agenda_item_ids=%s", agenda_item_ids)
 
     try:
         # ── Agenda items (Eidarix) ────────────────────────────────────────────
         # Created first — agenda items → library item → event (Mori's required order)
-        if plan.get("agenda_items") and action in ("all",):
+        # Also created for action="library_item" so they can be linked into the library item payload.
+        if plan.get("agenda_items") and action in ("all", "library_item"):
             # Build topic name→ID map from the row's agenda item entries
             agenda_entries = row.get("agenda_item_title_chronicle_topics") or []
             all_topic_names = list({
