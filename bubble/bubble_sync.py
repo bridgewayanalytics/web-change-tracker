@@ -254,6 +254,25 @@ def _eidarix_wf_post(workflow: str, payload: dict) -> dict:
     return resp.json()
 
 
+def _resolve_calendar_item_type_id(type_name: str) -> str | None:
+    """
+    Resolve a calendar item type display name (e.g. "Meeting") to its Bubble _id
+    by querying the calendaritemtype endpoint for the active space.
+    Returns None if not found.
+    """
+    from bubble.bridgemind import get_client, SPACE_CONSTRAINT
+    client = get_client()
+    try:
+        result = client.search("calendaritemtype", constraints=SPACE_CONSTRAINT, limit=50)
+        for item in (result.get("results") or []):
+            if (item.get("display") or item.get("Title") or "").strip().lower() == type_name.strip().lower():
+                return item.get("_id")
+        log.warning("bubble_sync: calendar item type %r not found in Bubble", type_name)
+    except Exception as e:
+        log.warning("bubble_sync: could not resolve calendar item type %r: %s", type_name, e)
+    return None
+
+
 def _resolve_library_item_type_id(type_name: str) -> str | None:
     """
     Resolve a library item type display name (e.g. "Agenda & Materials") to its
@@ -532,14 +551,62 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
                     log.warning("bubble_sync: UPDATE libraryitem — no existing record for match_search=%s", lp.get("match_search"))
 
         # ── Calendar item ─────────────────────────────────────────────────────
-        # TODO: wire up wf/create-calendar-item/ and wf/update-calendar-item/ Eidarix endpoints
-        # (same pattern as library item). Until then, log and skip to avoid erroring the sync.
         if run_event:
-            log.info(
-                "bubble_sync: calendar item step skipped — event workflow endpoint not yet wired "
-                "(action=%s). Agenda items and library item were synced successfully.",
-                event_action,
-            )
+            if event_action == "create":
+                space_id = _EIDARIX_SPACE_IDS.get(_EIDARIX_VERSION, _EIDARIX_SPACE_IDS["test"])
+
+                # Resolve calendar item type (default: "Meeting" for most alert types)
+                cal_type_name = "Meeting"
+                cal_type_id = _resolve_calendar_item_type_id(cal_type_name)
+                if not cal_type_id:
+                    log.warning("bubble_sync: could not resolve calendaritemtype=%r — event type will be omitted", cal_type_name)
+
+                start_dt = ep.get("start_datetime") or ""
+                end_dt = ep.get("end_datetime") or ""
+                location_url = ep.get("url") or None
+                if location_url and location_url.upper() == "N/A":
+                    location_url = None
+                call_in = ep.get("call_in") or None
+                if call_in and call_in.upper() == "N/A":
+                    call_in = None
+
+                # Chronicle topics for the event come from the resolved topic_ids pool
+                event_topic_ids = topic_ids
+
+                event_payload: dict = {
+                    "alert_id": agent_call_id,
+                    "space_id": space_id,
+                }
+                if event_topic_ids:
+                    event_payload["chronicle_topics"] = event_topic_ids
+                if agenda_item_ids:
+                    event_payload["agenda_items"] = agenda_item_ids
+                if bubble_library_item_id:
+                    event_payload["agenda"] = [bubble_library_item_id]
+                if start_dt:
+                    event_payload["start_datetime"] = start_dt
+                if end_dt:
+                    event_payload["end_datetime"] = end_dt
+                if location_url:
+                    event_payload["location_url"] = location_url
+                if call_in:
+                    event_payload["phone_and_access_code"] = call_in
+                if cal_type_id:
+                    event_payload["type"] = cal_type_id
+                if org_ids:
+                    event_payload["organizations"] = org_ids
+
+                log.info("bubble_sync: CREATE calendaritem via Eidarix wf/create-event — payload keys=%s", list(event_payload.keys()))
+                event_result = _eidarix_wf_post("create-event", event_payload)
+                bubble_event_id = event_result.get("bubble_id") or event_result.get("id") or event_result.get("_id")
+                if bubble_event_id:
+                    log.info("bubble_sync: created calendaritem _id=%s", bubble_event_id)
+                else:
+                    log.warning("bubble_sync: create-event returned no id: %s", event_result)
+
+            elif event_action == "update":
+                # wf/update-event not yet provided by Mori — log and skip
+                log.info("bubble_sync: UPDATE calendaritem — wf/update-event endpoint not yet available, skipping")
 
     except Exception as exc:
         log.error("bubble_sync: error for agent_call_id=%s action=%s: %s", agent_call_id, action, exc, exc_info=True)
