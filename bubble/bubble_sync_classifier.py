@@ -355,8 +355,10 @@ def _build_agenda_previews(alert: dict) -> list[dict]:
         std_entry = standardized_ids[i] if i < len(standardized_ids) and isinstance(standardized_ids[i], dict) else {}
         official_title = _str(off_entry.get("official_title") or "")
         reference_id = _str(std_entry.get("standardized_id") or "")
+        status = _str(item.get("status") or "New")
         result.append({
             "title": title,
+            "status": status,  # "New" → create in Bubble; "Existing"/"Updated" → look up and link
             "chronicle_topics": [str(t) for t in topics if t],
             "official_title": official_title if not _is_na(official_title) else "",
             "reference_id": reference_id if not _is_na(reference_id) else "",

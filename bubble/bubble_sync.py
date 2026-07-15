@@ -40,6 +40,23 @@ _EIDARIX_SPACE_IDS = {
 }
 
 
+def _to_utc_z(dt_str: str) -> str:
+    """Convert an ISO 8601 datetime string (with or without timezone) to UTC 'Z' format.
+    Bubble's workflow endpoints reject timezone-offset datetimes (e.g. -04:00) in some fields.
+    Returns the original string unchanged if parsing fails.
+    """
+    if not dt_str:
+        return dt_str
+    try:
+        from datetime import timezone
+        dt = datetime.fromisoformat(dt_str)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    except Exception:
+        return dt_str
+
+
 def _get_bucket() -> str:
     return os.environ.get("CHANGELOG_BUCKET") or os.environ.get("BUBBLE_ARTIFACT_BUCKET", "")
 
@@ -193,6 +210,22 @@ def _find_library_item(match_search: dict, client) -> str | None:
             return items[0].get("_id")
 
     log.info("bubble_sync: no libraryitem found for match_search=%s", match_search)
+    return None
+
+
+def _find_agenda_item_by_title(title: str, client) -> str | None:
+    """Look up an existing agendaitem in Bubble by BA title. Returns Bubble _id if found."""
+    from bubble.bridgemind import SPACE_CONSTRAINT
+    result = client.search(
+        "agendaitem",
+        constraints=list(SPACE_CONSTRAINT) + [{"key": "BA title", "constraint_type": "equals", "value": title}],
+        limit=5,
+    )
+    items = result.get("results", [])
+    if items:
+        log.info("bubble_sync: found existing agendaitem '%s' → id=%s", title, items[0].get("_id"))
+        return items[0].get("_id")
+    log.warning("bubble_sync: agendaitem not found by title '%s'", title)
     return None
 
 
@@ -363,25 +396,47 @@ def _build_library_item_wf_payload(
     return payload
 
 
-def _create_agenda_items(row: dict, agent_call_id: str, topic_name_to_id: dict[str, str]) -> list[str]:
+def _resolve_agenda_items(row: dict, agent_call_id: str, topic_name_to_id: dict[str, str], client) -> list[str]:
     """
-    Create one Eidarix agendaitem per entry in agenda_item_title_chronicle_topics[].
-    Skips N/A entries. Returns list of created Bubble IDs.
+    Resolve agenda items to Bubble IDs.
+    - status "New": create via Eidarix workflow, return new ID
+    - status "Existing" or "Updated": look up existing agendaitem by title, return existing ID
+    Skips N/A entries. Returns list of Bubble IDs (mix of new and existing).
     """
     agenda_entries = row.get("agenda_item_title_chronicle_topics") or []
     official_titles = row.get("agenda_item_title_official") or []
     standardized_ids = row.get("agenda_item_standardized_id") or []
 
+    # Also check agenda_item_previews for status (set by classifier from alert data)
+    previews = (row.get("bubble_action") or {}).get("agenda_item_previews") or []
+    preview_status: dict[str, str] = {
+        p.get("title", ""): p.get("status", "New")
+        for p in previews if isinstance(p, dict)
+    }
+
     space_id = _EIDARIX_SPACE_IDS.get(_EIDARIX_VERSION, _EIDARIX_SPACE_IDS["test"])
-    created_ids: list[str] = []
+    resolved_ids: list[str] = []
 
     for i, entry in enumerate(agenda_entries):
         title = (entry.get("agenda_item_title") or "").strip()
         if not title or title.upper() == "N/A":
             continue
 
+        # Determine status: check entry directly, then preview map, default to "New"
+        status = (entry.get("status") or preview_status.get(title) or "New").strip()
+        is_new = status.lower() == "new"
+
         topic_names = entry.get("chronicle_topics") or []
         topic_ids = [topic_name_to_id[t] for t in topic_names if t in topic_name_to_id]
+
+        if not is_new:
+            # Existing/Updated: look up in Bubble by title
+            existing_id = _find_agenda_item_by_title(title, client)
+            if existing_id:
+                resolved_ids.append(existing_id)
+            else:
+                log.warning("bubble_sync: could not find existing agendaitem '%s', skipping link", title)
+            continue
 
         off_entry = official_titles[i] if i < len(official_titles) else {}
         std_entry = standardized_ids[i] if i < len(standardized_ids) else {}
@@ -404,17 +459,16 @@ def _create_agenda_items(row: dict, agent_call_id: str, topic_name_to_id: dict[s
 
         try:
             result = _eidarix_wf_post("create-agenda-item", payload)
-            # Eidarix workflow response: {"bubble_id": "..."}
             item_id = result.get("bubble_id") or result.get("id") or result.get("_id")
             if item_id:
-                created_ids.append(item_id)
+                resolved_ids.append(item_id)
                 log.info("eidarix: created agenda item '%s' → id=%s", title, item_id)
             else:
                 log.warning("eidarix: create-agenda-item returned no id for '%s': %s", title, result)
         except Exception as exc:
             log.error("eidarix: failed to create agenda item '%s': %s", title, exc)
 
-    return created_ids
+    return resolved_ids
 
 
 def sync_alert(agent_call_id: str, action: str = "all") -> dict:
@@ -511,7 +565,7 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
                     name = (topic.get("Title") or "").strip()
                     if name in all_topic_names:
                         topic_name_to_id[name] = topic.get("_id") or ""
-            agenda_item_ids = _create_agenda_items(row, agent_call_id, topic_name_to_id)
+            agenda_item_ids = _resolve_agenda_items(row, agent_call_id, topic_name_to_id, client)
             log.info("bubble_sync: created %d agenda item(s) via Eidarix", len(agenda_item_ids))
 
         # ── Library item ─────────────────────────────────────────────────────
@@ -576,8 +630,19 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
                 if call_in and call_in.upper() == "N/A":
                     call_in = None
 
-                # Chronicle topics for the event come from the resolved topic_ids pool
-                event_topic_ids = topic_ids
+                # Chronicle topics for the event: union of doc-extraction topics + agenda item topics.
+                # Agenda item topics are resolved here so they're included even when action="event".
+                event_topic_ids = list(topic_ids)
+                agenda_entries_for_event = row.get("agenda_item_title_chronicle_topics") or []
+                agenda_topic_names_for_event = list({
+                    t
+                    for entry in agenda_entries_for_event
+                    for t in (entry.get("chronicle_topics") or [])
+                    if isinstance(t, str) and t.upper() not in ("N/A", "")
+                })
+                if agenda_topic_names_for_event:
+                    extra_ids = _resolve_chronicle_topic_ids(agenda_topic_names_for_event, client)
+                    event_topic_ids = list({*event_topic_ids, *extra_ids})
 
                 event_payload: dict = {
                     "alert_id": agent_call_id,
@@ -611,8 +676,67 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
                     log.warning("bubble_sync: create-event returned no id: %s", event_result)
 
             elif event_action == "update":
-                # wf/update-event not yet provided by Mori — log and skip
-                log.info("bubble_sync: UPDATE calendaritem — wf/update-event endpoint not yet available, skipping")
+                existing_event_id = _find_calendar_item(ep.get("match_search") or {}, client)
+                if not existing_event_id:
+                    log.warning("bubble_sync: UPDATE calendaritem — no existing record for match_search=%s, skipping", ep.get("match_search"))
+                else:
+                    space_id = _EIDARIX_SPACE_IDS.get(_EIDARIX_VERSION, _EIDARIX_SPACE_IDS["test"])
+
+                    cal_type_name = "Meeting"
+                    cal_type_id = _resolve_calendar_item_type_id(cal_type_name)
+                    if not cal_type_id:
+                        log.warning("bubble_sync: could not resolve calendaritemtype=%r — event type will be omitted", cal_type_name)
+
+                    start_dt = ep.get("start_datetime") or ""
+                    end_dt = ep.get("end_datetime") or ""
+                    location_url = ep.get("url") or None
+                    if location_url and location_url.upper() == "N/A":
+                        location_url = None
+                    call_in = ep.get("call_in") or None
+                    if call_in and call_in.upper() == "N/A":
+                        call_in = None
+
+                    # Union of doc-extraction topics + agenda item topics (same as create)
+                    update_event_topic_ids = list(topic_ids)
+                    agenda_entries_for_update = row.get("agenda_item_title_chronicle_topics") or []
+                    agenda_topic_names_for_update = list({
+                        t
+                        for entry in agenda_entries_for_update
+                        for t in (entry.get("chronicle_topics") or [])
+                        if isinstance(t, str) and t.upper() not in ("N/A", "")
+                    })
+                    if agenda_topic_names_for_update:
+                        extra_ids = _resolve_chronicle_topic_ids(agenda_topic_names_for_update, client)
+                        update_event_topic_ids = list({*update_event_topic_ids, *extra_ids})
+
+                    update_payload: dict = {
+                        "id": existing_event_id,
+                        "alert_id": agent_call_id,
+                        "space_id": space_id,
+                    }
+                    if update_event_topic_ids:
+                        update_payload["chronicle_topics"] = update_event_topic_ids
+                    if agenda_item_ids:
+                        update_payload["agenda_items"] = agenda_item_ids
+                    if bubble_library_item_id:
+                        update_payload["agenda"] = [bubble_library_item_id]
+                    if start_dt:
+                        update_payload["start_datetime"] = start_dt
+                    if end_dt:
+                        update_payload["end_datetime"] = end_dt
+                    if location_url:
+                        update_payload["location_url"] = location_url
+                    if call_in:
+                        update_payload["phone_and_access_code"] = call_in
+                    if cal_type_id:
+                        update_payload["type"] = cal_type_id
+                    if org_ids:
+                        update_payload["organizations"] = org_ids
+
+                    log.info("bubble_sync: UPDATE calendaritem _id=%s via Eidarix wf/update-event — payload keys=%s", existing_event_id, list(update_payload.keys()))
+                    event_result = _eidarix_wf_post("update-event", update_payload)
+                    bubble_event_id = event_result.get("bubble_id") or event_result.get("id") or event_result.get("_id") or existing_event_id
+                    log.info("bubble_sync: updated calendaritem _id=%s", bubble_event_id)
 
     except Exception as exc:
         log.error("bubble_sync: error for agent_call_id=%s action=%s: %s", agent_call_id, action, exc, exc_info=True)
