@@ -1,15 +1,19 @@
 """
 Select alert rows eligible for QA evaluation.
 
-Eligible rows: those whose corresponding Bubble record (calendar item or
-library item) actually exists in Bubble — meaning a human has made editorial
-decisions (chronicle topics assigned, newsreel relevance determined, etc.)
-that give the eval agent ground truth to compare against.
+Eligibility uses a time-window approach:
+  1. Query Bubble for all calendar items and library items in the space.
+  2. Match alert rows against those records (the "anchor" rows) — these are rows
+     whose corresponding Bubble record actually exists, meaning a human has made
+     editorial decisions (chronicle topics, newsreel relevance, etc.).
+  3. The anchor rows define a date range (earliest to latest alert_date_time).
+  4. ALL rows within that date range qualify — including "No Meaningful Change"
+     alerts, irrelevant alerts, and resources intentionally not published to Bubble.
+     These rows represent the full agent output during the period that Bubble
+     records exist, giving a complete picture of evaluation quality.
 
-We query Bubble directly for all calendar items and library items in the space,
-then match alert rows against them using the match_search criteria stored in
-bubble_action. This correctly picks up records added to Bubble manually outside
-of this dashboard.
+Transcript rows (alert_type == "New Meeting Transcript Available") are always
+excluded — they share HTML with their parent alert and have no independent content.
 
 Rows specified by --agent-call-ids bypass this check entirely.
 """
@@ -113,11 +117,12 @@ def load_eligible_rows(
     """
     Load alert rows eligible for evaluation.
 
-    Eligibility: the corresponding Bubble record (calendar item or library item)
-    exists in Bubble — meaning human editorial decisions have been made.
-
     When agent_call_ids is provided, those rows are returned directly without
-    the Bubble check (used for targeted re-evaluation).
+    any Bubble check (used for targeted re-evaluation).
+
+    Otherwise: queries Bubble to find anchor rows (those with matching records),
+    derives a date window from those anchors, and returns ALL rows in that window
+    (including not-relevant alerts and unpublished resources).
 
     Args:
         limit: max agent calls to return (most recent first)
@@ -136,58 +141,65 @@ def load_eligible_rows(
         log.error("Failed to load alerts_table.jsonl: %s", e)
         return []
 
-    rows = []
+    all_rows: list[dict] = []
     for line in lines:
         if not line.strip():
             continue
         try:
-            row = json.loads(line)
+            all_rows.append(json.loads(line))
         except json.JSONDecodeError:
             continue
 
-        # When agent_call_ids specified, bypass all other filters
-        if agent_call_ids is not None:
-            if row.get("agent_call_id") in agent_call_ids:
-                rows.append(row)
-            continue
-
-        # Transcript alert rows have no ground truth in Bubble — skip
-        if row.get("alert_type") == "New Meeting Transcript Available":
-            continue
-
-        # Must have bubble_action set (classifier determined it should be in Bubble)
-        if not row.get("bubble_action"):
-            continue
-
-        if since_run_timestamp is not None:
-            ts = row.get("run_timestamp")
-            if ts is None or int(ts) < since_run_timestamp:
-                continue
-
-        rows.append(row)
-
+    # ── agent_call_ids bypass ────────────────────────────────────────────────
     if agent_call_ids is not None:
-        rows.sort(key=lambda r: r.get("run_timestamp", 0), reverse=True)
-        log.info("Selected %d row(s) by agent_call_id", len(rows))
-        return rows
+        result = [r for r in all_rows if r.get("agent_call_id") in agent_call_ids]
+        result.sort(key=lambda r: r.get("run_timestamp", 0), reverse=True)
+        log.info("Selected %d row(s) by agent_call_id", len(result))
+        return result
 
-    # Query Bubble to find which rows have matching records
+    # ── Time-window eligibility ──────────────────────────────────────────────
+    # Step 1: find anchor rows — those with a matching Bubble record
     event_keys, lib_urls = _build_bubble_match_sets()
 
-    matched = [r for r in rows if _row_matches_bubble(r, event_keys, lib_urls)]
-    log.info(
-        "row_selector: %d rows with bubble_action → %d matched in Bubble",
-        len(rows), len(matched),
-    )
+    candidate_rows = [
+        r for r in all_rows
+        if r.get("alert_type") != "New Meeting Transcript Available"
+        and (
+            since_run_timestamp is None
+            or (r.get("run_timestamp") is not None and int(r.get("run_timestamp", 0)) >= since_run_timestamp)
+        )
+    ]
+
+    anchor_rows = [r for r in candidate_rows if r.get("bubble_action") and _row_matches_bubble(r, event_keys, lib_urls)]
+    log.info("row_selector: %d anchor rows matched in Bubble", len(anchor_rows))
+
+    if not anchor_rows:
+        log.info("row_selector: no anchor rows found — no rows eligible")
+        return []
+
+    # Step 2: determine date window from anchor rows
+    anchor_dates = [r.get("alert_date_time", "") for r in anchor_rows if r.get("alert_date_time")]
+    anchor_dates.sort()
+    window_start = anchor_dates[0][:10]   # YYYY-MM-DD of earliest anchor
+    window_end = anchor_dates[-1][:10]    # YYYY-MM-DD of latest anchor
+    log.info("row_selector: date window %s → %s", window_start, window_end)
+
+    # Step 3: include all rows whose alert_date_time falls within the window
+    def _in_window(row: dict) -> bool:
+        dt = (row.get("alert_date_time") or "")[:10]
+        return bool(dt) and window_start <= dt <= window_end
+
+    eligible = [r for r in candidate_rows if _in_window(r)]
+    log.info("row_selector: %d rows fall within the date window", len(eligible))
 
     # Most recent first
-    matched.sort(key=lambda r: r.get("run_timestamp", 0), reverse=True)
+    eligible.sort(key=lambda r: r.get("alert_date_time", ""), reverse=True)
 
     # Deduplicate by agent_call_id, apply limit at call level,
-    # return all sibling rows for each selected call
+    # then return all sibling rows for each selected call
     seen: set[str] = set()
     selected_call_ids: list[str] = []
-    for row in matched:
+    for row in eligible:
         cid = row.get("agent_call_id", "")
         if cid and cid not in seen:
             seen.add(cid)
@@ -197,7 +209,7 @@ def load_eligible_rows(
         selected_call_ids = selected_call_ids[:limit]
 
     selected_set = set(selected_call_ids)
-    result = [r for r in matched if r.get("agent_call_id", "") in selected_set]
+    result = [r for r in eligible if r.get("agent_call_id", "") in selected_set]
 
     log.info(
         "Selected %d agent call(s) (%d total rows including siblings) for evaluation",
