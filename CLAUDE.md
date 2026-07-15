@@ -349,7 +349,7 @@ Dashboard shows "Sync to Bubble" button on rows with `bubble_action` set and no 
 | `wf/create-library-item/` | POST | Create library item | ✅ Working |
 | `wf/create-event` | POST | Create calendar event | 🔲 Pending test (blocked on calendaritemtype) |
 | `obj/libraryitemtype` | GET | Resolve library item type name → ID | ✅ Working |
-| `obj/calendaritemtype` | GET | Resolve event type name → ID | ❌ Returns 404 "Type not found" on both version-test and version-live — awaiting Mori fix |
+| `obj/calendaritemtype` | GET | Resolve event type name → ID | ✅ Fixed — must use versioned URL `/version-{version}/api/1.1/obj/calendaritemtype` with space constraint (non-versioned `/api/1.1/obj/` returns 404) |
 | `obj/chronicletopic` | GET | Resolve chronicle topic name → ID | ✅ Working |
 | `obj/organization` | GET | Resolve org name → ID | ✅ Working (test space only has 3 placeholder orgs — real NAIC orgs only in live) |
 
@@ -367,12 +367,11 @@ Dashboard shows "Sync to Bubble" button on rows with `bubble_action` set and no 
   - Organizations: empty — "Risk Based Capital Investment Risk & Evaluation (E) Working Group (NAIC RBC-IRE-WG)" not in test space
 - Event creation: not yet tested — blocked on `calendaritemtype` endpoint being 404
 
-**Known issues / gaps in Eidarix integration (as of 2026-07-09):**
-1. **`calendaritemtype` endpoint 404** — `GET /version-{version}/api/1.1/obj/calendaritemtype` returns "Type not found" on both test and live. Reported to Mori. Blocks event creation test.
-2. **Organizations empty in test space** — test space has only 3 placeholder orgs. Real NAIC org names only exist in live space. Organization field will be empty in all test-space syncs.
-3. **Chronicle topic name mismatch** — agent outputs "RBC Covariance & Asset Concentration Risk" but the correct Bubble name is "Life RBC Covariance & Asset Concentration Risk". Executor does exact-match lookup; fix is to normalize/fuzzy-match or update the agent instructions to use the full name.
-4. **`wf/update-event` endpoint** — not yet provided by Mori. Required for alert types where `event == "update"`.
-5. **Orphan agenda item** — `1783442800085x...` created during a failed first test run (before library item fix). Left in test space; Mori aware.
+**Known issues / gaps in Eidarix integration (as of 2026-07-15):**
+1. **Organizations empty in test space** — test space has only 3 placeholder orgs. Real NAIC org names only exist in live space. Organization field will be empty in all test-space syncs.
+2. **Chronicle topic name mismatch** — agent outputs "RBC Covariance & Asset Concentration Risk" but the correct Bubble name is "Life RBC Covariance & Asset Concentration Risk". Executor does exact-match lookup; fix is to normalize/fuzzy-match or update the agent instructions to use the full name.
+3. **Event creation not yet end-to-end tested** — `calendaritemtype` URL fix deployed 2026-07-15. First end-to-end test of `create-event` / `update-event` pending.
+4. **Orphan agenda item** — `1783442800085x...` created during a failed first test run (before library item fix). Left in test space; Mori aware.
 
 ## Conventions
 

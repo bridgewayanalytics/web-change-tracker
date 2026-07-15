@@ -40,22 +40,6 @@ _EIDARIX_SPACE_IDS = {
 }
 
 
-def _to_utc_z(dt_str: str) -> str:
-    """Convert an ISO 8601 datetime string (with or without timezone) to UTC 'Z' format.
-    Bubble's workflow endpoints reject timezone-offset datetimes (e.g. -04:00) in some fields.
-    Returns the original string unchanged if parsing fails.
-    """
-    if not dt_str:
-        return dt_str
-    try:
-        from datetime import timezone
-        dt = datetime.fromisoformat(dt_str)
-        if dt.tzinfo is not None:
-            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-        return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    except Exception:
-        return dt_str
-
 
 def _get_bucket() -> str:
     return os.environ.get("CHANGELOG_BUCKET") or os.environ.get("BUBBLE_ARTIFACT_BUCKET", "")
@@ -274,33 +258,57 @@ def _clean(field_ids: dict) -> dict:
 
 
 def _eidarix_wf_post(workflow: str, payload: dict) -> dict:
-    """POST to one of Mori's Eidarix workflow endpoints. Returns the parsed JSON response."""
+    """POST to one of Mori's Eidarix workflow endpoints. Returns the parsed JSON response.
+
+    Pass the workflow name exactly as Mori's spec shows (with or without trailing slash):
+      "create-agenda-item/"   — trailing slash required
+      "create-library-item/"  — trailing slash required
+      "create-event"          — no trailing slash
+      "update-event"          — no trailing slash
+    """
     import json
     import requests
     from bubble.bridgemind import BUBBLE_API_KEY
     version = _EIDARIX_VERSION
-    url = f"https://eidarix.bridgewayanalytics.com/version-{version}/api/1.1/wf/{workflow}/"
+    url = f"https://eidarix.bridgewayanalytics.com/version-{version}/api/1.1/wf/{workflow}"
     log.info("eidarix: POST %s payload=%s", workflow, json.dumps(payload, default=str))
     resp = requests.post(url, json=payload, headers={"Authorization": f"Bearer {BUBBLE_API_KEY}"}, timeout=30)
     log.info("eidarix: %s response status=%d body=%s", workflow, resp.status_code, resp.text[:500])
     resp.raise_for_status()
-    return resp.json()
+    data = resp.json()
+    if isinstance(data, dict) and data.get("success") is False and data.get("error"):
+        log.warning("eidarix: %s returned success=false error=%r", workflow, data.get("error"))
+    return data
 
 
 def _resolve_calendar_item_type_id(type_name: str) -> str | None:
     """
-    Resolve a calendar item type display name (e.g. "Meeting") to its Bubble _id
-    by querying the calendaritemtype endpoint for the active space.
-    Returns None if not found.
+    Resolve a calendar item type display name (e.g. "Meeting") to its Bubble _id.
+    Uses the versioned Eidarix URL — calendaritemtype is not accessible at the non-versioned
+    /api/1.1/obj/ base URL (returns 404 there); must use /version-{version}/api/1.1/obj/.
     """
-    from bubble.bridgemind import get_client, SPACE_CONSTRAINT
-    client = get_client()
+    import json
+    import requests
+    from bubble.bridgemind import BUBBLE_API_KEY
+    version = _EIDARIX_VERSION
+    space_id = _EIDARIX_SPACE_IDS.get(version, _EIDARIX_SPACE_IDS["test"])
+    url = f"https://eidarix.bridgewayanalytics.com/version-{version}/api/1.1/obj/calendaritemtype"
+    constraints = json.dumps([{"key": "space", "constraint_type": "equals", "value": space_id}])
     try:
-        result = client.search("calendaritemtype", constraints=SPACE_CONSTRAINT, limit=50)
-        for item in (result.get("results") or []):
+        resp = requests.get(
+            url,
+            params={"constraints": constraints, "limit": "50"},
+            headers={"Authorization": f"Bearer {BUBBLE_API_KEY}"},
+            timeout=15,
+        )
+        if not resp.ok:
+            log.warning("bubble_sync: calendaritemtype GET %d — %s", resp.status_code, resp.text[:300])
+            return None
+        results = (resp.json().get("response") or {}).get("results") or []
+        for item in results:
             if (item.get("display") or item.get("Title") or "").strip().lower() == type_name.strip().lower():
                 return item.get("_id")
-        log.warning("bubble_sync: calendar item type %r not found in Bubble", type_name)
+        log.warning("bubble_sync: calendar item type %r not found in Bubble (got %d types)", type_name, len(results))
     except Exception as e:
         log.warning("bubble_sync: could not resolve calendar item type %r: %s", type_name, e)
     return None
@@ -458,7 +466,7 @@ def _resolve_agenda_items(row: dict, agent_call_id: str, topic_name_to_id: dict[
         }
 
         try:
-            result = _eidarix_wf_post("create-agenda-item", payload)
+            result = _eidarix_wf_post("create-agenda-item/", payload)
             item_id = result.get("bubble_id") or result.get("id") or result.get("_id")
             if item_id:
                 resolved_ids.append(item_id)
@@ -617,7 +625,7 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
                     org_ids=org_ids,
                 )
                 log.info("bubble_sync: CREATE libraryitem via Eidarix wf — payload keys=%s", list(payload.keys()))
-                result = _eidarix_wf_post("create-library-item", payload)
+                result = _eidarix_wf_post("create-library-item/", payload)
                 bubble_library_item_id = result.get("bubble_id") or result.get("id") or result.get("_id")
                 if bubble_library_item_id:
                     log.info("bubble_sync: created libraryitem _id=%s", bubble_library_item_id)
