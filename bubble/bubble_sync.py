@@ -494,6 +494,7 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
     if not plan:
         return {"ok": False, "error": "no bubble_action on row — run backfill_bubble_action.py"}
 
+    run_agenda = action in ("all", "agenda_items")
     run_lib = action in ("all", "library_item")
     run_event = action in ("all", "event")
 
@@ -547,26 +548,50 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
 
     try:
         # ── Agenda items (Eidarix) ────────────────────────────────────────────
-        # Created first — agenda items → library item → event (Mori's required order)
-        # Also created for action="library_item" so they can be linked into the library item payload.
-        if plan.get("agenda_items") and action in ("all", "library_item"):
-            # Build topic name→ID map from the row's agenda item entries
-            agenda_entries = row.get("agenda_item_title_chronicle_topics") or []
-            all_topic_names = list({
-                t
-                for entry in agenda_entries
-                for t in (entry.get("chronicle_topics") or [])
-                if isinstance(t, str)
-            })
-            topic_name_to_id: dict[str, str] = {}
-            if all_topic_names:
-                from bubble.bridgemind import TYPE_CHRONICLE_TOPIC, SPACE_CONSTRAINT
-                for topic in client.list_all(TYPE_CHRONICLE_TOPIC, constraints=SPACE_CONSTRAINT):
-                    name = (topic.get("Title") or "").strip()
-                    if name in all_topic_names:
-                        topic_name_to_id[name] = topic.get("_id") or ""
-            agenda_item_ids = _resolve_agenda_items(row, agent_call_id, topic_name_to_id, client)
-            log.info("bubble_sync: created %d agenda item(s) via Eidarix", len(agenda_item_ids))
+        # Order: agenda items → library item → event
+        # action="agenda_items": create/link and patch IDs onto row, then return early
+        # action="library_item": pick up previously created IDs from row; fall back to creating inline
+        # action="all": create inline then continue to library item + event
+        if plan.get("agenda_items") and (run_agenda or run_lib):
+            existing_agenda_ids = [str(i) for i in (row.get("eidarix_agenda_item_ids") or []) if i]
+            if existing_agenda_ids and action == "library_item":
+                # Already created in a prior agenda_items step — just pick them up
+                agenda_item_ids = existing_agenda_ids
+                log.info("bubble_sync: action=library_item — using existing eidarix_agenda_item_ids=%s", agenda_item_ids)
+            else:
+                # Build topic name→ID map from the row's agenda item entries
+                agenda_entries = row.get("agenda_item_title_chronicle_topics") or []
+                all_agenda_topic_names = list({
+                    t
+                    for entry in agenda_entries
+                    for t in (entry.get("chronicle_topics") or [])
+                    if isinstance(t, str)
+                })
+                topic_name_to_id: dict[str, str] = {}
+                if all_agenda_topic_names:
+                    from bubble.bridgemind import TYPE_CHRONICLE_TOPIC, SPACE_CONSTRAINT
+                    for topic in client.list_all(TYPE_CHRONICLE_TOPIC, constraints=SPACE_CONSTRAINT):
+                        name = (topic.get("Title") or "").strip()
+                        if name in all_agenda_topic_names:
+                            topic_name_to_id[name] = topic.get("_id") or ""
+                agenda_item_ids = _resolve_agenda_items(row, agent_call_id, topic_name_to_id, client)
+                log.info("bubble_sync: resolved %d agenda item(s)", len(agenda_item_ids))
+
+                if run_agenda:
+                    # Patch IDs so subsequent library_item step can pick them up
+                    patch_jsonl_row(
+                        _ALERTS_TABLE_KEY,
+                        {"agent_call_id": agent_call_id},
+                        {"eidarix_agenda_item_ids": agenda_item_ids},
+                        bucket=bucket,
+                    )
+                    return {
+                        "ok": True,
+                        "plan": plan,
+                        "eidarix_agenda_item_ids": agenda_item_ids,
+                        "bubble_event_id": None,
+                        "bubble_library_item_id": None,
+                    }
 
         # ── Library item ─────────────────────────────────────────────────────
         if run_lib:
