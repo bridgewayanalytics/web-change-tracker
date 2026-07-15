@@ -36,8 +36,7 @@ def run(
 ) -> list[dict]:
     from eval.row_selector import load_eligible_rows
     from eval.html_fetcher import fetch_html_snapshots
-    from eval.context_builder import fetch_context, fetch_non_search_context
-    from eval.eval_agent import evaluate_row, _pgvector_enabled
+    from eval.eval_agent import evaluate_row
     from eval.result_store import store_eval_results
 
     eval_run_id = _make_eval_run_id()
@@ -97,14 +96,7 @@ def run(
 
         # Fetch HTML once — all siblings share the same run/target/HTML
         before_html, after_html = fetch_html_snapshots(representative)
-        # When pgvector is enabled, the eval agent searches the knowledge base
-        # directly via tools — only inject deterministic context (org tree,
-        # Bubble ground truth, presence check). Otherwise pre-fetch search results.
-        reference_context = (
-            fetch_non_search_context(representative)
-            if _pgvector_enabled()
-            else fetch_context(representative)
-        )
+        reference_context = ""
 
         for row in group:
             evaluated += 1
