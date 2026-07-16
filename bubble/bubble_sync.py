@@ -276,8 +276,9 @@ def _eidarix_wf_post(workflow: str, payload: dict) -> dict:
     log.info("eidarix: %s response status=%d body=%s", workflow, resp.status_code, resp.text[:500])
     resp.raise_for_status()
     data = resp.json()
-    if isinstance(data, dict) and data.get("success") is False and data.get("error"):
-        log.warning("eidarix: %s returned success=false error=%r", workflow, data.get("error"))
+    if isinstance(data, dict) and data.get("success") is False:
+        error_msg = data.get("error") or "unknown error"
+        raise RuntimeError(f"Eidarix error: {error_msg}")
     return data
 
 
@@ -384,9 +385,8 @@ def _build_library_item_wf_payload(
         "title": title,
         "alert_id": agent_call_id,
         "space_id": space_id,
+        "chronicle_topics": topic_ids,  # always include; empty list lets Eidarix enforce the requirement
     }
-    if topic_ids:
-        payload["chronicle_topics"] = topic_ids
     if agenda_item_ids:
         payload["agenda_items"] = agenda_item_ids
     if date:
@@ -680,9 +680,8 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
                 event_payload: dict = {
                     "alert_id": agent_call_id,
                     "space_id": space_id,
+                    "chronicle_topics": event_topic_ids,  # always include; empty list lets Eidarix enforce
                 }
-                if event_topic_ids:
-                    event_payload["chronicle_topics"] = event_topic_ids
                 if agenda_item_ids:
                     event_payload["agenda_items"] = agenda_item_ids
                 if bubble_library_item_id:
@@ -746,9 +745,8 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
                         "id": existing_event_id,
                         "alert_id": agent_call_id,
                         "space_id": space_id,
+                        "chronicle_topics": update_event_topic_ids,  # always include
                     }
-                    if update_event_topic_ids:
-                        update_payload["chronicle_topics"] = update_event_topic_ids
                     if agenda_item_ids:
                         update_payload["agenda_items"] = agenda_item_ids
                     if bubble_library_item_id:
