@@ -95,8 +95,9 @@ def _build_user_message(
     reference_context: str,
     sibling_rows: list[dict] | None = None,
 ) -> str:
+    _EXCLUDE_KEYS = {"ingest_status", "bubble_sync_status", "bubble_sync_error"}
     alert_json = json.dumps(
-        {k: v for k, v in row.items() if not k.startswith("bubble_action")},
+        {k: v for k, v in row.items() if k not in _EXCLUDE_KEYS and not k.startswith("bubble_action")},
         indent=2,
         default=str,
     )
