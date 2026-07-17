@@ -501,6 +501,13 @@ def classify_alert(alert: dict) -> BubbleSyncPlan:
         if _is_na(alert.get("event_title")) and _is_na(alert.get("event_start_date_time")):
             ev_action = None
 
+    # Override agenda=True if the alert has real agenda items the type map doesn't expect
+    if not agenda:
+        for _item in (alert.get("agenda_item_title_chronicle_topics") or []):
+            if isinstance(_item, dict) and not _is_na(_item.get("agenda_item_title") or ""):
+                agenda = True
+                break
+
     return BubbleSyncPlan(
         applicable=True,
         event_action=ev_action,  # type: ignore[arg-type]
