@@ -320,6 +320,21 @@ def _build_library_item_preview(alert: dict, alert_type: str, lib_action: str | 
         field_ids = {}
         match_search = {}
 
+    # Chronicle topics from the alert's agenda items (page change agent output)
+    _topics: list[str] = []
+    _seen: set[str] = set()
+    for _item in (alert.get("agenda_item_title_chronicle_topics") or []):
+        if not isinstance(_item, dict):
+            continue
+        for _t in (_item.get("chronicle_topics") or []):
+            _t_str = str(_t).strip()
+            if _t_str and _t_str.lower() not in _NA_VALUES and _t_str not in _seen:
+                _topics.append(_t_str)
+                _seen.add(_t_str)
+    if _topics and "topics___dt_list_custom_newsreel_update" not in field_ids:
+        fields["Topics"] = ", ".join(_topics)
+        field_ids["topics___dt_list_custom_newsreel_update"] = _topics
+
     return {
         # Existing keys — backward compat
         "title": title if not _is_na(title) else "",
@@ -480,6 +495,11 @@ def classify_alert(alert: dict) -> BubbleSyncPlan:
         return BubbleSyncPlan(applicable=False)
 
     ev_action, lib_action, agenda = _TYPE_MAP.get(alert_type, ("update", "create", False))
+
+    # Suppress event action if the agent reported no associated event
+    if ev_action is not None:
+        if _is_na(alert.get("event_title")) and _is_na(alert.get("event_start_date_time")):
+            ev_action = None
 
     return BubbleSyncPlan(
         applicable=True,
