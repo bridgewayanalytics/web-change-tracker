@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 log = logging.getLogger(__name__)
 
 _DEFAULT_BUCKET = "web-change-tracker-prod-artifacts-815039343351"
-_HTML_CHAR_LIMIT = 30_000
+_HTML_CHAR_LIMIT = None  # no truncation — eval agent needs the full page
 
 
 def _get_bucket() -> str:
@@ -64,7 +64,7 @@ def fetch_html_snapshots(row: dict) -> tuple[str, str]:
         try:
             resp = client.get_object(Bucket=bucket, Key=key)
             text = resp["Body"].read().decode("utf-8", errors="replace")
-            return text[:_HTML_CHAR_LIMIT]
+            return text if _HTML_CHAR_LIMIT is None else text[:_HTML_CHAR_LIMIT]
         except client.exceptions.NoSuchKey:
             log.debug("HTML snapshot not found: s3://%s/%s", bucket, key)
             return ""
