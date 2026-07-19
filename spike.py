@@ -2725,7 +2725,9 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
         # Write an empty result so the dashboard can show "no change" rather than a hard failure
         config_hash = get_config_hash()
         rerun_timestamp = datetime.now(timezone.utc).isoformat()
-        # Fetch original rows for comparison
+        # Fetch original rows for comparison — exclude synthetic rows (transcripts)
+        # so the accept route does not delete them when replacing page_change_agent rows.
+        _SYNTHETIC_TYPES = {"New Meeting Transcript Available"}
         original_rows: list[dict] = []
         try:
             jsonl_body = s3.get_object(Bucket=bucket, Key="alerts/alerts_table.jsonl")["Body"].read().decode("utf-8")
@@ -2736,7 +2738,8 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
                 try:
                     row = json.loads(line)
                     if row.get("run_id") == rerun_run_id and row.get("target_id") == rerun_target_id:
-                        original_rows.append(row)
+                        if row.get("alert_type") not in _SYNTHETIC_TYPES:
+                            original_rows.append(row)
                 except Exception:
                     pass
         except Exception:
@@ -2849,7 +2852,9 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
         agent_call_id=agent_call_id,
     )
 
-    # Fetch original rows for diff
+    # Fetch original rows for diff — exclude synthetic rows (transcripts)
+    # so the accept route does not delete them when replacing page_change_agent rows.
+    _SYNTHETIC_TYPES = {"New Meeting Transcript Available"}
     original_rows: list[dict] = []
     try:
         jsonl = s3.get_object(Bucket=bucket, Key="alerts/alerts_table.jsonl")["Body"].read().decode("utf-8")
@@ -2860,7 +2865,8 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
             try:
                 row = json.loads(line)
                 if row.get("run_id") == rerun_run_id and row.get("target_id") == rerun_target_id:
-                    original_rows.append(row)
+                    if row.get("alert_type") not in _SYNTHETIC_TYPES:
+                        original_rows.append(row)
             except Exception:
                 pass
     except Exception:
