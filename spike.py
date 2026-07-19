@@ -2718,7 +2718,7 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
     # Keep "No Meaningful Change" for docs mode (still need to identify library items from the
     # result); filter it only for alerts-only reruns where it would produce no rows.
     from bubble.page_change_agent import _is_no_meaningful_change
-    agent_alerts_for_rows = [a for a in agent_alerts if not _is_no_meaningful_change(a)]
+    agent_alerts_for_rows = [a for a in agent_alerts if not _is_no_meaningful_change(a) and a.get("alert_type")]
 
     if not agent_alerts_for_rows and rerun_mode == "alerts":
         log.warning("rerun: agent returned no meaningful output — writing empty result")

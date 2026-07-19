@@ -545,6 +545,10 @@ def extract_page_change(
                 pgvector_namespaces if isinstance(pgvector_namespaces, list) else [],
             ))
 
+            if not raw:
+                log.warning("page_change_agent: pgvector step returned empty output — treating as no change (call_id=%s)", agent_call_id[:8])
+                return []
+
             # Step 2: enforce schema via Structured Outputs so output always
             # matches DynamoDB schema (same pattern as document_agent.py)
             json_schema = _get_output_json_schema()
@@ -659,6 +663,9 @@ def extract_page_change(
                 )
                 alert["alert_type"] = "New or Updated Report or Other Resource"
 
+        # Drop any dicts that have no alert_type — these are malformed outputs
+        # (e.g. empty {} from pgvector returning no text) that would produce blank rows.
+        alerts = [a for a in alerts if a.get("alert_type")]
         log.info("page_change_agent: produced %d alert(s) (call_id=%s)", len(alerts), agent_call_id[:8])
         return alerts
 
