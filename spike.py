@@ -2855,6 +2855,10 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
     # Fetch original rows for diff — exclude synthetic rows (transcripts)
     # so the accept route does not delete them when replacing page_change_agent rows.
     _SYNTHETIC_TYPES = {"New Meeting Transcript Available"}
+    # When the dashboard passes RERUN_AGENT_CALL_ID, ensure that specific row
+    # comes first so its identity fields (agent_call_id, alert_date_time) are
+    # stamped on the rerun output, preserving QA eval association and sort position.
+    rerun_agent_call_id = os.environ.get("RERUN_AGENT_CALL_ID", "").strip()
     original_rows: list[dict] = []
     try:
         jsonl = s3.get_object(Bucket=bucket, Key="alerts/alerts_table.jsonl")["Body"].read().decode("utf-8")
@@ -2871,6 +2875,11 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
                 pass
     except Exception:
         pass
+
+    # If the caller specified which row was re-evaluated, sort it to the front
+    # so its identity fields take priority in the stamp loop below.
+    if rerun_agent_call_id and len(original_rows) > 1:
+        original_rows.sort(key=lambda r: 0 if r.get("agent_call_id") == rerun_agent_call_id else 1)
 
     # Preserve identity fields from the original rows on the rerun output so
     # that agent_call_id (QA eval key) and alert_date_time never change across
