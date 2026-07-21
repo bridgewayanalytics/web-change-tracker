@@ -154,12 +154,17 @@ def main():
     if args.agent_call_ids:
         call_ids = [x.strip() for x in args.agent_call_ids.split(",")]
 
-    run(
-        limit=args.limit,
-        since_run_timestamp=args.since_run_timestamp,
-        agent_call_ids=call_ids,
-        dry_run=args.dry_run,
-    )
+    try:
+        run(
+            limit=args.limit,
+            since_run_timestamp=args.since_run_timestamp,
+            agent_call_ids=call_ids,
+            dry_run=args.dry_run,
+        )
+    except Exception:
+        import traceback
+        log.error("Eval run failed with unhandled exception:\n%s", traceback.format_exc())
+        raise
 
 
 if __name__ == "__main__":

@@ -16,18 +16,22 @@ export PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}"
 [[ -n "${EMAIL_FROM:-}" ]] && export FROM_EMAIL="$EMAIL_FROM"
 [[ -n "${EMAIL_TO:-}" ]] && export TO_EMAILS="$EMAIL_TO"
 
-# Download targets.json from S3 if TARGETS_SOURCE is an s3:// URI
+# Download targets.json from S3 if TARGETS_SOURCE is an s3:// URI.
+# Failure is non-fatal: eval/backfill tasks don't need targets.json.
 if [[ -n "${TARGETS_SOURCE:-}" && "${TARGETS_SOURCE}" == s3://* ]]; then
   echo "Fetching targets from ${TARGETS_SOURCE}..."
   python -c "
-import os, re, boto3
+import os, re, boto3, sys
 from pathlib import Path
 uri = os.environ.get('TARGETS_SOURCE', '')
 m = re.match(r's3://([^/]+)/(.+)', uri)
 if m:
     bucket, key = m.group(1), m.group(2)
-    Path('/app/targets.json').write_bytes(boto3.client('s3').get_object(Bucket=bucket, Key=key)['Body'].read())
-"
+    try:
+        Path('/app/targets.json').write_bytes(boto3.client('s3').get_object(Bucket=bucket, Key=key)['Body'].read())
+    except Exception as e:
+        print(f'WARNING: failed to fetch targets from S3: {e}', file=sys.stderr)
+" || echo "WARNING: targets download script failed — using bundled targets.json" >&2
   export TARGETS_FILE=/app/targets.json
 fi
 
