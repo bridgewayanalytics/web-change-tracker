@@ -507,9 +507,6 @@ def extract_page_change(
         context_block = (
             f"Page: {label}\n"
             f"URL: {url}\n"
-            f"Org path: {' > '.join(org_path) if isinstance(org_path, list) else org_path}\n"
-            f"Group: {group}\n"
-            f"Tags: {', '.join(tags) if isinstance(tags, list) else tags}\n"
             f"Pipeline run time (Eastern): {run_time_et}"
         )
 
