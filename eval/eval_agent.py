@@ -95,7 +95,15 @@ def _build_user_message(
     reference_context: str,
     sibling_rows: list[dict] | None = None,
 ) -> str:
-    _EXCLUDE_KEYS = {"ingest_status", "bubble_sync_status", "bubble_sync_error"}
+    _EXCLUDE_KEYS = {
+        # pipeline metadata — not agent output fields
+        "run_id", "run_timestamp", "target_id", "source_url", "config_hash",
+        "agent_call_id", "eval_run_id", "eval_timestamp", "eval_scores",
+        "eval_row_key", "recording_s3_key", "transcript_s3_key",
+        "extraction_source", "ingest_status", "bubble_sync_status",
+        "bubble_sync_error", "eidarix_agenda_item_ids", "bubble_library_item_id",
+        "bubble_event_id",
+    }
     alert_json = json.dumps(
         {k: v for k, v in row.items() if k not in _EXCLUDE_KEYS and not k.startswith("bubble_action")},
         indent=2,
