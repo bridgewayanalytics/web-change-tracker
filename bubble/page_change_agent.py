@@ -491,18 +491,20 @@ def extract_page_change(
 
         label = target_context.get("label", "")
         url = target_context.get("url", "")
-        org_path = target_context.get("org_path", [])
-        group = target_context.get("group", "")
-        tags = target_context.get("tags", [])
 
-        from datetime import datetime
+        from datetime import datetime, timezone
         try:
             from zoneinfo import ZoneInfo
             _et = ZoneInfo("America/New_York")
         except ImportError:
             import pytz
             _et = pytz.timezone("America/New_York")
-        run_time_et = datetime.now(tz=_et).isoformat(timespec="seconds")
+
+        original_run_timestamp = target_context.get("original_run_timestamp")
+        if original_run_timestamp:
+            run_time_et = datetime.fromtimestamp(int(original_run_timestamp), tz=timezone.utc).astimezone(_et).isoformat(timespec="seconds")
+        else:
+            run_time_et = datetime.now(tz=_et).isoformat(timespec="seconds")
 
         context_block = (
             f"Page: {label}\n"

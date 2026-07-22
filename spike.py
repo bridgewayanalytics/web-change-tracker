@@ -2706,6 +2706,7 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
         "org_path": [],
         "group": "",
         "tags": [],
+        "original_run_timestamp": meta.get("run_timestamp"),
     }
 
     from bubble.page_change_agent import extract_page_change, get_config_hash, PAGE_CHANGE_AGENT_ENABLED
