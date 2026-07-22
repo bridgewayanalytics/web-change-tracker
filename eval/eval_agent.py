@@ -117,6 +117,11 @@ def _build_user_message(
             _build_sibling_summary(sibling_rows),
         ]
 
+    from bubble.org_tree import get_org_tree
+    org_tree = get_org_tree()
+    if org_tree:
+        parts += ["\n## Organization Reference (valid org names — use this to evaluate the organization field)", org_tree]
+
     if before_html:
         parts += ["\n## Before HTML (what the page looked like before the change)", before_html]
 
