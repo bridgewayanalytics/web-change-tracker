@@ -109,12 +109,19 @@ def _resolve_org_ids(org_names: list[str], client) -> list[str]:
         if name and oid:
             name_to_id[name] = oid
     ids = []
+    missing = []
     for name in org_names:
         oid = name_to_id.get(name)
         if oid:
             ids.append(oid)
         else:
-            log.warning("bubble_sync: org name not found in Bubble: %r", name)
+            missing.append(name)
+    if missing:
+        raise RuntimeError(
+            f"Organization(s) not found in Bubble: {missing}. "
+            f"Check that the org names match exactly and that the correct Eidarix space is configured "
+            f"(EIDARIX_VERSION={_EIDARIX_VERSION})."
+        )
     return ids
 
 
@@ -198,18 +205,24 @@ def _find_library_item(match_search: dict, client) -> str | None:
 
 
 def _find_agenda_item_by_title(title: str, client) -> str | None:
-    """Look up an existing agendaitem in Bubble by BA title. Returns Bubble _id if found."""
+    """
+    Look up an existing agendaitem in Bubble by title.
+    Tries 'title' first (the key used by the create-agenda-item workflow), then 'BA title'
+    as a fallback in case the Data API exposes it under the display name.
+    Returns Bubble _id if found.
+    """
     from bubble.bridgemind import SPACE_CONSTRAINT
-    result = client.search(
-        "agendaitem",
-        constraints=list(SPACE_CONSTRAINT) + [{"key": "BA title", "constraint_type": "equals", "value": title}],
-        limit=5,
-    )
-    items = result.get("results", [])
-    if items:
-        log.info("bubble_sync: found existing agendaitem '%s' → id=%s", title, items[0].get("_id"))
-        return items[0].get("_id")
-    log.warning("bubble_sync: agendaitem not found by title '%s'", title)
+    for field_key in ("title", "BA title"):
+        result = client.search(
+            "agendaitem",
+            constraints=list(SPACE_CONSTRAINT) + [{"key": field_key, "constraint_type": "equals", "value": title}],
+            limit=5,
+        )
+        items = result.get("results", [])
+        if items:
+            log.info("bubble_sync: found existing agendaitem '%s' via field '%s' → id=%s", title, field_key, items[0].get("_id"))
+            return items[0].get("_id")
+    log.warning("bubble_sync: agendaitem not found by title '%s' (tried 'title' and 'BA title')", title)
     return None
 
 
@@ -466,7 +479,11 @@ def _resolve_agenda_items(row: dict, agent_call_id: str, topic_name_to_id: dict[
             if existing_id:
                 resolved_ids.append(existing_id)
             else:
-                log.warning("bubble_sync: could not find existing agendaitem '%s', skipping link", title)
+                raise RuntimeError(
+                    f"Agenda item not found in Bubble: '{title}' (status={status}). "
+                    f"The agenda item must exist in Bubble before the library item can link to it. "
+                    f"Check EIDARIX_VERSION={_EIDARIX_VERSION} — the item may only exist in the live space."
+                )
             continue
 
         off_entry = official_titles[i] if i < len(official_titles) else {}
