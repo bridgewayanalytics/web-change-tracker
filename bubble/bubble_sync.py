@@ -566,17 +566,6 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
         ep = plan.get("event_preview") or {}
         lp = plan.get("library_item_preview") or {}
 
-    # Org name → ID (shared; org names appear in both event and lib previews)
-    org_names: list[str] = ep.get("group") or lp.get("group") or []
-    org_ids = _resolve_org_ids(org_names, client) if org_names else []
-
-    # Chronicle topic name → ID resolution (topics come from doc extraction enrichment)
-    _topic_key = "topics___dt_list_custom_newsreel_update"
-    ep_topic_names = [t for t in ((ep.get("field_ids") or {}).get(_topic_key) or []) if isinstance(t, str)]
-    lp_topic_names = [t for t in ((lp.get("field_ids") or {}).get(_topic_key) or []) if isinstance(t, str)]
-    all_topic_names = list({*ep_topic_names, *lp_topic_names})
-    topic_ids = _resolve_chronicle_topic_ids(all_topic_names, client) if all_topic_names else []
-
     bubble_library_item_id: str | None = None
     bubble_event_id: str | None = None
     agenda_item_ids: list[str] = []
@@ -595,6 +584,18 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
             log.info("bubble_sync: action=event — linking existing eidarix_agenda_item_ids=%s", agenda_item_ids)
 
     try:
+        # Org name → ID (shared; org names appear in both event and lib previews).
+        # Resolved inside try so errors are caught and patched as bubble_sync_error.
+        org_names: list[str] = ep.get("group") or lp.get("group") or []
+        org_ids = _resolve_org_ids(org_names, client) if org_names else []
+
+        # Chronicle topic name → ID resolution (topics come from doc extraction enrichment).
+        _topic_key = "topics___dt_list_custom_newsreel_update"
+        ep_topic_names = [t for t in ((ep.get("field_ids") or {}).get(_topic_key) or []) if isinstance(t, str)]
+        lp_topic_names = [t for t in ((lp.get("field_ids") or {}).get(_topic_key) or []) if isinstance(t, str)]
+        all_topic_names = list({*ep_topic_names, *lp_topic_names})
+        topic_ids = _resolve_chronicle_topic_ids(all_topic_names, client) if all_topic_names else []
+
         # ── Agenda items (Eidarix) ────────────────────────────────────────────
         # Order: agenda items → library item → event
         # action="agenda_items": create/link and patch IDs onto row, then return early
