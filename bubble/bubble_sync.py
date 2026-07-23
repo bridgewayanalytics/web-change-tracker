@@ -117,10 +117,9 @@ def _resolve_org_ids(org_names: list[str], client) -> list[str]:
         else:
             missing.append(name)
     if missing:
-        raise RuntimeError(
-            f"Organization(s) not found in Bubble: {missing}. "
-            f"Check that the org names match exactly and that the correct Eidarix space is configured "
-            f"(EIDARIX_VERSION={_EIDARIX_VERSION})."
+        log.warning(
+            "bubble_sync: org(s) not found in Bubble — leaving blank: %r (EIDARIX_VERSION=%s)",
+            missing, _EIDARIX_VERSION,
         )
     return ids
 
