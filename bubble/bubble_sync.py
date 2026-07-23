@@ -234,6 +234,29 @@ def _resolve_chronicle_topic_ids(topic_names: list[str], client) -> list[str]:
     return ids
 
 
+def _get_empty_topic_id(client) -> str | None:
+    """
+    Look up the chronicle topic designated as the fallback for events with no topics.
+    Identified by the 'empty topic' boolean field being true in Bubble.
+    Returns Bubble _id if found, None otherwise.
+    """
+    from bubble.bridgemind import TYPE_CHRONICLE_TOPIC, SPACE_CONSTRAINT
+    try:
+        constraints = list(SPACE_CONSTRAINT) + [
+            {"key": "empty topic", "constraint_type": "equals", "value": True}
+        ]
+        result = client.search(TYPE_CHRONICLE_TOPIC, constraints=constraints, limit=5)
+        items = result.get("results") or []
+        if items:
+            tid = items[0].get("_id")
+            log.info("bubble_sync: found empty-topic fallback '%s' id=%s", items[0].get("Title"), tid)
+            return tid
+        log.warning("bubble_sync: no chronicle topic with 'empty topic=true' found in Bubble")
+    except Exception as e:
+        log.warning("bubble_sync: could not fetch empty-topic fallback: %s", e)
+    return None
+
+
 def _inject_org_ids(field_ids: dict, org_ids: list[str]) -> dict:
     """Replace org name lists with resolved org ID lists in a field_ids dict."""
     out = dict(field_ids)
@@ -679,6 +702,10 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
                 if agenda_topic_names_for_event:
                     extra_ids = _resolve_chronicle_topic_ids(agenda_topic_names_for_event, client)
                     event_topic_ids = list({*event_topic_ids, *extra_ids})
+                if not event_topic_ids:
+                    fallback_id = _get_empty_topic_id(client)
+                    if fallback_id:
+                        event_topic_ids = [fallback_id]
 
                 event_payload: dict = {
                     "alert_id": agent_call_id,
@@ -746,6 +773,10 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
                     if agenda_topic_names_for_update:
                         extra_ids = _resolve_chronicle_topic_ids(agenda_topic_names_for_update, client)
                         update_event_topic_ids = list({*update_event_topic_ids, *extra_ids})
+                    if not update_event_topic_ids:
+                        fallback_id = _get_empty_topic_id(client)
+                        if fallback_id:
+                            update_event_topic_ids = [fallback_id]
 
                     update_payload: dict = {
                         "id": existing_event_id,
