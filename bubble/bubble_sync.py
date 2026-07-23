@@ -641,7 +641,10 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
                         client.patch(TYPE_LIBRARY_ITEM, existing_lib_id, field_ids, scope="sync")
                     bubble_library_item_id = existing_lib_id
                 else:
-                    log.warning("bubble_sync: UPDATE libraryitem — no existing record for match_search=%s", lp.get("match_search"))
+                    raise RuntimeError(
+                        f"No matched library item was found — could not locate existing record "
+                        f"for match_search={lp.get('match_search')}"
+                    )
 
         # ── Calendar item ─────────────────────────────────────────────────────
         if run_event:
@@ -710,7 +713,10 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
             elif event_action == "update":
                 existing_event_id = _find_calendar_item(ep.get("match_search") or {}, client)
                 if not existing_event_id:
-                    log.warning("bubble_sync: UPDATE calendaritem — no existing record for match_search=%s, skipping", ep.get("match_search"))
+                    raise RuntimeError(
+                        f"No matched event was found — could not locate existing calendar item "
+                        f"for match_search={ep.get('match_search')}"
+                    )
                 else:
                     space_id = _EIDARIX_SPACE_IDS.get(_EIDARIX_VERSION, _EIDARIX_SPACE_IDS["test"])
 
