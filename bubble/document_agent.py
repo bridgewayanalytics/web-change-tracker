@@ -259,21 +259,15 @@ def _parse_output(raw: str) -> dict:
 # PDF fetch helper
 # ---------------------------------------------------------------------------
 
-def _fetch_pdf_text(url: str) -> str | None:
-    """
-    Fetch a PDF from `url` and extract plain text.
-    Returns None on any failure (network error, not a PDF, parse error, etc.).
-    Only attempts fetch for URLs that look like PDFs.
-    """
+def _fetch_single_pdf(url: str) -> str | None:
+    """Fetch and extract text from a single PDF URL. Returns None on any failure."""
+    url = url.strip()
     if not url or not url.lower().endswith(".pdf"):
         return None
     try:
         import requests
         resp = requests.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
         resp.raise_for_status()
-        content_type = resp.headers.get("Content-Type", "")
-        if "pdf" not in content_type.lower() and not url.lower().endswith(".pdf"):
-            return None
         from scrape.pdf_meeting_meta import _extract_plain_text
         text = _extract_plain_text(resp.content)
         if text and text.strip():
@@ -282,6 +276,26 @@ def _fetch_pdf_text(url: str) -> str | None:
     except Exception as e:
         log.debug("document_agent: could not fetch PDF text from %s: %s", url[:80], e)
     return None
+
+
+def _fetch_pdf_text(url: str) -> str | None:
+    """
+    Fetch a PDF from `url` and extract plain text.
+    Handles semicolon-separated multi-URL fields by trying each URL and
+    concatenating results up to _PDF_TEXT_LIMIT chars total.
+    Returns None if no PDF content could be extracted.
+    """
+    if not url:
+        return None
+    candidates = [u.strip() for u in url.split(";") if u.strip()]
+    parts: list[str] = []
+    for candidate in candidates:
+        text = _fetch_single_pdf(candidate)
+        if text:
+            parts.append(text)
+    if not parts:
+        return None
+    return "\n\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -339,12 +353,17 @@ def extract_document_data(
         if not pdf_text and document_url:
             pdf_text = _fetch_pdf_text(document_url)
 
+        from bubble.org_tree import get_org_tree
+        org_tree = get_org_tree()
+
         lines = [
             f"Document title: {document_name}",
             f"URL: {document_url}",
         ]
         if pdf_text:
             lines.append(f"\nDocument content:\n{pdf_text[:(text_limit or _PDF_TEXT_LIMIT)]}")
+        if org_tree:
+            lines.append(f"\n=== ORGANIZATION REFERENCE ===\n{org_tree}")
         user_content = "\n".join(lines)
 
         json_schema = _get_output_json_schema()
