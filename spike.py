@@ -2688,15 +2688,21 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
             break
 
     if not meta_key:
-        log.error("rerun: could not find meta.json for run_id=%s target_id=%s", rerun_run_id, rerun_target_id)
-        raise SystemExit(1)
+        if rerun_mode == "docs":
+            log.warning("rerun: meta.json not found for run_id=%s target_id=%s — proceeding with empty meta for docs mode", rerun_run_id, rerun_target_id)
+            meta = {}
+            before_html = ""
+            after_html = "placeholder"  # not used in docs mode; avoids after_html check below
+        else:
+            log.error("rerun: could not find meta.json for run_id=%s target_id=%s", rerun_run_id, rerun_target_id)
+            raise SystemExit(1)
+    else:
+        run_prefix = meta_key[: -len("/meta.json")]
+        meta = json.loads(_fetch(meta_key))
+        before_html = _fetch(f"{run_prefix}/before.html")
+        after_html = _fetch(f"{run_prefix}/after.html")
 
-    run_prefix = meta_key[: -len("/meta.json")]
-    meta = json.loads(_fetch(meta_key))
-    before_html = _fetch(f"{run_prefix}/before.html")
-    after_html = _fetch(f"{run_prefix}/after.html")
-
-    if not after_html:
+    if not after_html and rerun_mode != "docs":
         log.error("rerun: no after.html for run_id=%s target_id=%s", rerun_run_id, rerun_target_id)
         raise SystemExit(1)
 
@@ -2714,12 +2720,14 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
         log.error("rerun: PAGE_CHANGE_AGENT_ENABLED is false — cannot rerun")
         raise SystemExit(1)
 
-    log.info("rerun: running page_change_agent...")
-    agent_alerts = extract_page_change(before_html, after_html, target_context)
-    # Keep "No Meaningful Change" for docs mode (still need to identify library items from the
-    # result); filter it only for alerts-only reruns where it would produce no rows.
-    from bubble.page_change_agent import _is_no_meaningful_change
-    agent_alerts_for_rows = [a for a in agent_alerts if not _is_no_meaningful_change(a) and a.get("alert_type")]
+    agent_alerts_for_rows: list[dict] = []
+    if rerun_mode in ("alerts", "both"):
+        log.info("rerun: running page_change_agent...")
+        agent_alerts = extract_page_change(before_html, after_html, target_context)
+        from bubble.page_change_agent import _is_no_meaningful_change
+        agent_alerts_for_rows = [a for a in agent_alerts if not _is_no_meaningful_change(a) and a.get("alert_type")]
+    else:
+        log.info("rerun: skipping page_change_agent (mode=%s)", rerun_mode)
 
     if not agent_alerts_for_rows and rerun_mode == "alerts":
         log.warning("rerun: agent returned no meaningful output — writing empty result")
