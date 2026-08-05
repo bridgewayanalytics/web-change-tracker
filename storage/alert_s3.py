@@ -197,6 +197,7 @@ def _build_doc_extraction_rows(
     target_id: str,
     source_url: str,
     agent_call_id: str = "",
+    config_hash: str = "",
 ) -> list[dict]:
     """
     Build document_extractions_table rows — one per library item processed.
@@ -221,6 +222,8 @@ def _build_doc_extraction_rows(
             "library_item_url": item.get("url") or "",
             "library_item_file_name": item.get("file_name") or "",
         }
+        if config_hash:
+            row["config_hash"] = config_hash
         # All document agent output fields verbatim
         for key, val in extraction.items():
             row[key] = val
@@ -324,11 +327,18 @@ def store_run_alerts(
     date_prefix = _date_prefix(run_timestamp)
     run_timestamp_iso = datetime.fromtimestamp(run_timestamp, tz=timezone.utc).isoformat()
 
-    # Compute config hash once per run (empty string if agent not importable)
+    # Compute config hashes once per run (empty string if agent not importable)
     config_hash = ""
     try:
         from bubble.page_change_agent import get_config_hash
         config_hash = get_config_hash()
+    except Exception:
+        pass
+
+    doc_config_hash = ""
+    try:
+        from bubble.document_agent import get_config_hash as get_doc_config_hash
+        doc_config_hash = get_doc_config_hash()
     except Exception:
         pass
 
@@ -418,6 +428,7 @@ def store_run_alerts(
             doc_extractions,
             run_id, run_timestamp_iso, target_id, source_url,
             agent_call_id=agent_call_id,
+            config_hash=doc_config_hash,
         ))
 
     # Write alerts.json (per-run structured output)

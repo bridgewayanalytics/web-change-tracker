@@ -2855,10 +2855,13 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
     )
 
     # Build doc extraction rerun rows
+    from bubble.document_agent import get_config_hash as get_doc_config_hash
+    doc_config_hash = get_doc_config_hash()
     doc_rerun_rows = _build_doc_extraction_rows(
         doc_extractions,
         rerun_run_id, rerun_timestamp, rerun_target_id, meta.get("url") or "",
         agent_call_id=agent_call_id,
+        config_hash=doc_config_hash,
     )
 
     # Fetch original rows for diff — exclude synthetic rows (transcripts)
