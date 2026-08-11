@@ -87,17 +87,15 @@ def _pgvector_enabled() -> bool:
     )
 
 
-def _fetch_pdf_text(url: str) -> str | None:
-    """Fetch PDF and extract text — mirrors document_agent._fetch_pdf_text exactly."""
+def _fetch_single_pdf(url: str) -> str | None:
+    """Fetch and extract text from a single PDF URL. Returns None on any failure."""
+    url = url.strip()
     if not url or not url.lower().endswith(".pdf"):
         return None
     try:
         import requests
         resp = requests.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
         resp.raise_for_status()
-        content_type = resp.headers.get("Content-Type", "")
-        if "pdf" not in content_type.lower() and not url.lower().endswith(".pdf"):
-            return None
         from scrape.pdf_meeting_meta import _extract_plain_text
         text = _extract_plain_text(resp.content)
         if text and text.strip():
@@ -108,7 +106,32 @@ def _fetch_pdf_text(url: str) -> str | None:
     return None
 
 
-def _build_user_message(row: dict, pdf_text: str | None) -> str:
+def _fetch_pdf_text(url: str) -> str | None:
+    """Fetch PDF text — mirrors document_agent._fetch_pdf_text exactly.
+    Handles semicolon-separated multi-URL fields by trying each URL."""
+    if not url:
+        return None
+    candidates = [u.strip() for u in url.split(";") if u.strip()]
+    parts: list[str] = []
+    for candidate in candidates:
+        text = _fetch_single_pdf(candidate)
+        if text:
+            parts.append(text)
+    if not parts:
+        return None
+    return "\n\n".join(parts)
+
+
+_ALERT_INCLUDE_KEYS = {
+    "alert_type", "alert_title", "alert_description", "alert_url",
+    "alert_date_time", "organization",
+    "event_title", "event_start_date_time", "event_end_date_time",
+    "library_item_preliminary_title", "library_item_url",
+    "agenda_item_title_chronicle_topics",
+}
+
+
+def _build_user_message(row: dict, pdf_text: str | None, alert_row: dict | None = None) -> str:
     """
     Build the QA agent prompt with the exact same source input the extraction agent
     received (document title, URL, PDF text, pgvector) plus the extraction output
@@ -133,6 +156,13 @@ def _build_user_message(row: dict, pdf_text: str | None) -> str:
         parts.append(f"\nDocument content:\n{pdf_text[:_PDF_TEXT_LIMIT]}")
     else:
         parts.append("\n(PDF text not available — evaluate based on document title, URL, and knowledge base context)")
+
+    if alert_row:
+        alert_context = {k: v for k, v in alert_row.items() if k in _ALERT_INCLUDE_KEYS}
+        parts += [
+            "\n## Alert Context (the pipeline alert that triggered this extraction)",
+            json.dumps(alert_context, indent=2, default=str),
+        ]
 
     from bubble.org_tree import get_org_tree
     org_tree = get_org_tree()
@@ -213,7 +243,7 @@ async def _run_with_pgvector(
     return chat_json(messages, model=model, reasoning_effort=reasoning_effort)
 
 
-def evaluate_doc_row(row: dict) -> dict:
+def evaluate_doc_row(row: dict, alert_row: dict | None = None) -> dict:
     """
     Run the doc extraction QA agent on one doc extraction row.
 
@@ -231,7 +261,7 @@ def evaluate_doc_row(row: dict) -> dict:
     document_url = str(row.get("library_item_url") or "")
     pdf_text = _fetch_pdf_text(document_url) if document_url and document_url != "N/A" else None
 
-    user_message = _build_user_message(row, pdf_text)
+    user_message = _build_user_message(row, pdf_text, alert_row=alert_row)
 
     if _pgvector_enabled():
         namespaces = _get_pgvector_namespaces()

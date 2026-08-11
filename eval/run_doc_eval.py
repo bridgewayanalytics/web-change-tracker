@@ -23,6 +23,7 @@ log = logging.getLogger(__name__)
 
 _DEFAULT_LIMIT = 20
 _DOC_EXTRACTIONS_KEY = "alerts/document_extractions_table.jsonl"
+_ALERTS_KEY = "alerts/alerts_table.jsonl"
 _DEFAULT_BUCKET = "web-change-tracker-prod-artifacts-815039343351"
 
 
@@ -37,6 +38,31 @@ def _get_bucket() -> str:
 def _s3_client():
     import boto3
     return boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+
+
+def _load_alert_lookup() -> dict[tuple[str, str], dict]:
+    """Return a dict keyed by (agent_call_id, library_item_url) → alert row."""
+    bucket = _get_bucket()
+    client = _s3_client()
+    lookup: dict[tuple[str, str], dict] = {}
+    try:
+        resp = client.get_object(Bucket=bucket, Key=_ALERTS_KEY)
+        lines = resp["Body"].read().decode("utf-8").strip().split("\n")
+    except Exception as e:
+        log.warning("Could not load alerts_table.jsonl for alert context: %s", e)
+        return lookup
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+            cid = row.get("agent_call_id", "")
+            url = row.get("library_item_url", "") or ""
+            if cid:
+                lookup[(cid, url)] = row
+        except json.JSONDecodeError:
+            continue
+    return lookup
 
 
 def _load_doc_rows(agent_call_ids: list[str] | None, limit: int, library_item_url: str | None = None) -> list[dict]:
@@ -114,6 +140,7 @@ def run(
         log.info("No eligible doc extraction rows found")
         return []
 
+    alert_lookup = _load_alert_lookup()
     log.info("Evaluating %d doc extraction rows", len(rows))
 
     if dry_run:
@@ -130,13 +157,16 @@ def run(
     eval_rows = []
     for i, row in enumerate(rows, 1):
         call_id = row.get("agent_call_id", "unknown")
+        lib_url = row.get("library_item_url", "") or ""
+        alert_row = alert_lookup.get((call_id, lib_url)) or alert_lookup.get((call_id, ""))
         log.info(
-            "[%d/%d] Evaluating agent_call_id=%s document=%s",
+            "[%d/%d] Evaluating agent_call_id=%s document=%s alert_found=%s",
             i, len(rows), call_id,
-            row.get("document_title") or row.get("library_item_url"),
+            row.get("document_title") or lib_url,
+            alert_row is not None,
         )
 
-        scores = evaluate_doc_row(row=row)
+        scores = evaluate_doc_row(row=row, alert_row=alert_row)
 
         eval_row_key = call_id
 
