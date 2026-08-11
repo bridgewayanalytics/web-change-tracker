@@ -122,13 +122,7 @@ def _fetch_pdf_text(url: str) -> str | None:
     return "\n\n".join(parts)
 
 
-_ALERT_INCLUDE_KEYS = {
-    "alert_type", "alert_title", "alert_description", "alert_url",
-    "alert_date_time", "organization",
-    "event_title", "event_start_date_time", "event_end_date_time",
-    "library_item_preliminary_title", "library_item_url",
-    "agenda_item_title_chronicle_topics",
-}
+_ALERT_INCLUDE_KEYS = {"organization", "alert_url"}
 
 
 def _build_user_message(row: dict, pdf_text: str | None, alert_row: dict | None = None) -> str:
