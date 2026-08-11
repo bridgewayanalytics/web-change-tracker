@@ -168,7 +168,7 @@ def run(
 
         scores = evaluate_doc_row(row=row, alert_row=alert_row)
 
-        eval_row_key = call_id
+        eval_row_key = f"{call_id}|{lib_url}" if lib_url and lib_url.lower() != "n/a" else call_id
 
         eval_row = {
             **row,
