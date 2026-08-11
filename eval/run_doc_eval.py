@@ -39,7 +39,7 @@ def _s3_client():
     return boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
 
 
-def _load_doc_rows(agent_call_ids: list[str] | None, limit: int) -> list[dict]:
+def _load_doc_rows(agent_call_ids: list[str] | None, limit: int, library_item_url: str | None = None) -> list[dict]:
     bucket = _get_bucket()
     client = _s3_client()
     try:
@@ -60,6 +60,8 @@ def _load_doc_rows(agent_call_ids: list[str] | None, limit: int) -> list[dict]:
 
     if agent_call_ids is not None:
         result = [r for r in all_rows if r.get("agent_call_id") in agent_call_ids]
+        if library_item_url:
+            result = [r for r in result if r.get("library_item_url") == library_item_url]
         log.info("Selected %d row(s) by agent_call_id", len(result))
         return result
 
@@ -96,6 +98,7 @@ def _make_eval_run_id() -> str:
 def run(
     limit: int = _DEFAULT_LIMIT,
     agent_call_ids: list[str] | None = None,
+    library_item_url: str | None = None,
     dry_run: bool = False,
 ) -> list[dict]:
     from eval.doc_eval_agent import evaluate_doc_row
@@ -106,7 +109,7 @@ def run(
 
     log.info("Starting doc eval run %s", eval_run_id)
 
-    rows = _load_doc_rows(agent_call_ids, limit)
+    rows = _load_doc_rows(agent_call_ids, limit, library_item_url)
     if not rows:
         log.info("No eligible doc extraction rows found")
         return []
@@ -135,7 +138,6 @@ def run(
 
         scores = evaluate_doc_row(row=row)
 
-        # eval_row_key: agent_call_id alone (doc extraction rows are one-per-document)
         eval_row_key = call_id
 
         eval_row = {
@@ -168,6 +170,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run document extraction QA evaluation pipeline")
     parser.add_argument("--limit", type=int, default=_DEFAULT_LIMIT)
     parser.add_argument("--agent-call-ids", type=str, default=None)
+    parser.add_argument("--library-item-url", type=str, default=None)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -179,6 +182,7 @@ def main():
         run(
             limit=args.limit,
             agent_call_ids=call_ids,
+            library_item_url=args.library_item_url,
             dry_run=args.dry_run,
         )
     except Exception:
