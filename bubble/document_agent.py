@@ -323,12 +323,17 @@ def should_run_for_alert(agent_output: dict) -> bool:
     return any(_item_has_real_name(item) for item in library_items)
 
 
+_HTML_CONTEXT_LIMIT = 8000  # chars per before/after HTML snippet injected into agent context
+
+
 def extract_document_data(
     document_name: str,
     document_url: str,
     pdf_text: str | None = None,
     text_limit: int | None = None,
     alert_context: dict | None = None,
+    before_html: str | None = None,
+    after_html: str | None = None,
 ) -> dict:
     """
     Extract structured data from a document using the document-data-extraction agent.
@@ -383,6 +388,12 @@ def extract_document_data(
                 ctx_parts.append(f"Source page URL: {source_url}")
             if ctx_parts:
                 lines.append("\n=== ALERT CONTEXT (page change alert that triggered this extraction) ===\n" + "\n".join(ctx_parts))
+        if before_html or after_html:
+            lines.append("\n=== PAGE CHANGE CONTEXT (HTML snapshots of the monitored page) ===")
+            if before_html:
+                lines.append(f"Before HTML (prior state):\n{before_html[:_HTML_CONTEXT_LIMIT]}")
+            if after_html:
+                lines.append(f"After HTML (new state with the document now present):\n{after_html[:_HTML_CONTEXT_LIMIT]}")
         user_content = "\n".join(lines)
 
         json_schema = _get_output_json_schema()

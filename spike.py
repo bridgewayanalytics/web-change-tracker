@@ -1923,7 +1923,12 @@ def _build_bubble_payloads(
                 url = item.get("url") or ""
                 if not name or name.strip().upper() in ("N/A", "N/A.", "-", ""):
                     continue
-                doc_result = _extract_doc(name, url, alert_context=agent_output)
+                doc_result = _extract_doc(
+                    name, url,
+                    alert_context=agent_output,
+                    before_html=ev.get("prev_content_html") or "",
+                    after_html=ev.get("content_html") or "",
+                )
                 if doc_result:
                     doc_results.append({"item": item, "extraction": doc_result})
                     log.info(
@@ -2846,7 +2851,12 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
                     log.info("rerun: skipping document (URL mismatch): %s", name[:60])
                     continue
                 log.info("rerun: document agent: %s", name[:60])
-                doc_result = extract_document_data(name, url, alert_context=agent_output)
+                doc_result = extract_document_data(
+                    name, url,
+                    alert_context=agent_output,
+                    before_html=before_html,
+                    after_html=after_html,
+                )
                 if doc_result:
                     doc_extractions.append({"item": item, "extraction": doc_result})
                     relevance = doc_result.get("newsreel_relevance")

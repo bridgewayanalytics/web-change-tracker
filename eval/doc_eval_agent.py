@@ -121,9 +121,16 @@ def _fetch_pdf_text(url: str) -> str | None:
 
 
 _ALERT_INCLUDE_KEYS = {"organization", "alert_type", "event_title", "event_start_date_time", "source_url"}
+_HTML_CONTEXT_LIMIT = 8000  # chars per before/after HTML snippet
 
 
-def _build_user_message(row: dict, pdf_text: str | None, alert_row: dict | None = None) -> str:
+def _build_user_message(
+    row: dict,
+    pdf_text: str | None,
+    alert_row: dict | None = None,
+    before_html: str | None = None,
+    after_html: str | None = None,
+) -> str:
     """
     Build the QA agent prompt with the exact same source input the extraction agent
     received (document title, URL, PDF text, pgvector) plus the extraction output
@@ -155,6 +162,13 @@ def _build_user_message(row: dict, pdf_text: str | None, alert_row: dict | None 
             "\n## Alert Context (the pipeline alert that triggered this extraction)",
             json.dumps(alert_context, indent=2, default=str),
         ]
+
+    if before_html or after_html:
+        parts.append("\n## Page Change Context (HTML snapshots of the monitored page)")
+        if before_html:
+            parts.append(f"Before HTML (prior state):\n{before_html[:_HTML_CONTEXT_LIMIT]}")
+        if after_html:
+            parts.append(f"After HTML (new state with the document now present):\n{after_html[:_HTML_CONTEXT_LIMIT]}")
 
     from bubble.org_tree import get_org_tree
     org_tree = get_org_tree()
@@ -253,7 +267,19 @@ def evaluate_doc_row(row: dict, alert_row: dict | None = None) -> dict:
     document_url = str(row.get("library_item_url") or "")
     pdf_text = _fetch_pdf_text(document_url) if document_url and document_url != "N/A" else None
 
-    user_message = _build_user_message(row, pdf_text, alert_row=alert_row)
+    # Fetch before/after HTML from S3 using the row's run metadata
+    before_html, after_html = "", ""
+    run_id = str(row.get("run_id") or "")
+    target_id = str(row.get("target_id") or "")
+    run_timestamp = row.get("run_timestamp")
+    if run_id and target_id and run_timestamp:
+        try:
+            from storage.page_change_s3 import fetch_page_html
+            before_html, after_html = fetch_page_html(run_id, target_id, run_timestamp)
+        except Exception as e:
+            log.debug("doc_eval_agent: could not fetch page HTML: %s", e)
+
+    user_message = _build_user_message(row, pdf_text, alert_row=alert_row, before_html=before_html, after_html=after_html)
 
     if _pgvector_enabled():
         namespaces = _get_pgvector_namespaces()

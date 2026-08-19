@@ -127,3 +127,33 @@ def store_page_change(
     except Exception as e:
         log.warning("Page change snapshot upload failed for %s: %s", target_id, e)
         return None
+
+
+def fetch_page_html(run_id: str, target_id: str, run_timestamp: int | float) -> tuple[str, str]:
+    """
+    Fetch before.html and after.html from S3 for a given run/target.
+    Returns (before_html, after_html) — empty strings if unavailable.
+    Never raises.
+    """
+    bucket = _get_bucket()
+    if not bucket:
+        return "", ""
+    try:
+        client = _s3_client()
+        dt = datetime.fromtimestamp(int(run_timestamp), tz=timezone.utc)
+        base_key = (
+            f"{_PREFIX}/{target_id}"
+            f"/{dt.year:04d}/{dt.month:02d}/{dt.day:02d}"
+            f"/{run_id}"
+        )
+
+        def _get(key: str) -> str:
+            try:
+                return client.get_object(Bucket=bucket, Key=key)["Body"].read().decode("utf-8")
+            except Exception:
+                return ""
+
+        return _get(f"{base_key}/before.html"), _get(f"{base_key}/after.html")
+    except Exception as e:
+        log.warning("fetch_page_html failed for %s/%s: %s", target_id, run_id, e)
+        return "", ""
