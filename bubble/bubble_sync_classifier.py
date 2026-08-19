@@ -32,12 +32,16 @@ When applicable=False (No Meaningful Change, carousel reordering) the field is n
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 
 _NOT_APPLICABLE = frozenset({
     "No Meaningful Change",
     "Alert not relevant - the change was limited to carrousel or reordering of content",
+    "Alert not relevant - the change was limited to removal of content",
+    "Alert not relevant",
+    "Other",
 })
 
 # Maps alert_type → (event_action, library_item_action, create_agenda_items)
@@ -407,30 +411,72 @@ class BubbleSyncPlan:
 
 _DOC_NA = frozenset({"", "n/a", "n/a.", "-", "none", "null"})
 
+# Matches one agenda item entry in the doc-extraction `agenda_items` string:
+#   optional "N. " prefix, then Status, " - ", Title, " - Chronicle Topics: ", topics
+_AGENDA_ENTRY_RE = re.compile(
+    r'^(?:\d+\.\s+)?(New|Existing|Updated)\s*[-–]\s*(.+?)\s*[-–]\s*Chronicle\s+Topics:\s*(.*)$',
+    re.IGNORECASE,
+)
+
+
+def _parse_doc_extraction_agenda_items(extraction: dict) -> list[dict]:
+    """
+    Parse the doc extraction's `agenda_items` field into structured dicts.
+
+    Handles both the current string format:
+      "1. New - Title - Chronicle Topics: T1, T2; 2. Existing - ..."
+    and a future list-of-dicts format.
+
+    Returns list of {title, status, chronicle_topics}.
+    """
+    raw = extraction.get("agenda_items") or ""
+    if isinstance(raw, list):
+        return [r for r in raw if isinstance(r, dict)]
+    raw = str(raw).strip()
+    if not raw:
+        return []
+
+    results = []
+    for segment in re.split(r';\s+|\s*\|\s*', raw):
+        segment = segment.strip()
+        if not segment:
+            continue
+        m = _AGENDA_ENTRY_RE.match(segment)
+        if not m:
+            continue
+        status = m.group(1).capitalize()
+        title = m.group(2).strip()
+        topics_raw = m.group(3).strip()
+        topics: list[str] = []
+        if topics_raw.lower() not in _DOC_NA and topics_raw.lower() != "chronicle n/a":
+            topics = [
+                t.strip() for t in re.split(r',\s*', topics_raw)
+                if t.strip() and t.strip().lower() not in _DOC_NA
+                and t.strip().lower() != "chronicle n/a"
+            ]
+        results.append({"title": title, "status": status, "chronicle_topics": topics})
+    return results
+
 
 def enrich_with_doc_extraction(bubble_action: dict, extraction: dict) -> None:
     """
-    Merge relevant document-agent fields into bubble_action previews.
+    Merge document-agent fields into bubble_action previews. Mutates in place.
 
-    Event preview (any action): populates topics___dt_list_custom_newsreel_update
-    from agenda_items[*].chronicle_topics in the extraction.
-
-    Library item CREATE preview: sets description_text, date_date, type___text_text,
-    and topics___dt_list_custom_newsreel_update from:
-      extraction["document_description"] → description_text
-      extraction["date_published"]        → date_date
-      extraction["document_type"]         → type___text_text
-      extraction["agenda_items"][*]["chronicle_topics"] → topics (names; executor resolves to IDs)
-
-    Only sets a field if not already present in field_ids. Mutates bubble_action in place.
+    - agenda_item_previews: replaced with items parsed from extraction["agenda_items"]
+      when bubble_action["agenda_items"] is True. Keeps: all Existing/Updated items,
+      plus New items that have real chronicle topics (filters out procedural N/A items).
+    - Event preview: topics___dt_list_custom_newsreel_update set from parsed agenda items.
+    - Library item CREATE preview: description_text, date_date, type___text_text,
+      topics___dt_list_custom_newsreel_update set from extraction fields.
     """
-    # Collect unique chronicle topic names from doc extraction agenda items
+    # Parse real agenda items from the doc extraction
+    extracted = _parse_doc_extraction_agenda_items(extraction)
+
+    # Collect unique chronicle topic names across all parsed items
     topics: list[str] = []
     seen: set[str] = set()
-    for item in (extraction.get("agenda_items") or []):
-        if not isinstance(item, dict):
-            continue
-        for t in (item.get("chronicle_topics") or []):
+    for item in extracted:
+        for t in item.get("chronicle_topics") or []:
             t_str = str(t).strip()
             if t_str and t_str.lower() not in _DOC_NA and t_str not in seen:
                 topics.append(t_str)
@@ -446,6 +492,27 @@ def enrich_with_doc_extraction(bubble_action: dict, extraction: dict) -> None:
             ep_fields["Topics"] = ", ".join(topics)
         ep["field_ids"] = ep_field_ids
         ep["fields"] = ep_fields
+
+    # -- Agenda item previews: replace with doc-extraction items --
+    # Existing/Updated items are always kept (need to be linked to the event).
+    # New items are kept only when they have real chronicle topics — procedural
+    # items like "Consider adoption of minutes" have Chronicle N/A and are skipped.
+    if bubble_action.get("agenda_items") and extracted:
+        filtered = [
+            item for item in extracted
+            if item.get("status", "") in ("Existing", "Updated") or item.get("chronicle_topics")
+        ]
+        if filtered:
+            bubble_action["agenda_item_previews"] = [
+                {
+                    "title": item.get("title", ""),
+                    "status": item.get("status", "New"),
+                    "chronicle_topics": item.get("chronicle_topics") or [],
+                    "official_title": item.get("official_title", ""),
+                    "reference_id": item.get("reference_id", ""),
+                }
+                for item in filtered
+            ]
 
     # -- Library item CREATE preview --
     if bubble_action.get("library_item") != "create":

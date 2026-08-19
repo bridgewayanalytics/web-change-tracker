@@ -281,21 +281,19 @@ def _fetch_single_pdf(url: str) -> str | None:
 def _fetch_pdf_text(url: str) -> str | None:
     """
     Fetch a PDF from `url` and extract plain text.
-    Handles semicolon-separated multi-URL fields by trying each URL and
-    concatenating results up to _PDF_TEXT_LIMIT chars total.
+    If `url` is semicolon-separated, tries each candidate in order and returns
+    the first successful result. Does NOT concatenate — each extraction call
+    must cover exactly one document.
     Returns None if no PDF content could be extracted.
     """
     if not url:
         return None
     candidates = [u.strip() for u in url.split(";") if u.strip()]
-    parts: list[str] = []
     for candidate in candidates:
         text = _fetch_single_pdf(candidate)
         if text:
-            parts.append(text)
-    if not parts:
-        return None
-    return "\n\n".join(parts)
+            return text
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +328,7 @@ def extract_document_data(
     document_url: str,
     pdf_text: str | None = None,
     text_limit: int | None = None,
+    alert_context: dict | None = None,
 ) -> dict:
     """
     Extract structured data from a document using the document-data-extraction agent.
@@ -364,6 +363,26 @@ def extract_document_data(
             lines.append(f"\nDocument content:\n{pdf_text[:(text_limit or _PDF_TEXT_LIMIT)]}")
         if org_tree:
             lines.append(f"\n=== ORGANIZATION REFERENCE ===\n{org_tree}")
+        if alert_context:
+            ctx_parts = []
+            org = alert_context.get("organization")
+            if org:
+                org_str = ", ".join(org) if isinstance(org, list) else str(org)
+                ctx_parts.append(f"Organization: {org_str}")
+            alert_type = str(alert_context.get("alert_type") or "").strip()
+            if alert_type and alert_type.upper() not in ("N/A", ""):
+                ctx_parts.append(f"Alert type: {alert_type}")
+            event_title = str(alert_context.get("event_title") or "").strip()
+            if event_title and event_title.upper() not in ("N/A", ""):
+                ctx_parts.append(f"Event: {event_title}")
+            event_dt = str(alert_context.get("event_start_date_time") or "").strip()
+            if event_dt and event_dt.upper() not in ("N/A", ""):
+                ctx_parts.append(f"Event start date/time: {event_dt}")
+            source_url = str(alert_context.get("source_url") or "").strip()
+            if source_url:
+                ctx_parts.append(f"Source page URL: {source_url}")
+            if ctx_parts:
+                lines.append("\n=== ALERT CONTEXT (page change alert that triggered this extraction) ===\n" + "\n".join(ctx_parts))
         user_content = "\n".join(lines)
 
         json_schema = _get_output_json_schema()

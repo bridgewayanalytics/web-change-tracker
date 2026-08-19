@@ -36,6 +36,15 @@ if [[ -z "${REGION:-}" || -z "${ECR_URL:-}" ]]; then
   exit 1
 fi
 
+echo "==> Building bubble sync Lambda package..."
+LAMBDA_BUILD=$(mktemp -d)
+trap "rm -rf $LAMBDA_BUILD" EXIT
+pip3 install requests -t "$LAMBDA_BUILD" -q --disable-pip-version-check
+cp -r bubble storage "$LAMBDA_BUILD/"
+cp infra/lambda/bubble_sync/handler.py "$LAMBDA_BUILD/"
+(cd "$LAMBDA_BUILD" && zip -r "$REPO_ROOT/infra/lambda/bubble_sync.zip" . -q)
+echo "    Lambda zip: infra/lambda/bubble_sync.zip ($(du -sh "$REPO_ROOT/infra/lambda/bubble_sync.zip" | cut -f1))"
+
 echo "==> Building Docker image (tag=$IMAGE_TAG)..."
 echo "    (Image must include spike.py with --bubble-enrich, --bubble-report, --emit-bubble-json support.)"
 docker build -t "${ECR_URL}:${IMAGE_TAG}" .

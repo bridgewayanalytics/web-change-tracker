@@ -40,7 +40,7 @@ _EXCLUDE_KEYS = {
     "run_id", "run_timestamp", "target_id", "source_url", "agent_call_id",
     "library_item_title", "library_item_url", "library_item_file_name",
     "eval_run_id", "eval_timestamp", "eval_scores", "eval_row_key",
-    "extraction_source",
+    "extraction_source", "config_hash", "last_rerun_at", "organization_publisher",
 }
 
 
@@ -108,21 +108,19 @@ def _fetch_single_pdf(url: str) -> str | None:
 
 def _fetch_pdf_text(url: str) -> str | None:
     """Fetch PDF text — mirrors document_agent._fetch_pdf_text exactly.
-    Handles semicolon-separated multi-URL fields by trying each URL."""
+    Tries each semicolon-separated URL in order; returns first successful result.
+    Does NOT concatenate — one QA call covers exactly one document."""
     if not url:
         return None
     candidates = [u.strip() for u in url.split(";") if u.strip()]
-    parts: list[str] = []
     for candidate in candidates:
         text = _fetch_single_pdf(candidate)
         if text:
-            parts.append(text)
-    if not parts:
-        return None
-    return "\n\n".join(parts)
+            return text
+    return None
 
 
-_ALERT_INCLUDE_KEYS = {"organization", "alert_url"}
+_ALERT_INCLUDE_KEYS = {"organization", "alert_type", "event_title", "event_start_date_time", "source_url"}
 
 
 def _build_user_message(row: dict, pdf_text: str | None, alert_row: dict | None = None) -> str:

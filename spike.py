@@ -1904,7 +1904,15 @@ def _build_bubble_payloads(
                 lib_url = agent_output.get("library_item_url") or ""
                 lib_file = agent_output.get("library_items_file_name") or ""
                 if lib_name and lib_name.strip().upper() not in ("N/A", "N/A.", "-", ""):
-                    library_items = [{"preliminary_title": lib_name, "url": lib_url, "file_name": lib_file}]
+                    # Split semicolon-separated URLs into separate items — one extraction call per document
+                    url_parts = [u.strip() for u in lib_url.split(";") if u.strip()] if lib_url else [""]
+                    file_parts = [f.strip() for f in lib_file.split(";") if f.strip()] if lib_file else [""]
+                    if len(url_parts) > 1:
+                        log.warning("library_item_url has %d semicolon-separated URLs — splitting into separate extraction calls", len(url_parts))
+                    library_items = [
+                        {"preliminary_title": lib_name, "url": url_parts[i] if i < len(url_parts) else "", "file_name": file_parts[i] if i < len(file_parts) else ""}
+                        for i in range(max(1, len(url_parts)))
+                    ]
 
             for item in library_items:
                 raw = item.get("preliminary_title") or item.get("title") or item.get("file_name") or ""
@@ -1915,7 +1923,7 @@ def _build_bubble_payloads(
                 url = item.get("url") or ""
                 if not name or name.strip().upper() in ("N/A", "N/A.", "-", ""):
                     continue
-                doc_result = _extract_doc(name, url)
+                doc_result = _extract_doc(name, url, alert_context=agent_output)
                 if doc_result:
                     doc_results.append({"item": item, "extraction": doc_result})
                     log.info(
@@ -1983,7 +1991,8 @@ def _build_bubble_payloads(
                     continue
                 doc_name = f"Meeting Transcript: {event_title}"
                 doc_result = _extract_doc_from_transcript(
-                    doc_name, document_url="", pdf_text=transcript_text, text_limit=40_000
+                    doc_name, document_url="", pdf_text=transcript_text, text_limit=40_000,
+                    alert_context=alert,
                 )
                 if doc_result:
                     doc_result["extraction_source"] = "transcript"
@@ -2837,7 +2846,7 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
                     log.info("rerun: skipping document (URL mismatch): %s", name[:60])
                     continue
                 log.info("rerun: document agent: %s", name[:60])
-                doc_result = extract_document_data(name, url)
+                doc_result = extract_document_data(name, url, alert_context=agent_output)
                 if doc_result:
                     doc_extractions.append({"item": item, "extraction": doc_result})
                     relevance = doc_result.get("newsreel_relevance")
@@ -3286,7 +3295,8 @@ def _run_recording_ingest(recording_s3_key: str) -> None:
             try:
                 doc_name = f"Meeting Transcript: {event_title}"
                 doc_result = extract_document_data(
-                    doc_name, document_url="", pdf_text=transcript_text, text_limit=40_000
+                    doc_name, document_url="", pdf_text=transcript_text, text_limit=40_000,
+                    alert_context=row,
                 )
                 if doc_result:
                     doc_result["extraction_source"] = "transcript"
