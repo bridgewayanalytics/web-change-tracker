@@ -40,7 +40,7 @@ _EXCLUDE_KEYS = {
     "run_id", "run_timestamp", "target_id", "source_url", "agent_call_id",
     "library_item_title", "library_item_url", "library_item_file_name",
     "eval_run_id", "eval_timestamp", "eval_scores", "eval_row_key",
-    "extraction_source", "config_hash", "last_rerun_at", "organization_publisher",
+    "extraction_source", "config_hash", "last_rerun_at",
 }
 
 
