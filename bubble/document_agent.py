@@ -206,7 +206,9 @@ async def _run_with_pgvector(
                 "content": (
                     "You are a JSON formatter. Format the document extraction data below "
                     "into a JSON object that strictly matches the required schema. "
-                    "Use only the data provided — do not invent values."
+                    "Use only the data provided — do not invent values. "
+                    "For required string fields where the analysis provides no explicit value, "
+                    "output the string 'N/A' rather than null."
                 ),
             },
             {"role": "user", "content": gathered},
@@ -343,9 +345,12 @@ def extract_document_data(
 
     Returns a dict of extracted fields, or {} on any failure (never raises).
     """
-    from bubble.page_change_agent import PAGE_CHANGE_AGENT_ENABLED
+    from bubble.page_change_agent import PAGE_CHANGE_AGENT_ENABLED, _store_agent_context
     if not PAGE_CHANGE_AGENT_ENABLED:
         return {}
+
+    import uuid
+    doc_call_id = str(uuid.uuid4())
 
     try:
         model = os.environ.get("DOCUMENT_AGENT_MODEL", "").strip() or _get_model()
@@ -396,6 +401,8 @@ def extract_document_data(
                 lines.append(f"After HTML (new state with the document now present):\n{after_html[:_HTML_CONTEXT_LIMIT]}")
         user_content = "\n".join(lines)
 
+        _store_agent_context(doc_call_id, "document", user_content, system_prompt)
+
         json_schema = _get_output_json_schema()
         json_schema_name = _get_output_json_schema_name()
         json_schema_strict = _get_output_json_schema_strict()
@@ -420,7 +427,10 @@ def extract_document_data(
                 log.info("document_agent: extracted %d field(s) for: %s", len(result), document_name[:60])
             else:
                 log.info("document_agent: no output for: %s", document_name[:60])
-            return result if isinstance(result, dict) else {}
+            out = result if isinstance(result, dict) else {}
+            if out:
+                out["doc_agent_context_key"] = f"alerts/contexts/document/{doc_call_id}.txt"
+            return out
 
         log.info("document_agent: running with pgvector (model=%s) for: %s", model, document_name[:80])
         result = asyncio.run(_run_with_pgvector(
@@ -435,7 +445,10 @@ def extract_document_data(
         else:
             log.info("document_agent: no output for: %s", document_name[:60])
 
-        return result if isinstance(result, dict) else {}
+        out = result if isinstance(result, dict) else {}
+        if out:
+            out["doc_agent_context_key"] = f"alerts/contexts/document/{doc_call_id}.txt"
+        return out
 
     except Exception as e:
         log.warning("document_agent failed (non-fatal): %r", e, exc_info=True)
