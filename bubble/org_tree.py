@@ -121,4 +121,27 @@ def get_org_tree() -> str:
             log.info("org_tree: using static prompts/org_tree.txt fallback")
 
     _cache = (text, now)
+
+    if text:
+        _persist_to_s3(text)
+
     return text
+
+
+def _persist_to_s3(text: str) -> None:
+    """Write the org tree to S3 so the dashboard can serve it without calling Bubble."""
+    import os
+    bucket = os.environ.get("CHANGELOG_BUCKET", "").strip()
+    if not bucket:
+        return
+    try:
+        import boto3
+        boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1")).put_object(
+            Bucket=bucket,
+            Key="alerts/contexts/org_tree.txt",
+            Body=text.encode("utf-8"),
+            ContentType="text/plain",
+        )
+        log.debug("org_tree: persisted to S3")
+    except Exception as e:
+        log.debug("org_tree: could not persist to S3 (non-fatal): %s", e)

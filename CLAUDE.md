@@ -2,7 +2,7 @@
 
 ## What this project does
 
-Website change-tracking system that monitors configured NAIC web pages on a 6-hour schedule, detects meaningful changes (new PDFs, meetings, agenda items), and runs RAG-based LLM agents on before/after HTML snapshots to produce structured alerts. Alerts feed a downstream dashboard (repo: `NAICDashboard-`, deployed at `https://tracker.bridgewayanalytics.com`). Bubble.io integration exists but is currently legacy.
+Website change-tracking system that monitors configured NAIC web pages on a 6-hour schedule, detects meaningful changes (new PDFs, meetings, agenda items), and runs RAG-based LLM agents on before/after HTML snapshots to produce structured alerts. Alerts feed a downstream dashboard (repo: `NAICDashboard-`, deployed at `https://tracker.bridgewayanalytics.com`). Approved alerts can be synced to Eidarix (Bubble.io) via `bubble_sync.py`.
 
 ## Tech stack
 
@@ -69,17 +69,16 @@ Full spec: `docs/rerun-feature.md`
 ## Key directories
 
 - `storage/` — State store (DynamoDB prod / `state.json` dev), S3 for HTML snapshots, alerts, changelogs
-- `bubble/` — RAG agents (`page_change_agent.py`, `document_agent.py`), recording matcher, transcriber, newsreel ingest, legacy Bubble.io integration, pgvector client
+- `bubble/` — RAG agents (`page_change_agent.py`, `document_agent.py`), recording matcher, transcriber, newsreel ingest, Bubble sync classifier and executor, pgvector client
 - `bubble/pgvector/` — pgvector connection pool and search tool (mirrors ChatKit infrastructure)
 - `scrape/` — HTML content extraction, PDF metadata, page chunking
 - `config/` — RunSpec (CLI > env > defaults), chatkit DynamoDB config loader
-- `scripts/` — Deploy, backfill, schema management, smoke tests
+- `scripts/` — Deploy, backfill scripts
 - `prompts/` — Prompt context files injected into agent user messages. `org_tree.txt` is a static fallback org hierarchy tree (dash-depth format, 140+ orgs); live data is fetched from Bubble API via `bubble/org_tree.py`
 - `infra/terraform/` — ECS Fargate, EventBridge, DynamoDB, S3, IAM
 - `tests/` — Unit/integration tests
 - `docs/` — Feature specs (rerun feature)
-- `analysis/` — PDF agenda detection analysis and sample datasets
-- `debug/` — E2E/AI debug artifacts (gitignored)
+- `debug/` — AI debug artifacts (gitignored)
 
 ## Key entry points
 
@@ -108,8 +107,6 @@ Full spec: `docs/rerun-feature.md`
 | `scripts/backfill_alerts.py` | Reprocess stored page changes through agents (re-runs both agents) |
 | `scripts/backfill_document_extractions.py` | Backfill `document_extractions_table.jsonl` from stored `agent_output.json` (safe, never touches `alerts_table.jsonl`). Handles flat schema library items, list-format `agent_output.json`, and `alerts` array wrapper. |
 | `scripts/rebuild_alerts_table.py` | Rebuild `alerts_table.jsonl` from stored `agent_output.json` files (no agent re-run, useful for dedup/schema fixes) |
-| `scripts/wrap_schema_alerts.py` | Wrap flat DynamoDB `output_json_schema` in `alerts` array wrapper for multi-alert support |
-| `scripts/backfill_call_id.py` | One-time backfill of `agent_call_id` on existing JSONL rows (groups by `run_id` + `target_id`) |
 | `scripts/backfill_bubble_action.py` | Backfill `bubble_action` on existing `alerts_table.jsonl` rows using the classifier (idempotent, `--force` to re-classify). Enriches with doc extraction keyed by `library_item_url` (not `agent_call_id`) — required for multi-document page changes where one call_id produces N library items. |
 | `scripts/backfill_recordings.py` | Backfill `recording_s3_key` on alerts that have `event_title`+`event_start_date_time` but no recording match yet. Two-pass: standard find_recording() then filename-based fallback for rows where event date is N/A. |
 | `scripts/backfill_transcripts.py` | Backfill `transcript_s3_key` on alerts that have a `recording_s3_key` but haven't been transcribed yet. Groups by `agent_call_id` to transcribe once per recording. `--local` flag uses local Whisper model. |
@@ -258,8 +255,7 @@ python3 scripts/backfill_alerts.py    # reprocess stored page changes through ag
 python3 scripts/backfill_alerts.py --limit 10 --dry-run  # preview without writing
 python3 scripts/backfill_document_extractions.py --limit 5 --dry-run  # backfill doc extractions only
 python3 scripts/rebuild_alerts_table.py  # rebuild from stored agent_output.json (no re-run)
-python3 scripts/wrap_schema_alerts.py --dry-run  # preview schema wrapping
-python3 scripts/backfill_call_id.py --dry-run  # preview agent_call_id backfill
+
 ./scripts/deploy.sh                   # build Docker, push ECR, terraform apply
 ./scripts/deploy.sh --run-task        # + trigger one ECS task immediately
 ```
@@ -298,8 +294,8 @@ python3 scripts/backfill_call_id.py --dry-run  # preview agent_call_id backfill
 - `BACKOFF_SECONDS=2` — retry backoff
 - `DELAY_BETWEEN_PAGES=1` — seconds between target fetches
 
-**Bubble (legacy):**
-- `BUBBLE_API_URL`, `BUBBLE_API_KEY`, `AI_ENRICHMENT_ENABLED`
+**Bubble/Eidarix sync:**
+- `BUBBLE_API_URL`, `BUBBLE_API_KEY`, `EIDARIX_VERSION`
 
 ## Bubble sync fields
 

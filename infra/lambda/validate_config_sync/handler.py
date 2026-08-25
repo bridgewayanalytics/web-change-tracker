@@ -77,12 +77,11 @@ INITIAL_REGISTRIES = {
         "library_items_file_name", "is_the_alert_relevant_for_an_art_newsreel_article",
     ],
     "chat:document-data-extraction": [
-        "number", "data_extraction_datetime", "document_description",
-        "organization_or_publisher", "agenda_items", "agenda_items_official",
+        "number", "document_description",
+        "organization_or_publisher", "organization_publisher", "agenda_items", "agenda_items_official",
         "agenda_items_standardized_id", "agenda_items_official_id",
-        "existing_or_new_agenda_item", "date_published",
-        "meeting_or_last_comment_date", "document_type", "document_title",
-        "existing_updated_or_new_document", "newsreel_relevance",
+        "date_published", "meeting_or_last_comment_date", "document_type", "document_title",
+        "existing_updated_or_new_document", "newsreel_relevance", "document_url_web_tracking_agent",
     ],
 }
 
@@ -453,10 +452,12 @@ def _label_to_id(label):
     return s.strip('_') or 'field'
 
 
-def _update_column_registry(registry, new_labels, config_key):
+def _update_column_registry(registry, new_labels, config_key, required_keys=None):
     """
     Update registry using new_labels from output_requested_values.
     Matching priority:
+    0. Key-based match — if required_keys provided, match registry entries by stable ID
+       directly. Unambiguous for reorders; immune to stale registry labels.
     1. Exact label match against existing registry entries — reorder-safe: a field
        stays bound to its stable ID even if Bubble moved it to a different position.
     2. Positional assignment for unmatched labels — covers field renames (old label
@@ -467,12 +468,29 @@ def _update_column_registry(registry, new_labels, config_key):
     initial_ids = INITIAL_REGISTRIES.get(config_key, [])
     existing_ids = {e["id"] for e in registry}
 
-    # Pass 1: match incoming labels to registry entries by exact label text.
-    existing_by_label = {e["label"]: e for e in registry}
     matched_at: dict = {}   # new_labels index → registry entry
     matched_ids: set = set()
+
+    # Pass 0: key-based match using required_keys (stable IDs) — handles reorders correctly
+    # even when the stored registry labels are stale or wrong.
+    if required_keys:
+        existing_by_id = {e["id"]: e for e in registry}
+        for i, key in enumerate(required_keys):
+            entry = existing_by_id.get(key)
+            if entry is not None and entry["id"] not in matched_ids:
+                matched_at[i] = dict(entry)
+                matched_ids.add(entry["id"])
+
+    # Pass 1: match incoming labels to registry entries by exact label text.
+    # Strip trailing/leading whitespace when building the lookup dict and when
+    # querying it — Bubble writes labels with trailing spaces (e.g. "Org Author ")
+    # but the registry may store them without, causing Pass 1 misses and fallback
+    # to positional assignment which corrupts stable ID → field bindings.
+    existing_by_label = {e["label"].strip(): e for e in registry}
     for i, label in enumerate(new_labels):
-        entry = existing_by_label.get(label)
+        if i in matched_at:
+            continue  # already matched by key
+        entry = existing_by_label.get(label.strip())
         if entry is not None and entry["id"] not in matched_ids:
             matched_at[i] = dict(entry)
             matched_ids.add(entry["id"])
@@ -532,7 +550,7 @@ def _normalize_schema_with_registry(schema, registry):
     if not isinstance(schema, dict) or not registry:
         return schema, {}
 
-    label_to_id = {e["label"]: e["id"] for e in registry}
+    label_to_id = {e["label"].strip(): e["id"] for e in registry}
     id_set = {e["id"] for e in registry}
 
     def _normalize_object(obj):
@@ -752,7 +770,7 @@ def handler(event, context):
             corrections.append(f"Fixed label count: {old_count} -> {len(required_keys)}")
 
         # 3. Update column registry (stable IDs)
-        updated_registry, registry_changed = _update_column_registry(registry, labels, config_key)
+        updated_registry, registry_changed = _update_column_registry(registry, labels, config_key, required_keys=required_keys)
         if registry_changed:
             registry = updated_registry
             corrections.append(f"Updated column registry ({len(registry)} columns)")
@@ -783,8 +801,11 @@ def handler(event, context):
                 cleaned_schema = type_enforced
                 corrections.append("Type enforcement: " + "; ".join(type_fixes))
 
-        # Always update registry if it changed
-        keys_changed = registry_changed
+        # Always update registry if it changed OR if it's absent from new_image
+        # (Bubble full-item PUT can wipe Lambda-written fields; OldImage fallback in
+        # _extract_column_registry masks the loss and prevents re-write without this check)
+        registry_absent_from_new = not bool(_extract_column_registry(new_image))
+        keys_changed = registry_changed or registry_absent_from_new
 
         if not corrections and not keys_changed:
             log.info("No corrections needed for %s", config_key)

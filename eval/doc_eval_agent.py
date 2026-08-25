@@ -16,6 +16,8 @@ import json
 import logging
 import os
 
+from storage.doc_schema import DOC_PIPELINE_FIELDS
+
 log = logging.getLogger(__name__)
 
 _CHAT_ID = "document-extraction-qa-agent"
@@ -36,12 +38,8 @@ _FALLBACK_PGVECTOR_NAMESPACES = [
 
 _dynamo_config: dict | None = None
 
-_EXCLUDE_KEYS = {
-    "run_id", "run_timestamp", "target_id", "source_url", "agent_call_id",
-    "library_item_title", "library_item_url", "library_item_file_name",
-    "eval_run_id", "eval_timestamp", "eval_scores", "eval_row_key",
-    "extraction_source", "config_hash", "last_rerun_at", "doc_agent_context_key",
-}
+# Pipeline-owned fields are excluded from QA scoring — see storage/doc_schema.py
+_EXCLUDE_KEYS = DOC_PIPELINE_FIELDS
 
 
 def _load_config() -> dict:
@@ -200,6 +198,7 @@ async def _run_with_pgvector(
     model: str,
     reasoning_effort: str,
     namespaces: list[str],
+    field_names: list[str],
 ) -> dict:
     from agents import Agent, Runner, ModelSettings
     from agents.model_settings import Reasoning
@@ -231,17 +230,19 @@ async def _run_with_pgvector(
     if not gathered:
         return {"error": "Agent returned empty output"}
 
+    field_names_str = ", ".join(f'"{f}"' for f in field_names)
     from bubble.openai_client import chat_json
     messages = [
         {
             "role": "system",
             "content": (
                 "You are a JSON formatter. Given the QA evaluation analysis below, produce a JSON object "
-                "where each key is a field name from the evaluated document extraction row and each value is: "
+                "where each key is EXACTLY a field name from the evaluated document extraction row and each value is: "
                 '{"score": "Correct" | "Partially Correct" | "Incorrect", "reasoning": "<evidence-based explanation>"}. '
                 'Also include an "overall_summary" key: '
                 '{"correct": N, "partially_correct": N, "incorrect": N, "total": N, "pattern": "<systematic patterns>"}. '
-                "Use only the analysis provided — do not invent or omit scores."
+                "CRITICAL: Use the EXACT field names listed below — do not rename, abbreviate, pluralize, "
+                f"or singularize any field name. Valid field names: {field_names_str}"
             ),
         },
         {"role": "user", "content": gathered},
@@ -275,11 +276,22 @@ def evaluate_doc_row(row: dict, alert_row: dict | None = None) -> dict:
     if run_id and target_id and run_timestamp:
         try:
             from storage.page_change_s3 import fetch_page_html
+            # run_timestamp in doc extraction JSONL is an ISO string; fetch_page_html expects int/float
+            if isinstance(run_timestamp, str):
+                from datetime import datetime, timezone
+                run_timestamp = datetime.fromisoformat(run_timestamp).timestamp()
             before_html, after_html = fetch_page_html(run_id, target_id, run_timestamp)
+            if before_html or after_html:
+                log.info("doc_eval_agent: fetched page HTML (before=%d chars, after=%d chars) for run_id=%s", len(before_html), len(after_html), run_id)
+            else:
+                log.debug("doc_eval_agent: page HTML not found in S3 for run_id=%s target_id=%s", run_id, target_id)
         except Exception as e:
             log.debug("doc_eval_agent: could not fetch page HTML: %s", e)
 
     user_message = _build_user_message(row, pdf_text, alert_row=alert_row, before_html=before_html, after_html=after_html)
+
+    # Capture exact field names before any API call so the formatter can't rename them
+    field_names = [k for k in row if k not in _EXCLUDE_KEYS]
 
     if _pgvector_enabled():
         namespaces = _get_pgvector_namespaces()
@@ -289,7 +301,7 @@ def evaluate_doc_row(row: dict, alert_row: dict | None = None) -> dict:
         )
         try:
             result = asyncio.run(
-                _run_with_pgvector(system_prompt, user_message, model, reasoning_effort, namespaces)
+                _run_with_pgvector(system_prompt, user_message, model, reasoning_effort, namespaces, field_names)
             )
             if not isinstance(result, dict):
                 return {"error": "Agent returned non-dict response"}
@@ -303,8 +315,14 @@ def evaluate_doc_row(row: dict, alert_row: dict | None = None) -> dict:
         "doc_eval_agent: running via direct API (model=%s, pdf=%s) agent_call_id=%s",
         model, "yes" if pdf_text else "no", row.get("agent_call_id"),
     )
+    field_names_str = ", ".join(f'"{f}"' for f in field_names)
+    direct_system_prompt = (
+        system_prompt
+        + f"\n\nCRITICAL: When producing JSON output, use EXACT field names from the extraction row. "
+        f"Valid field names: {field_names_str}. Do not rename, abbreviate, pluralize, or singularize any field name."
+    )
     messages = [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": direct_system_prompt},
         {"role": "user", "content": user_message},
     ]
     try:

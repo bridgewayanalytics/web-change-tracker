@@ -139,8 +139,14 @@ def fetch_page_html(run_id: str, target_id: str, run_timestamp: int | float) -> 
     if not bucket:
         return "", ""
     try:
+        import re as _re
         client = _s3_client()
-        dt = datetime.fromtimestamp(int(run_timestamp), tz=timezone.utc)
+        # Prefer timestamp embedded in run_id (e.g. "run-1785529381") — this is what
+        # store_page_change used to build the date path. The row's run_timestamp can
+        # reflect a later rerun and therefore point to the wrong date folder.
+        _m = _re.match(r"run-(\d+)$", run_id)
+        ts_for_date = int(_m.group(1)) if _m else int(run_timestamp)
+        dt = datetime.fromtimestamp(ts_for_date, tz=timezone.utc)
         base_key = (
             f"{_PREFIX}/{target_id}"
             f"/{dt.year:04d}/{dt.month:02d}/{dt.day:02d}"

@@ -18,6 +18,9 @@ import json
 import logging
 import os
 import re
+from datetime import datetime, timezone
+
+from storage.doc_schema import DOC_PIPELINE_FIELDS
 
 # Max characters of PDF text to include in the agent prompt
 _PDF_TEXT_LIMIT = 12000
@@ -304,6 +307,25 @@ def _fetch_pdf_text(url: str) -> str | None:
 
 _NA_VALUES = frozenset({"N/A", "N/A.", "-", ""})
 
+_ET_OFFSET = -4  # Eastern Daylight Time (UTC-4); close enough for a timestamp field
+
+
+def _stamp_extraction_datetime(out: dict, original_datetime: str | None = None) -> None:
+    """Stamp data_extraction_datetime on the output dict.
+    Uses original_datetime if provided (rerun path — preserves the first-run value).
+    Falls back to current wall-clock time (first run — LLM cannot reliably know the time).
+    """
+    if not out:
+        return
+    if original_datetime and original_datetime.strip().upper() != "N/A":
+        out["data_extraction_datetime"] = original_datetime
+        return
+    from datetime import timedelta
+    et_now = datetime.now(timezone.utc).astimezone(
+        timezone(timedelta(hours=_ET_OFFSET))
+    )
+    out["data_extraction_datetime"] = et_now.strftime("%Y-%m-%dT%H:%M:%S%z")
+
 
 def _item_has_real_name(item: dict) -> bool:
     name = (
@@ -336,6 +358,7 @@ def extract_document_data(
     alert_context: dict | None = None,
     before_html: str | None = None,
     after_html: str | None = None,
+    original_datetime: str | None = None,
 ) -> dict:
     """
     Extract structured data from a document using the document-data-extraction agent.
@@ -429,7 +452,10 @@ def extract_document_data(
                 log.info("document_agent: no output for: %s", document_name[:60])
             out = result if isinstance(result, dict) else {}
             if out:
+                for _f in DOC_PIPELINE_FIELDS:
+                    out.pop(_f, None)
                 out["doc_agent_context_key"] = f"alerts/contexts/document/{doc_call_id}.txt"
+                _stamp_extraction_datetime(out, original_datetime=original_datetime)
             return out
 
         log.info("document_agent: running with pgvector (model=%s) for: %s", model, document_name[:80])
@@ -447,7 +473,10 @@ def extract_document_data(
 
         out = result if isinstance(result, dict) else {}
         if out:
+            for _f in DOC_PIPELINE_FIELDS:
+                out.pop(_f, None)
             out["doc_agent_context_key"] = f"alerts/contexts/document/{doc_call_id}.txt"
+            _stamp_extraction_datetime(out)
         return out
 
     except Exception as e:

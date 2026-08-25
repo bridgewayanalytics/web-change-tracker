@@ -52,9 +52,6 @@ DEFAULT_TARGETS_FILE = Path(__file__).parent / "targets.json"
 _STATE_BACKEND_NAME, _load_target_state, _save_target_state = _get_state_backend()
 REPORT_FILE = Path(__file__).parent / "last_report.txt"
 LAST_EMAIL_REPORT_FILE = Path(__file__).parent / "last_email_report.txt"
-BUBBLE_RESOURCES_FILE = Path(__file__).parent / "last_bubble_resources.json"
-BUBBLE_CALENDAR_ITEMS_FILE = Path(__file__).parent / "last_bubble_calendar_items.json"
-BUBBLE_REPORT_FILE = Path(__file__).parent / "last_bubble_report.json"
 TARGET_URL = "https://example.com"
 USE_PLAYWRIGHT = os.environ.get("USE_PLAYWRIGHT", "1") != "0"  # Set USE_PLAYWRIGHT=0 to use requests only
 
@@ -232,87 +229,6 @@ def _normalize_href_to_absolute(href: str, base_url: str) -> str | None:
     if any(href_lower.startswith(s) for s in _IGNORED_HREF_SCHEMES):
         return None
     return urljoin(base_url, href)
-
-
-def _upload_bubble_report_to_s3(
-    run_timestamp: int,
-    run_spec,  # RunSpec, but keep untyped here to avoid circular import
-    targets_file: Path,
-) -> None:
-    """
-    If BUBBLE_ARTIFACT_BUCKET is set and last_bubble_report.json exists, upload it to S3:
-      - s3://$BUBBLE_ARTIFACT_BUCKET/bubble_reports/latest.json
-      - s3://$BUBBLE_ARTIFACT_BUCKET/bubble_reports/runs/YYYY/MM/DD/<run_id>.json
-
-    Includes S3 object metadata for run_id, image_tag/git_sha (if present), bubble_mode,
-    dry_run_bubble, and targets_file. Logs warnings on failure, but never raises.
-    """
-    bucket = (os.environ.get("BUBBLE_ARTIFACT_BUCKET") or "").strip()
-    if not bucket:
-        return
-
-    if not BUBBLE_REPORT_FILE.exists():
-        log.warning(
-            "Bubble report upload skipped: %s does not exist (nothing to upload)",
-            BUBBLE_REPORT_FILE,
-        )
-        return
-
-    try:
-        import boto3
-        from datetime import datetime, timezone
-    except Exception as e:  # pragma: no cover - boto3/import issues are non-fatal
-        log.warning("Bubble report upload skipped: boto3 not available (%s)", e)
-        return
-
-    try:
-        region = os.environ.get("AWS_REGION", "us-east-1")
-        client = boto3.client("s3", region_name=region)
-
-        dt = datetime.fromtimestamp(run_timestamp, tz=timezone.utc)
-
-        # Prefer an explicit RUN_ID if provided; fall back to timestamp-based ID.
-        run_id = (os.environ.get("RUN_ID") or "").strip() or f"run-{run_timestamp}"
-
-        # Try to capture an image tag / git sha if deployment has set one.
-        image_tag = (
-            (os.environ.get("IMAGE_TAG") or "").strip()
-            or (os.environ.get("GIT_SHA") or "").strip()
-        )
-
-        bubble_mode = getattr(run_spec, "bubble_mode", None)
-        dry_run_bubble = getattr(run_spec, "dry_run_bubble", None)
-
-        metadata: dict[str, str] = {
-            "run_id": str(run_id),
-            "bubble_mode": str(bubble_mode),
-            "dry_run_bubble": str(dry_run_bubble).lower(),
-            "targets_file": str(targets_file),
-        }
-        if image_tag:
-            metadata["image_tag"] = image_tag
-
-        body = BUBBLE_REPORT_FILE.read_bytes()
-
-        latest_key = "bubble_reports/latest.json"
-        versioned_key = (
-            f"bubble_reports/runs/{dt.year:04d}/{dt.month:02d}/{dt.day:02d}/{run_id}.json"
-        )
-
-        for key in (latest_key, versioned_key):
-            try:
-                client.put_object(
-                    Bucket=bucket,
-                    Key=key,
-                    Body=body,
-                    ContentType="application/json",
-                    Metadata=metadata,
-                )
-                log.info("Uploaded Bubble report to s3://%s/%s", bucket, key)
-            except Exception as e:
-                log.warning("Bubble report upload failed for s3://%s/%s: %s", bucket, key, e)
-    except Exception as e:  # pragma: no cover - defensive catch-all
-        log.warning("Bubble report upload encountered an unexpected error: %s", e)
 
 
 def _path_matches_extension(path: str, extensions: list[str]) -> bool:
@@ -1711,96 +1627,11 @@ def parse_args() -> argparse.Namespace:
         metavar="N",
         help="Number of targets to inject fake changes when using --simulate-change-all (default: 5)",
     )
-    p.add_argument(
-        "--print-bubble-schema",
-        action="store_true",
-        help="Print Bubble Resources field list and exit",
-    )
-    p.add_argument(
-        "--emit-bubble-json",
-        action="store_true",
-        help="Write Bubble Resource and Calendar Item payloads to last_bubble_resources.json, last_bubble_calendar_items.json, and last_bubble_report.json",
-    )
-    p.add_argument(
-        "--bubble-enrich",
-        action="store_true",
-        default=False,
-        help="Run Bubble reference enrichment (trees, nodes, deterministic + optional AI). Default on if AI_ENRICHMENT_ENABLED=true.",
-    )
-    p.add_argument(
-        "--no-ai",
-        action="store_true",
-        default=False,
-        help="Disable AI enrichment (refs) even when AI_ENRICHMENT_ENABLED is set",
-    )
-    p.add_argument(
-        "--ai-enrich",
-        action="store_true",
-        default=False,
-        help="Run AI enrichment on Bubble payloads (requires OPENAI_API_KEY) before writing JSON",
-    )
-    p.add_argument(
-        "--bubble-report",
-        action="store_true",
-        default=False,
-        help="Use Bubble JSON format for report and email (summary + Calendar Items + Resources)",
-    )
-    p.add_argument(
-        "--e2e-bubble",
-        action="store_true",
-        default=False,
-        help="E2E Bubble: build snapshot, pass into payload mapping/enrichment; debug artifacts under debug/; no write endpoints.",
-    )
-    p.add_argument(
-        "--e2e-bubble-verify",
-        action="store_true",
-        default=False,
-        dest="e2e_bubble_verify",
-        help="After enrich_refs, verify all reference fields against snapshot; exit non-zero if any invalid IDs.",
-    )
-    p.add_argument(
-        "--bubble-snapshot-limit",
-        type=int,
-        default=200,
-        metavar="N",
-        help="Max items per type when building Bubble snapshot (default: 200)",
-    )
-    p.add_argument(
-        "--dry-run-bubble",
-        action="store_true",
-        default=True,
-        dest="dry_run_bubble",
-        help="Do not call Bubble write endpoints (default: True)",
-    )
-    p.add_argument(
-        "--no-dry-run-bubble",
-        action="store_false",
-        dest="dry_run_bubble",
-        help="Allow Bubble write endpoints (still none implemented in this app)",
-    )
-    p.add_argument(
-        "--pdf-meeting-meta",
-        action="store_true",
-        dest="pdf_meeting_meta",
-        help="Extract meeting metadata from PDF resources (date, group, times); default ON when PROD_OBSERVE_MODE=true",
-    )
-    p.add_argument(
-        "--no-pdf-meeting-meta",
-        action="store_true",
-        dest="no_pdf_meeting_meta",
-        help="Disable PDF meeting metadata extraction",
-    )
-    p.add_argument(
-        "--smoke-bubble-resolvers",
-        action="store_true",
-        default=False,
-        dest="smoke_bubble_resolvers",
-        help="Run resolver smoke tests against LIVE Bubble and exit 0 (pass) / 1 (fail).",
-    )
+    # Legacy flags passed by older dashboard ECS invocations — accepted but ignored
+    p.add_argument("--bubble-enrich", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--bubble-report", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--emit-bubble-json", action="store_true", help=argparse.SUPPRESS)
     args = p.parse_args()
-    # Default bubble_enrich on when AI_ENRICHMENT_ENABLED is set
-    if os.environ.get("AI_ENRICHMENT_ENABLED", "").strip().lower() in ("1", "true", "yes"):
-        args.bubble_enrich = True
     if args.dump_html_snapshot and not args.target_id:
         p.error("--dump-html-snapshot requires --target-id")
     if args.debug_extract and not args.target_id:
@@ -1810,24 +1641,12 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def _build_bubble_payloads(
-    change_events: list[dict],
-    *,
-    ai_enrich: bool = False,
-    bubble_enrich: bool = False,
-    no_ai: bool = False,
-    bubble_snapshot: dict | None = None,
-    run_id: str = "",
-) -> tuple[list[dict], list[dict], dict[str, list[dict]]]:
-    """Build Bubble Resource and Calendar Item payloads. Optionally run AI enrichment and reference enrichment."""
-    from bubble.payload import (
-        build_calendar_item_context,
-        build_calendar_item_payload,
-        build_resource_context,
-        build_resource_payload,
-    )
-    from bubble.ai_enrichment import enrich_payloads
+def _run_pipeline_agents(change_events: list[dict], run_id: str = "") -> None:
+    """Run LLM agents, recording matcher, transcriber, classifier, and doc extraction enrichment.
 
+    Operates by mutating change_events in-place, stamping __agent_output, __doc_extraction,
+    bubble_action, etc. on each event dict. Does not return anything.
+    """
     from bubble.page_change_agent import (
         PAGE_CHANGE_AGENT_ENABLED,
         agent_output_to_by_type,
@@ -2103,165 +1922,20 @@ def _build_bubble_payloads(
     except Exception as _enrich_exc:
         log.warning("bubble_action_doc_enrich: non-fatal error: %s", _enrich_exc)
 
-    resources = build_resource_payload(change_events)
-    calendar_items = build_calendar_item_payload(change_events)
-
-    has_changes = any(
-        _has_displayable_changes(e) for e in change_events if "error" not in e
-    )
-    resource_ctx = build_resource_context(change_events)
-    calendar_ctx = build_calendar_item_context(change_events)
-
-    resources, calendar_items = enrich_payloads(
-        resources,
-        calendar_items,
-        resource_ctx,
-        calendar_ctx,
-        has_changes=has_changes,
-        force=ai_enrich,
-        bubble_snapshot=bubble_snapshot,
-    )
-
-    # PDF agenda signals: download PDFs and extract ref numbers, numbered items,
-    # group hints, and structure type. Stores as __pdf_agenda_signals debug key
-    # for use by enrich_refs agenda item matching.
-    try:
-        from bubble.payload import apply_pdf_agenda_signals
-        apply_pdf_agenda_signals(resources, artifact_output_dir=None)
-    except Exception as e:
-        log.warning("PDF agenda signal extraction failed (non-fatal): %s", e)
-
-    if bubble_enrich:
-        from bubble.enrich_refs import enrich_refs
-        use_ai = (
-            not no_ai
-            and os.environ.get("AI_ENRICHMENT_ENABLED", "").strip().lower() in ("1", "true", "yes")
-            and bool(os.environ.get("OPENAI_API_KEY", "").strip())
-        )
-        try:
-            resources, calendar_items = enrich_refs(
-                resources,
-                calendar_items,
-                resource_ctx,
-                calendar_ctx,
-                use_ai=use_ai,
-                bubble_snapshot=bubble_snapshot,
-            )
-        except Exception as e:
-            log.warning("Bubble reference enrichment failed, using payloads as-is: %s", e)
-
-    # Build calendar alerts from newly-detected resources and attach to calendar items.
-    # Alerts are built as Bubble Alert objects and attached to calendar items
-    # via the "alerts" list field.
-    alerts_by_cal: dict[str, list[dict]] = {}
-    try:
-        from bubble.calendar_alerts import attach_alerts_to_calendar_items, build_calendar_alerts
-        alerts_by_cal = build_calendar_alerts(resources, resource_context=resource_ctx)
-        if alerts_by_cal:
-            calendar_items = attach_alerts_to_calendar_items(calendar_items, alerts_by_cal)
-    except Exception as e:
-        log.warning("Calendar alert generation failed, continuing without alerts: %s", e)
-
-    return (resources, calendar_items, alerts_by_cal)
-
-
-def _render_bubble_report(resources: list[dict], calendar_items: list[dict]) -> str:
-    """Bubble-style report: 2-3 line summary + pretty-printed JSON sections."""
-    import json
-
-    nc, nr = len(calendar_items), len(resources)
-    summary_lines = [
-        "Web change tracker: Bubble payload report.",
-        f"Calendar Items: {nc} | Resources: {nr}",
-        "Payloads below are ready for Bubble import.",
-    ]
-    summary = "\n".join(summary_lines)
-
-    cal_json = json.dumps(calendar_items, indent=2, ensure_ascii=False)
-    res_json = json.dumps(resources, indent=2, ensure_ascii=False)
-
-    return f"""{summary}
-
-Bubble: Calendar Items ({nc})
-{cal_json}
-
-Bubble: Resources ({nr})
-{res_json}
-"""
-
-
-def _build_email_report_links(change_events: list[dict]) -> tuple[list[dict], list[dict]]:
-    """
-    Build links metadata for email report. Returns (resource_links, calendar_item_links).
-    Each link: {source_page_url, source_page_title, detected_url}.
-    Order matches build_resource_payload and build_calendar_item_payload.
-    """
-    from bubble.payload import _event_with_deduped_by_type, _item_should_hide
-
-    resource_links: list[dict] = []
-    calendar_item_links: list[dict] = []
-
-    for e in change_events:
-        if "error" in e:
-            continue
-        label = e.get("label", "unknown")
-        org_path = list(e.get("org_path") or [])
-        source_url = (e.get("url") or "").strip()
-        source_title = " › ".join(org_path + [label]) if org_path else label
-
-        deduped = _event_with_deduped_by_type(e)
-        by_type = deduped.get("change", {}).get("by_type", {})
-
-        for rtype in ("docs", "event_links", "events"):
-            for item in by_type.get(rtype, {}).get("added", []):
-                if _item_should_hide(item, rtype):
-                    continue
-                detected_url = (item.get("url") or "").strip()
-                resource_links.append({
-                    "source_page_url": source_url,
-                    "source_page_title": source_title,
-                    "detected_url": detected_url,
-                })
-
-        visible_meetings = [
-            m for m in by_type.get("meetings", {}).get("added", [])
-            if not _item_should_hide(m, "meetings")
-        ]
-        for m in visible_meetings:
-            detected_url = (
-                (m.get("webex_url") or "").strip()
-                or (m.get("agenda_url") or "").strip()
-                or (m.get("materials_url") or "").strip()
-            )
-            calendar_item_links.append({
-                "source_page_url": source_url,
-                "source_page_title": source_title,
-                "detected_url": detected_url,
-            })
-
-    return (resource_links, calendar_item_links)
-
 
 def render_email_report(
     change_events: list[dict],
-    resources: list[dict],
-    calendar_items: list[dict],
 ) -> str:
     """
-    Email report: per-changed-event agent output (all fields), document extraction results,
-    then summary counts. Replaces raw Bubble payload JSON blocks.
+    Email report: per-changed-event agent output (all fields), document extraction results.
     Always produced (empty when no changes).
     """
     events_with_changes = [
         e for e in change_events
         if "error" not in e and _has_displayable_changes(e)
     ]
-    nr, ne = len(resources), len(calendar_items)
 
     lines: list[str] = []
-    lines.append("New Library Items (Resources): %d" % nr)
-    lines.append("New Calendar Items (Events): %d" % ne)
-    lines.append("")
 
     if not events_with_changes:
         lines.append("No page changes detected.")
@@ -2370,84 +2044,10 @@ def render_email_report(
     return "\n".join(lines)
 
 
-def _write_bubble_payload(
-    change_events: list[dict],
-    *,
-    ai_enrich: bool = False,
-    bubble_enrich: bool = False,
-    no_ai: bool = False,
-    resources: list[dict] | None = None,
-    calendar_items: list[dict] | None = None,
-) -> None:
-    """Build and write Bubble Resource and Calendar Item payloads, plus last_bubble_report.json."""
-    import json
-
-    if resources is None or calendar_items is None:
-        resources, calendar_items, _ = _build_bubble_payloads(
-            change_events,
-            ai_enrich=ai_enrich,
-            bubble_enrich=bubble_enrich,
-            no_ai=no_ai,
-        )
-
-    from bubble.payload import strip_debug_keys
-    resources_clean = [strip_debug_keys(r) for r in resources]
-    calendar_items_clean = [strip_debug_keys(c) for c in calendar_items]
-
-    BUBBLE_RESOURCES_FILE.write_text(json.dumps(resources_clean, indent=2, ensure_ascii=False), encoding="utf-8")
-    log.info("Wrote Bubble Resource payload to %s (%d items)", BUBBLE_RESOURCES_FILE, len(resources_clean))
-
-    BUBBLE_CALENDAR_ITEMS_FILE.write_text(json.dumps(calendar_items_clean, indent=2, ensure_ascii=False), encoding="utf-8")
-    log.info("Wrote Bubble Calendar Item payload to %s (%d items)", BUBBLE_CALENDAR_ITEMS_FILE, len(calendar_items_clean))
-
-    web_urls = list({(e.get("url") or "").strip() for e in change_events if (e.get("url") or "").strip()})
-    for r in resources:
-        u = (r.get("URL") or "").strip()
-        if u and u not in web_urls:
-            web_urls.append(u)
-    # Build debug views with __key and __source for report only (not in Bubble payload JSON).
-    try:
-        from bubble.payload import build_resource_context, build_calendar_item_context
-        from bubble.debug_keys import make_calendar_debug_entry, make_resource_debug_entry
-
-        resource_ctx = build_resource_context(change_events)
-        calendar_ctx = build_calendar_item_context(change_events)
-
-        debug_resources: list[dict] = []
-        for idx, r in enumerate(resources):
-            ctx = resource_ctx[idx] if idx < len(resource_ctx) else {"label": "unknown", "url": ""}
-            debug_resources.append(make_resource_debug_entry(r, ctx))
-
-        debug_calendar_items: list[dict] = []
-        for idx, c in enumerate(calendar_items):
-            ctx = calendar_ctx[idx] if idx < len(calendar_ctx) else {"label": "unknown", "url": ""}
-            debug_calendar_items.append(make_calendar_debug_entry(c, ctx))
-    except Exception:
-        # Fallback: no debug keys if context/build fails
-        debug_resources = list(resources)
-        debug_calendar_items = list(calendar_items)
-
-    report = {
-        "counts": {"resources": len(resources), "calendar_items": len(calendar_items)},
-        "web_urls": web_urls,
-        "resources": debug_resources,
-        "calendar_items": debug_calendar_items,
-    }
-    BUBBLE_REPORT_FILE.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
-    log.info("Wrote Bubble report to %s", BUBBLE_REPORT_FILE)
-
-
 def _run_simulate_change_all(
     targets: list[dict],
     n: int,
     verbose: bool,
-    emit_bubble_json: bool = False,
-    ai_enrich: bool = False,
-    bubble_enrich: bool = False,
-    no_ai: bool = False,
-    e2e_bubble: bool = False,
-    bubble_snapshot_limit: int = 200,
-    bubble_report: bool = False,
 ) -> None:
     """Test-only: run extraction on all targets, inject fake changes into first N, produce combined report. No persist."""
     change_events: list[dict] = []
@@ -2484,63 +2084,20 @@ def _run_simulate_change_all(
                 "error": str(e),
                 **{k: t[k] for k in ("org_id", "org_path", "group", "tags", "include_hash_changes") if k in t},
             })
-    bubble_snapshot = None
-    if e2e_bubble:
-        try:
-            from bubble.client import get_client
-            from bubble.snapshot import build_bubble_snapshot
-            client = get_client(use_cache=True)
-            bubble_snapshot = build_bubble_snapshot(client, limit=bubble_snapshot_limit)
-        except Exception as e:
-            log.warning("E2E Bubble snapshot build failed, continuing without snapshot: %s", e)
-
-    resources, calendar_items, _ = _build_bubble_payloads(
-        change_events,
-        ai_enrich=ai_enrich,
-        bubble_enrich=bubble_enrich,
-        no_ai=no_ai,
-        bubble_snapshot=bubble_snapshot,
-    )
-    email_report = render_email_report(change_events, resources, calendar_items)
+    _run_pipeline_agents(change_events)
+    email_report = render_email_report(change_events)
     LAST_EMAIL_REPORT_FILE.write_text(email_report, encoding="utf-8")
     log.info("Email report written to %s", LAST_EMAIL_REPORT_FILE)
-
-    if bubble_report or emit_bubble_json:
-        if bubble_report:
-            report = _render_bubble_report(resources, calendar_items)
-            log.info("\n[SIMULATE-CHANGE-ALL - Bubble report]\n%s", report[:500] + ("..." if len(report) > 500 else ""))
-        else:
-            report = render_report(change_events, verbose=verbose)
-            log.info("\n[SIMULATE-CHANGE-ALL - not persisted]\n%s", report)
-        if emit_bubble_json:
-            _write_bubble_payload(
-                change_events,
-                ai_enrich=ai_enrich,
-                bubble_enrich=bubble_enrich,
-                no_ai=no_ai,
-                resources=resources,
-                calendar_items=calendar_items,
-            )
-    else:
-        report = render_report(change_events, verbose=verbose)
-        log.info("\n[SIMULATE-CHANGE-ALL - not persisted]\n%s", report)
+    report = render_report(change_events, verbose=verbose)
+    log.info("\n[SIMULATE-CHANGE-ALL - not persisted]\n%s", report)
     REPORT_FILE.write_text(report, encoding="utf-8")
     log.info("Report written to %s", REPORT_FILE)
-    from bubble.reference_resolution import write_reference_resolution_report
-    write_reference_resolution_report()
 
 
 def _run_simulate_change(
     target_id: str,
     targets: list[dict],
     verbose: bool,
-    emit_bubble_json: bool = False,
-    ai_enrich: bool = False,
-    bubble_enrich: bool = False,
-    no_ai: bool = False,
-    e2e_bubble: bool = False,
-    bubble_snapshot_limit: int = 200,
-    bubble_report: bool = False,
 ) -> None:
     """Test-only: simulate diffs from stored state, render report, do NOT persist."""
     target = next((t for t in targets if t.get("id", t.get("url", "unknown")) == target_id), None)
@@ -2605,50 +2162,14 @@ def _run_simulate_change(
         "include_hash_changes": target.get("include_hash_changes", False),
         "change": change,
     }
-    bubble_snapshot = None
-    if e2e_bubble:
-        try:
-            from bubble.client import get_client
-            from bubble.snapshot import build_bubble_snapshot
-            client = get_client(use_cache=True)
-            bubble_snapshot = build_bubble_snapshot(client, limit=bubble_snapshot_limit)
-        except Exception as e:
-            log.warning("E2E Bubble snapshot build failed, continuing without snapshot: %s", e)
-
-    resources, calendar_items, _ = _build_bubble_payloads(
-        [change_event],
-        ai_enrich=ai_enrich,
-        bubble_enrich=bubble_enrich,
-        no_ai=no_ai,
-        bubble_snapshot=bubble_snapshot,
-    )
-    email_report = render_email_report([change_event], resources, calendar_items)
+    _run_pipeline_agents([change_event])
+    email_report = render_email_report([change_event])
     LAST_EMAIL_REPORT_FILE.write_text(email_report, encoding="utf-8")
     log.info("Email report written to %s", LAST_EMAIL_REPORT_FILE)
-
-    if bubble_report or emit_bubble_json:
-        if bubble_report:
-            report = _render_bubble_report(resources, calendar_items)
-            log.info("\n[SIMULATED CHANGE - Bubble report]\n%s", report[:500] + ("..." if len(report) > 500 else ""))
-        else:
-            report = render_report([change_event], verbose=verbose)
-            log.info("\n[SIMULATED CHANGE - not persisted]\n%s", report)
-        if emit_bubble_json:
-            _write_bubble_payload(
-                [change_event],
-                ai_enrich=ai_enrich,
-                bubble_enrich=bubble_enrich,
-                no_ai=no_ai,
-                resources=resources,
-                calendar_items=calendar_items,
-            )
-    else:
-        report = render_report([change_event], verbose=verbose)
-        log.info("\n[SIMULATED CHANGE - not persisted]\n%s", report)
+    report = render_report([change_event], verbose=verbose)
+    log.info("\n[SIMULATED CHANGE - not persisted]\n%s", report)
     REPORT_FILE.write_text(report, encoding="utf-8")
     log.info("Report written to %s", REPORT_FILE)
-    from bubble.reference_resolution import write_reference_resolution_report
-    write_reference_resolution_report()
 
 
 def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alerts", rerun_library_item_url: str = "") -> None:
@@ -2818,6 +2339,27 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
     doc_extractions: list[dict] = []
     if rerun_mode in ("docs", "both"):
         from bubble.document_agent import should_run_for_alert, extract_document_data
+
+        # Load original doc extraction rows now so we can preserve data_extraction_datetime.
+        # The original datetime is always kept — only the first run defines it.
+        _orig_dt_by_url: dict[str, str] = {}
+        try:
+            _doc_jsonl = s3.get_object(Bucket=bucket, Key="alerts/document_extractions_table.jsonl")["Body"].read().decode("utf-8")
+            for _line in _doc_jsonl.splitlines():
+                _line = _line.strip()
+                if not _line:
+                    continue
+                try:
+                    _row = json.loads(_line)
+                    if _row.get("run_id") == rerun_run_id and _row.get("target_id") == rerun_target_id:
+                        _url = _row.get("library_item_url") or ""
+                        _dt = _row.get("data_extraction_datetime") or ""
+                        if _url and _dt and _dt.strip().upper() != "N/A" and _url not in _orig_dt_by_url:
+                            _orig_dt_by_url[_url] = _dt
+                except Exception:
+                    pass
+        except Exception:
+            pass
         for agent_output in agent_alerts_for_rows:
             if not should_run_for_alert(agent_output):
                 continue
@@ -2856,6 +2398,7 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
                     alert_context=agent_output,
                     before_html=before_html,
                     after_html=after_html,
+                    original_datetime=_orig_dt_by_url.get(url),
                 )
                 if doc_result:
                     doc_extractions.append({"item": item, "extraction": doc_result})
@@ -2963,143 +2506,6 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
         ContentType="application/json",
     )
     log.info("rerun: wrote result to s3://%s/%s", bucket, result_key)
-
-
-def _run_smoke_bubble_resolvers() -> int:
-    """Run resolver smoke tests against LIVE Bubble. Returns exit code 0 (pass) or 1 (fail)."""
-    from bubble import lookups
-    from bubble.enrich_refs import (
-        ORGANIZATION_TREE_NAME,
-        TYPE1_TREE_NAME,
-        TOPIC_TREE_NAME,
-        _normalize_for_matching,
-        _build_naic_group_node_map,
-        _resolve_naic_group_node,
-        _resolve_organization_naic_node,
-        _build_type1_nodes_by_name,
-        _build_topic_candidates,
-        _node_name,
-        _obj_id,
-    )
-
-    results: list[tuple[str, bool, str]] = []
-
-    def _record(name: str, passed: bool, detail: str = "") -> None:
-        tag = "PASS" if passed else "FAIL"
-        results.append((name, passed, detail))
-        print(f"  [{tag}] {name}" + (f"  — {detail}" if detail else ""))
-
-    print("\n=== Bubble Resolver Smoke Suite ===\n")
-
-    # --- 1. Load trees and print node counts ---
-    tree_checks = {
-        "Organization": ORGANIZATION_TREE_NAME,
-        "Resources Types": TYPE1_TREE_NAME,
-        "Chronicles": TOPIC_TREE_NAME,
-    }
-    tree_ids: dict[str, str | None] = {}
-    tree_node_counts: dict[str, int] = {}
-
-    for label, tree_name in tree_checks.items():
-        tree = lookups.get_tree_by_name(tree_name)
-        if not tree:
-            _record(f"Load tree: {label}", False, f"tree '{tree_name}' not found")
-            tree_ids[label] = None
-            tree_node_counts[label] = 0
-            continue
-        tid = tree.get("_id") or tree.get("id")
-        tree_ids[label] = tid
-        nodes = lookups.get_tree_nodes_in_tree(tid)
-        tree_node_counts[label] = len(nodes)
-        ok = len(nodes) > 0
-        _record(f"Load tree: {label}", ok, f"tree_id={tid}  nodes={len(nodes)}")
-
-    # --- 2. Organization: resolve NAIC node (normalized name matching) ---
-    naic_node_id: str | None = None
-    naic_nid, naic_ev = _resolve_organization_naic_node(ORGANIZATION_TREE_NAME)
-    if naic_nid:
-        naic_node_id = naic_nid
-        raw_name = naic_ev.get("resolved_name", "NAIC")
-        _record("Organization: NAIC node", True, f"'{raw_name}' node_id={naic_node_id}")
-    else:
-        failure = naic_ev.get("failure", "unknown")
-        candidates = naic_ev.get("naic_candidates", [])
-        detail = f"failure={failure}"
-        if candidates:
-            detail += f"  candidates={candidates}"
-        _record("Organization: NAIC node", False, detail)
-
-    # --- 3. NAIC Group normalized label matching ---
-    test_labels = [
-        "Statutory Accounting Principles Working Group",
-        "Life Actuarial Task Force",
-    ]
-    for label in test_labels:
-        nid, evidence = _resolve_naic_group_node(ORGANIZATION_TREE_NAME, [label])
-        if nid:
-            raw = evidence.get("chosen_raw_name", "?")
-            _record(f"NAIC Group: \"{label}\"", True, f"→ \"{raw}\" (id={nid})")
-        else:
-            failure = evidence.get("failure", "unknown")
-            _record(f"NAIC Group: \"{label}\"", False, f"failure={failure}")
-
-    # --- 4. Calendar lookup by group ---
-    for label in test_labels:
-        nid, _ = _resolve_naic_group_node(ORGANIZATION_TREE_NAME, [label])
-        if not nid:
-            _record(f"Calendar for \"{label}\"", True, "skipped (group not resolved)")
-            continue
-        cal_items, cal_meta = lookups.search_calendar_items_by_naic_group(nid)
-        count = len(cal_items)
-        constraints_json = cal_meta.get("constraints", [])
-        if count == 0:
-            print(f"  [WARN] Calendar for \"{label}\": 0 items (group_id={nid})")
-            print(f"         constraints: {constraints_json}")
-            results.append((f"Calendar for \"{label}\"", True, f"0 items (warning)"))
-        else:
-            _record(f"Calendar for \"{label}\"", True, f"{count} item(s)")
-
-    # --- 5. Type1: verify "Agenda & Materials" ---
-    type1_map = _build_type1_nodes_by_name(TYPE1_TREE_NAME)
-    agenda_id = type1_map.get("Agenda & Materials") or type1_map.get("agenda & materials")
-    if agenda_id:
-        _record("Type1: Agenda & Materials", True, f"node_id={agenda_id}")
-    else:
-        available = sorted(k for k in type1_map if k == k.lower())[:10]
-        _record("Type1: Agenda & Materials", False, f"not found; available: {available}")
-
-    # --- 6. Topic: Chronicles nodes loaded, check for known node ---
-    topic_map = _build_topic_candidates(TOPIC_TREE_NAME)
-    topic_count = len(topic_map)
-    if topic_count > 0:
-        known = "NAIC Investments"
-        known_lower = known.lower()
-        tid = topic_map.get(known) or topic_map.get(known_lower)
-        if tid:
-            _record("Topic: Chronicles", True, f"{topic_count} candidates; '{known}' id={tid}")
-        else:
-            sample = list(topic_map.keys())[:8]
-            _record("Topic: Chronicles", True, f"{topic_count} candidates; '{known}' not present; sample: {sample}")
-    else:
-        _record("Topic: Chronicles", False, "0 candidates loaded")
-
-    # --- Summary ---
-    total = len(results)
-    passed = sum(1 for _, ok, _ in results if ok)
-    failed = total - passed
-    print(f"\n{'='*40}")
-    print(f"  {passed}/{total} passed, {failed} failed")
-    print(f"{'='*40}\n")
-
-    hard_fail = (
-        tree_node_counts.get("Organization", 0) == 0
-        or tree_node_counts.get("Resources Types", 0) == 0
-        or tree_node_counts.get("Chronicles", 0) == 0
-        or naic_node_id is None
-        or agenda_id is None
-        or topic_count == 0
-    )
-    return 1 if hard_fail else 0
 
 
 def _run_manual_chunk(agent_call_id: str, transcript_s3_key: str) -> None:
@@ -3528,24 +2934,6 @@ def main() -> None:
     human_summary, _ = render_run_spec_summary(run_spec)
     log.info("RunSpec:\n%s", human_summary)
 
-    if run_spec.prod_observe_mode:
-        from bubble.enrich_refs import ORGANIZATION_TREE_NAME, TYPE1_TREE_NAME, TOPIC_TREE_NAME
-        log.info(
-            "Bubble tree config: Organization=%r  ResourceTypes=%r  Topic=%r",
-            ORGANIZATION_TREE_NAME, TYPE1_TREE_NAME, TOPIC_TREE_NAME,
-        )
-
-    # Bubble LIVE healthcheck at startup when enrichment is on and mode is LIVE
-    if run_spec.bubble_enrich_enabled and run_spec.bubble_mode == "LIVE":
-        from bubble.healthcheck import bubble_healthcheck
-        bubble_ok, _ = bubble_healthcheck()
-        run_spec.bubble_live_ok = bubble_ok
-        if not bubble_ok:
-            log.warning("bubble_live_ok=false: Bubble API healthcheck failed; ref resolution may fail")
-
-    from bubble.reference_resolution import clear_records
-    clear_records()
-
     # Load OpenAI and DB settings from SSM in AWS/prod mode (before any bubble/ai code)
     try:
         from bubble.ssm_loader import load_openai_env_from_ssm, load_db_env_from_ssm
@@ -3553,15 +2941,6 @@ def main() -> None:
         load_db_env_from_ssm()
     except Exception as e:
         log.debug("SSM loader skipped or failed: %s", e)
-
-    if args.print_bubble_schema:
-        from bubble_resources import BUBBLE_RESOURCE_FIELDS
-        for f in BUBBLE_RESOURCE_FIELDS:
-            print(f)
-        raise SystemExit(0)
-
-    if args.smoke_bubble_resolvers:
-        raise SystemExit(_run_smoke_bubble_resolvers())
 
     # Rerun mode: re-evaluate a single stored alert with current agent config.
     # Triggered via RERUN_RUN_ID + RERUN_TARGET_ID env vars (set by ECS RunTask override).
@@ -3619,13 +2998,6 @@ def main() -> None:
             args.target_id.strip(),
             targets or [],
             args.verbose,
-            args.emit_bubble_json,
-            args.ai_enrich,
-            args.bubble_enrich,
-            args.no_ai,
-            getattr(args, "e2e_bubble", False),
-            getattr(args, "bubble_snapshot_limit", 200),
-            args.bubble_report,
         )
         return
 
@@ -3635,13 +3007,6 @@ def main() -> None:
             targets or [],
             args.simulate_change_n,
             args.verbose,
-            args.emit_bubble_json,
-            args.ai_enrich,
-            args.bubble_enrich,
-            args.no_ai,
-            getattr(args, "e2e_bubble", False),
-            getattr(args, "bubble_snapshot_limit", 200),
-            args.bubble_report,
         )
         return
 
@@ -3697,111 +3062,19 @@ def main() -> None:
     else:
         change_events.append(process_one({"id": "default", "label": "default", "url": TARGET_URL}))
 
-    # Build Bubble snapshot when E2E or verify so mapping/enrichment (and verification) can use real Bubble objects
-    bubble_snapshot = None
-    if run_spec.bubble_mode == "SNAPSHOT":
-        try:
-            from bubble.client import get_client
-            from bubble.snapshot import build_bubble_snapshot
-            client = get_client(use_cache=True)
-            bubble_snapshot = build_bubble_snapshot(client, limit=getattr(args, "bubble_snapshot_limit", 200))
-        except Exception as e:
-            log.warning("Bubble snapshot build failed, continuing without snapshot: %s", e)
+    # Run the active pipeline agents: LLM agents, recording matcher, transcriber, classifier
+    _run_pipeline_agents(change_events, run_id=run_id)
 
-    # Snapshot stats for RunSpec summary and SNAPSHOT low-count warning
-    snapshot_stats = None
-    if bubble_snapshot is not None:
-        snapshot_stats = {
-            "calendar_items": len(bubble_snapshot.get("calendar_items") or []),
-            "resources": len(bubble_snapshot.get("resources") or []),
-            "tree_nodes": len(bubble_snapshot.get("tree_nodes") or []),
-        }
-        from config.run_spec import add_snapshot_warnings
-        add_snapshot_warnings(run_spec, snapshot_stats)
-
-    # Always build bubble payloads for the email report (and optional bubble output)
-    resources, calendar_items, alerts_by_cal = _build_bubble_payloads(
-        change_events,
-        ai_enrich=run_spec.ai_enrich_enabled,
-        bubble_enrich=run_spec.bubble_enrich_enabled,
-        no_ai=args.no_ai,
-        bubble_snapshot=bubble_snapshot,
-        run_id=run_id,
-    )
-
-    # Upload alerts to S3 (same bucket as bubble reports, under alerts/ prefix).
-    if alerts_by_cal:
-        try:
-            from bubble.calendar_alerts import upload_alerts_to_s3
-            upload_alerts_to_s3(alerts_by_cal, run_timestamp)
-        except Exception as e:
-            log.warning("Alert upload to S3 failed (non-fatal): %s", e)
-
-    # Verify reference fields against snapshot: drop invalid IDs + warn, or exit non-zero in --e2e-bubble-verify
-    if bubble_snapshot is not None:
-        from bubble.mapping_pipeline import verify_all_references
-        verify_mode = "e2e_verify" if run_spec.e2e_bubble_verify else "normal"
-        resources, calendar_items = verify_all_references(
-            resources, calendar_items, bubble_snapshot, mode=verify_mode,
-            artifact_output_dir=run_spec.artifact_output_dir or None,
-        )
-
-    # PDF meeting metadata: download PDFs, extract date/group/times; set date if null, __meeting_meta for audit
-    if run_spec.pdf_meeting_meta_enabled:
-        from bubble.payload import apply_pdf_meeting_metadata
-        apply_pdf_meeting_metadata(
-            resources,
-            pdf_meeting_meta_enabled=True,
-            artifact_output_dir=run_spec.artifact_output_dir or None,
-        )
-
-    # RunSpec summary (with snapshot_stats and warnings) for logs and email header
-    human_summary, _ = render_run_spec_summary(run_spec, snapshot_stats)
-    log.info("RunSpec (final):\n%s", human_summary)
-
-    # Debug metric summary: snapshot counts, resolved vs unresolved per field, calendar-too-small warning
-    from bubble.reference_resolution import get_resolution_summary
-    from config.run_spec import render_debug_metric_summary
-    resolution_by_field = get_resolution_summary()
-    debug_metric_text, _ = render_debug_metric_summary(snapshot_stats, resolution_by_field, run_spec.bubble_live_ok)
-    log.info("Debug metric summary:\n%s", debug_metric_text)
-
-    # Build and write the email report: RunSpec + debug metric summary + report body
-    email_report = render_email_report(change_events, resources, calendar_items)
-    full_email = human_summary + "\n\n" + debug_metric_text + "\n\n" + email_report
-    LAST_EMAIL_REPORT_FILE.write_text(full_email, encoding="utf-8")
+    # Build and write the email report
+    email_report = render_email_report(change_events)
+    LAST_EMAIL_REPORT_FILE.write_text(email_report, encoding="utf-8")
     log.info("Email report written to %s", LAST_EMAIL_REPORT_FILE)
 
-    if args.bubble_report or args.emit_bubble_json:
-        if args.bubble_report:
-            from bubble.payload import strip_debug_keys
-            report = _render_bubble_report(
-                [strip_debug_keys(r) for r in resources],
-                [strip_debug_keys(c) for c in calendar_items],
-            )
-            log.info("Bubble report: %d Calendar Items, %d Resources", len(calendar_items), len(resources))
-        else:
-            report = render_report(change_events, verbose=args.verbose)
-            log.info("\n%s", report)
-        if args.emit_bubble_json:
-            _write_bubble_payload(
-                change_events,
-                ai_enrich=run_spec.ai_enrich_enabled,
-                bubble_enrich=run_spec.bubble_enrich_enabled,
-                no_ai=args.no_ai,
-                resources=resources,
-                calendar_items=calendar_items,
-            )
-    else:
-        report = render_report(change_events, verbose=args.verbose)
-        log.info("\n%s", report)
+    report = render_report(change_events, verbose=args.verbose)
+    log.info("\n%s", report)
 
     REPORT_FILE.write_text(report, encoding="utf-8")
     log.info("Report written to %s", REPORT_FILE)
-
-    # After a successful run (even if no changes), optionally upload last_bubble_report.json to S3
-    # when BUBBLE_ARTIFACT_BUCKET is set. This is read-only: no Bubble writes are performed.
-    _upload_bubble_report_to_s3(run_timestamp, run_spec, args.targets_file)
 
     # Write UI-ready alerts output: runs/<date>/<run_id>/alerts.json + per-page agent_output/doc_extractions
     try:
@@ -3810,16 +3083,12 @@ def main() -> None:
     except Exception as e:
         log.warning("Alert S3 write failed (non-fatal): %s", e)
 
-    # Only send email when EMAIL_ENABLED=true, there are meaningful changes, and at least one
-    # Resource or Calendar Item in the Bubble payload (avoid empty payload emails).
-    has_payload = bool(resources or calendar_items)
-
     # "Meaningful changes" at the target level (diffs / first_run / include_hash_changes)
     events_with_meaningful_changes = [
         e for e in change_events if "error" not in e and _has_displayable_changes(e)
     ]
     targets_changed = len(events_with_meaningful_changes)
-    if targets_changed > 0 and has_payload:
+    if targets_changed > 0:
         from emailer import send_report
 
         if LAST_EMAIL_REPORT_FILE.exists():
@@ -3838,14 +3107,6 @@ def main() -> None:
         uri = s3_append(run_timestamp, changelog_events)
         if uri:
             log.info("Change events appended to %s", uri)
-
-    # Always write resolution and verify artifacts to RunSpec artifact dir; upload to S3 when enabled
-    artifact_dir = run_spec.artifact_output_dir or "debug"
-    from bubble.reference_resolution import write_reference_resolution_report
-    write_reference_resolution_report(path=Path(artifact_dir) / "reference_resolution_report.json")
-    if run_spec.s3_artifact_upload_enabled:
-        from config.run_spec import upload_artifacts_to_s3
-        upload_artifacts_to_s3(artifact_dir, run_timestamp)
 
 
 if __name__ == "__main__":

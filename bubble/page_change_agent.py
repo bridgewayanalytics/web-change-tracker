@@ -356,6 +356,30 @@ def get_config_hash() -> str:
     return hashlib.md5(key.encode("utf-8")).hexdigest()
 
 
+def _store_agent_context(call_id: str, agent_type: str, user_content: str, system_prompt: str = "") -> None:
+    """Write the assembled agent context (system + user message) to S3 for dashboard inspection.
+
+    Key: alerts/contexts/{agent_type}/{call_id}.txt
+    Bucket: CHANGELOG_BUCKET env var. Non-fatal — silently skipped if bucket not set.
+    """
+    bucket = os.environ.get("CHANGELOG_BUCKET", "").strip()
+    if not bucket:
+        return
+    try:
+        import boto3
+        key = f"alerts/contexts/{agent_type}/{call_id}.txt"
+        body = f"=== SYSTEM PROMPT ===\n{system_prompt}\n\n=== USER MESSAGE ===\n{user_content}"
+        boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1")).put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=body.encode("utf-8"),
+            ContentType="text/plain",
+        )
+        log.debug("Stored agent context at s3://%s/%s", bucket, key)
+    except Exception as e:
+        log.debug("Could not store agent context (non-fatal): %s", e)
+
+
 def _pgvector_enabled() -> bool:
     """True when PGVECTOR_ENABLED=true and DB credentials are present."""
     if os.environ.get("PGVECTOR_ENABLED", "").strip().lower() not in ("1", "true", "yes"):
@@ -528,6 +552,8 @@ def extract_page_change(
             f"{output_schema}\n"
             "Return ONLY valid JSON — no markdown fences, no commentary outside the JSON."
         )
+
+        _store_agent_context(agent_call_id, "alerts", user_content, system_prompt)
 
         if _pgvector_enabled():
             log.info("page_change_agent: running with pgvector tools (model=%s, call_id=%s)", model, agent_call_id[:8])

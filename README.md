@@ -130,8 +130,6 @@ python scripts/backfill_document_extractions.py --limit 10
 | `backfill_alerts.py` | Re-run both agents on stored HTML snapshots |
 | `backfill_document_extractions.py` | Re-run doc agent only from stored `agent_output.json` (safe — never touches `alerts_table.jsonl`) |
 | `rebuild_alerts_table.py` | Rebuild JSONL from stored `agent_output.json` (no agent re-run) |
-| `wrap_schema_alerts.py` | Wrap DynamoDB schema in `alerts` array for multi-alert support |
-| `backfill_call_id.py` | One-time: backfill `agent_call_id` on existing JSONL rows |
 | `backfill_bubble_action.py` | Backfill `bubble_action` on existing JSONL rows using the classifier |
 | `backfill_recordings.py` | Backfill `recording_s3_key` on alerts missing a recording match |
 | `backfill_transcripts.py` | Backfill `transcript_s3_key` on alerts that have a recording but no transcript |
@@ -151,9 +149,8 @@ python3 -m eval.run_eval --agent-call-ids a,b  # evaluate specific rows
 | Module | Purpose |
 |--------|---------|
 | `eval/run_eval.py` | Entry point; loads OpenAI + DB creds from SSM |
-| `eval/row_selector.py` | Selects `ingest_status == "approved"` rows, deduplicates by `agent_call_id` |
-| `eval/context_builder.py` | Builds eval context: org tree, Bubble ground truth, newsreel backend presence check, semantic search |
-| `eval/eval_agent.py` | Calls `chat:eval-agent` config from DynamoDB |
+| `eval/row_selector.py` | Selects eligible rows (matched in Bubble via `bubble_action.match_search`), deduplicates by `agent_call_id` |
+| `eval/eval_agent.py` | Calls `chat:web-extraction-qa-agent` config from DynamoDB; receives before/after HTML |
 | `eval/result_store.py` | Upserts to `alerts/eval_results_table.jsonl` |
 
 ---
@@ -278,7 +275,7 @@ python scripts/backfill_alerts.py --dry-run --limit 5            # Test agent pi
 
 ## Accuracy evaluation
 
-Historical one-time accuracy audits (June 2026) are archived in `analysis/accuracy_eval/`. The production QA evaluation pipeline (`eval/`) is now the live source of truth — results appear on the dashboard alongside each alert row.
+The production QA evaluation pipeline (`eval/`) is the live source of truth — results appear on the dashboard alongside each alert row.
 
 ---
 
