@@ -81,6 +81,16 @@ def _report_changes(original: dict, normalized: dict) -> dict[str, str]:
     }
 
 
+_NESTED_ALERT_KEYS = frozenset({"events", "library_items", "agenda_items"})
+
+
+def _is_nested_schema_alert_row(row: dict) -> bool:
+    """Old nested-schema alert rows have events/library_items/agenda_items as lists.
+    These must not be normalized — their keys are schema arrays, not field name variants.
+    The write-time normalizer already skips this path (flat schema only)."""
+    return any(isinstance(row.get(k), list) and row.get(k) for k in _NESTED_ALERT_KEYS)
+
+
 def backfill_data_rows(
     client,
     s3_key: str,
@@ -88,6 +98,7 @@ def backfill_data_rows(
     skip_keys: frozenset,
     dry_run: bool,
     limit: int | None,
+    skip_nested_alerts: bool = False,
 ) -> None:
     from storage.field_normalizer import normalize_row_keys
 
@@ -101,10 +112,15 @@ def backfill_data_rows(
         rows = rows[-limit:]
 
     changed_count = 0
+    skipped_nested = 0
     changed_keys: dict[str, int] = {}
     normalized_rows = []
 
     for row in rows:
+        if skip_nested_alerts and _is_nested_schema_alert_row(row):
+            normalized_rows.append(row)
+            skipped_nested += 1
+            continue
         norm = normalize_row_keys(row, norm_map, skip_keys)
         normalized_rows.append(norm)
 
@@ -120,6 +136,8 @@ def backfill_data_rows(
         if norm != row:
             changed_count += 1
 
+    if skipped_nested:
+        log.info("  %d nested-schema rows skipped (safe — pre-May 2026 format)", skipped_nested)
     log.info("  %d total rows, %d rows have key changes", len(rows), changed_count)
     if changed_keys:
         log.info("  Key renames seen:")
@@ -234,7 +252,7 @@ def main():
         log.info("=== %s (%s) ===", table, s3_key)
 
         if table == "alerts":
-            backfill_data_rows(client, s3_key, alert_norm, ALERT_PIPELINE_FIELDS, args.dry_run, args.limit)
+            backfill_data_rows(client, s3_key, alert_norm, ALERT_PIPELINE_FIELDS, args.dry_run, args.limit, skip_nested_alerts=True)
         elif table == "doc-extractions":
             backfill_data_rows(client, s3_key, doc_norm, DOC_PIPELINE_FIELDS, args.dry_run, args.limit)
         elif table == "eval":
