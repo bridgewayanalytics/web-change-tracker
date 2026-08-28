@@ -122,6 +122,10 @@ def _build_rows_for_single_alert(
         # Flat schema — all agent output fields stored verbatim as top-level keys
         for key, val in agent_output.items():
             base[key] = val
+        # Normalize agent output keys to stable IDs before storing
+        from storage.field_normalizer import get_alert_norm_map, normalize_row_keys
+        from storage.alert_schema import ALERT_PIPELINE_FIELDS
+        base = normalize_row_keys(base, get_alert_norm_map(), ALERT_PIPELINE_FIELDS)
         return [base]
 
     # --- Nested schema (backward compat for old rows) ---
@@ -224,9 +228,12 @@ def _build_doc_extraction_rows(
         }
         if config_hash:
             row["config_hash"] = config_hash
-        # All document agent output fields verbatim
+        # All document agent output fields verbatim, then normalize to stable IDs
         for key, val in extraction.items():
             row[key] = val
+        from storage.field_normalizer import get_doc_norm_map, normalize_row_keys
+        from storage.doc_schema import DOC_PIPELINE_FIELDS
+        row = normalize_row_keys(row, get_doc_norm_map(), DOC_PIPELINE_FIELDS)
 
         rows.append(row)
 

@@ -71,8 +71,12 @@ def store_doc_eval_results(eval_rows: list[dict], eval_run_id: str) -> None:
     bucket = _get_bucket()
     client = _s3_client()
     try:
+        from storage.field_normalizer import get_doc_norm_map, normalize_score_keys
+        norm_map = get_doc_norm_map()
         existing = _load_existing(client, bucket)
         for row in eval_rows:
+            if isinstance(row.get("eval_scores"), dict):
+                row["eval_scores"] = normalize_score_keys(row["eval_scores"], norm_map)
             key = _row_key(row)
             if key:
                 existing[key] = row
