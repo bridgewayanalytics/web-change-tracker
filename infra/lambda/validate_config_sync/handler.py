@@ -29,11 +29,12 @@ WATCHED_KEYS = frozenset({
     "chat:document-data-extraction",
 })
 
-# These config keys require the output_json_schema to be wrapped in an alerts array.
+# Maps each config key to its top-level array wrapper key.
 # If Bubble sync removes the wrapper, the Lambda re-adds it.
-REQUIRE_ALERTS_WRAPPER = frozenset({
-    "chat:web-tracking-agent",
-})
+WRAPPER_KEY_MAP: dict[str, str] = {
+    "chat:web-tracking-agent": "alerts",
+    "chat:document-data-extraction": "agenda_items",
+}
 
 # If we validated this row within this many seconds, skip (prevents loops)
 DEBOUNCE_SECONDS = 10
@@ -77,12 +78,25 @@ INITIAL_REGISTRIES = {
         "library_items_file_name", "is_the_alert_relevant_for_an_art_newsreel_article",
     ],
     "chat:document-data-extraction": [
-        "number", "document_description",
-        "organization_or_publisher", "organization_publisher", "agenda_items", "agenda_items_official",
-        "agenda_items_standardized_id", "agenda_items_official_id",
-        "date_published", "meeting_or_last_comment_date", "document_type", "document_title",
-        "existing_updated_or_new_document", "newsreel_relevance", "document_url_web_tracking_agent",
+        "number", "data_extraction_date_time", "document_description",
+        "organization_author", "organization_publisher",
+        "document_title", "document_title_source", "document_type",
+        "date_published", "meeting_date_or_last_comment_date",
+        "existing_updated_or_new_document",
+        "agenda_item_title", "chronicle_topics",
+        "agenda_item_title_official", "agenda_item_standardized_id", "agenda_item_official_id",
+        "relevant_for_future_newsreel_article",
+        "document_url_web_tracking_agent", "web_page_url",
     ],
+}
+
+# Pipeline columns: fields stamped by the pipeline at known label positions in
+# output_requested_values. These are NOT in the agent output schema but are valid
+# display columns. {config_key: {label_position: stable_id}}
+_PIPELINE_COLUMN_POSITIONS: dict[str, dict[int, str]] = {
+    "chat:document-data-extraction": {
+        1: "data_extraction_datetime",
+    },
 }
 
 STRUCTURAL_SCHEMAS: dict = {
@@ -169,6 +183,16 @@ STRUCTURAL_SCHEMAS: dict = {
         "required": ["status", "details"],
     },
     # document-data-extraction structural fields
+    "chronicle_topics": {
+        "type": "array",
+        "description": "Chronicle Topics",
+        "items": {"type": "string"},
+    },
+    "organization_publisher": {
+        "type": "array",
+        "description": "Organization Publisher",
+        "items": {"type": "string"},
+    },
     "organization_or_publisher": {
         "type": "object",
         "description": "Organization or Publisher",
@@ -254,16 +278,17 @@ def _ser_registry(registry):
 # ---------------------------------------------------------------------------
 
 def _schema_inner(schema):
-    """Return the inner schema (drilling through alerts wrapper if present)."""
+    """Return the inner schema (drilling through array wrapper if present)."""
     if not isinstance(schema, dict):
         return schema
     props = schema.get("properties", {})
-    if "alerts" in props:
-        alerts_prop = props.get("alerts", {})
-        if isinstance(alerts_prop, dict):
-            items = alerts_prop.get("items")
-            if isinstance(items, dict):
-                return items
+    for wrapper_key in WRAPPER_KEY_MAP.values():
+        if wrapper_key in props:
+            wrapper_prop = props.get(wrapper_key, {})
+            if isinstance(wrapper_prop, dict):
+                items = wrapper_prop.get("items")
+                if isinstance(items, dict):
+                    return items
     return schema
 
 
@@ -282,19 +307,25 @@ def _extract_required_keys(image):
     return _schema_inner(schema).get("required", [])
 
 
-def _wrap_flat_schema_in_alerts(flat_schema):
-    """Wrap a flat schema in an alerts array wrapper for multi-alert support."""
+_WRAPPER_DESCRIPTIONS: dict[str, str] = {
+    "alerts": "List of alerts detected in the page change",
+    "agenda_items": "List of extracted agenda items, one per array element",
+}
+
+
+def _wrap_flat_schema(flat_schema, wrapper_key):
+    """Wrap a flat schema in the given wrapper array for multi-row support."""
     return {
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "alerts": {
+            wrapper_key: {
                 "type": "array",
-                "description": "List of alerts detected in the page change",
+                "description": _WRAPPER_DESCRIPTIONS.get(wrapper_key, f"List of {wrapper_key}"),
                 "items": flat_schema,
             }
         },
-        "required": ["alerts"],
+        "required": [wrapper_key],
     }
 
 
@@ -372,19 +403,16 @@ def _remove_garbage_labels(labels):
 
 
 def _fix_label_count(labels, required_keys):
-    """Ensure labels list matches required_keys length.
+    """Ensure labels list has at least len(required_keys) entries.
 
-    If too many: remove garbage first, then trim from end.
-    If too few: pad with title-cased field key names.
+    Extra labels beyond required_keys are preserved — they correspond to pipeline
+    metadata columns (e.g. data_extraction_datetime) that are valid display columns
+    in the dashboard but are not in the agent output schema.
+    If too few: pad with canonical or title-cased key names.
     """
-    # First remove garbage
     labels, _ = _remove_garbage_labels(labels)
 
-    if len(labels) > len(required_keys):
-        # Trim excess from end
-        labels = labels[: len(required_keys)]
-    elif len(labels) < len(required_keys):
-        # Pad with canonical label if known, else title-cased key name
+    if len(labels) < len(required_keys):
         for i in range(len(labels), len(required_keys)):
             key = required_keys[i]
             label = CANONICAL_LABELS.get(key) or key.replace("_", " ").title()
@@ -427,17 +455,18 @@ def _remove_garbage_schema_keys(schema):
     if not isinstance(schema, dict):
         return schema, []
 
-    # Handle alerts-array wrapper
+    # Handle array wrapper
     props = schema.get("properties", {})
-    if "alerts" in props:
-        alerts_prop = props["alerts"]
-        items = alerts_prop.get("items") if isinstance(alerts_prop, dict) else None
-        if isinstance(items, dict):
-            cleaned_items, removed = _clean_object_schema(items)
-            if removed:
-                new_alerts = {**alerts_prop, "items": cleaned_items}
-                return {**schema, "properties": {**props, "alerts": new_alerts}}, removed
-        return schema, []
+    for wrapper_key in WRAPPER_KEY_MAP.values():
+        if wrapper_key in props:
+            wrapper_prop = props[wrapper_key]
+            items = wrapper_prop.get("items") if isinstance(wrapper_prop, dict) else None
+            if isinstance(items, dict):
+                cleaned_items, removed = _clean_object_schema(items)
+                if removed:
+                    new_wrapper = {**wrapper_prop, "items": cleaned_items}
+                    return {**schema, "properties": {**props, wrapper_key: new_wrapper}}, removed
+            return schema, []
 
     # Flat schema
     return _clean_object_schema(schema)
@@ -471,10 +500,11 @@ def _update_column_registry(registry, new_labels, config_key, required_keys=None
     matched_at: dict = {}   # new_labels index → registry entry
     matched_ids: set = set()
 
+    existing_by_id = {e["id"]: e for e in registry}
+
     # Pass 0: key-based match using required_keys (stable IDs) — handles reorders correctly
     # even when the stored registry labels are stale or wrong.
     if required_keys:
-        existing_by_id = {e["id"]: e for e in registry}
         for i, key in enumerate(required_keys):
             entry = existing_by_id.get(key)
             if entry is not None and entry["id"] not in matched_ids:
@@ -502,7 +532,12 @@ def _update_column_registry(registry, new_labels, config_key, required_keys=None
     updated = []
     for i, label in enumerate(new_labels):
         if i in matched_at:
-            updated.append(matched_at[i])
+            entry = matched_at[i]
+            # Propagate label changes from output_requested_values so that Bubble Admin
+            # renames immediately reflect in the registry (and therefore the dashboard).
+            if label.strip() and entry.get("label") != label:
+                entry["label"] = label
+            updated.append(entry)
         elif unmatched_idx < len(unmatched_registry):
             # Positional: inherit the stable ID of the next unmatched registry entry
             entry = dict(unmatched_registry[unmatched_idx])
@@ -611,15 +646,16 @@ def _normalize_schema_with_registry(schema, registry):
             return obj, False, {}
         return {**obj, "properties": new_props, "required": new_required}, True, detected
 
-    # Handle alerts array wrapper
+    # Handle array wrapper
     props = schema.get("properties", {})
-    if "alerts" in props:
-        alerts_prop = props["alerts"]
-        if isinstance(alerts_prop, dict) and isinstance(alerts_prop.get("items"), dict):
-            new_items, changed, detected = _normalize_object(alerts_prop["items"])
-            if changed:
-                return {**schema, "properties": {**props, "alerts": {**alerts_prop, "items": new_items}}}, detected
-        return schema, {}
+    for wrapper_key in WRAPPER_KEY_MAP.values():
+        if wrapper_key in props:
+            wrapper_prop = props[wrapper_key]
+            if isinstance(wrapper_prop, dict) and isinstance(wrapper_prop.get("items"), dict):
+                new_items, changed, detected = _normalize_object(wrapper_prop["items"])
+                if changed:
+                    return {**schema, "properties": {**props, wrapper_key: {**wrapper_prop, "items": new_items}}}, detected
+            return schema, {}
 
     # Flat schema
     new_schema, changed, detected = _normalize_object(schema)
@@ -664,16 +700,17 @@ def _enforce_field_types(schema):
     if not isinstance(schema, dict):
         return schema, []
 
-    # Handle alerts wrapper
+    # Handle array wrapper
     s_props = schema.get("properties", {})
-    if "alerts" in s_props:
-        alerts_prop = s_props["alerts"]
-        if isinstance(alerts_prop, dict) and isinstance(alerts_prop.get("items"), dict):
-            new_items, fixes = _enforce_on_object(alerts_prop["items"])
-            if fixes:
-                new_alerts = {**alerts_prop, "items": new_items}
-                return {**schema, "properties": {**s_props, "alerts": new_alerts}}, fixes
-        return schema, []
+    for wrapper_key in WRAPPER_KEY_MAP.values():
+        if wrapper_key in s_props:
+            wrapper_prop = s_props[wrapper_key]
+            if isinstance(wrapper_prop, dict) and isinstance(wrapper_prop.get("items"), dict):
+                new_items, fixes = _enforce_on_object(wrapper_prop["items"])
+                if fixes:
+                    new_wrapper = {**wrapper_prop, "items": new_items}
+                    return {**schema, "properties": {**s_props, wrapper_key: new_wrapper}}, fixes
+            return schema, []
 
     return _enforce_on_object(schema)
 
@@ -694,22 +731,26 @@ def handler(event, context):
         if config_key not in WATCHED_KEYS:
             continue
 
-        # Debounce: skip if we just validated this row
+        # Debounce: skip if we just validated this row — but ONLY when output_requested_values
+        # hasn't changed. When the user edits labels in Bubble Admin, output_requested_values
+        # changes between OldImage and NewImage, so we must process it even if recently validated.
+        # The debounce only needs to block the Lambda's own writes (registry + _last_validated_at),
+        # which do NOT change output_requested_values.
         last_validated = new_image.get("_last_validated_at", {}).get("S", "")
         if last_validated:
             try:
                 validated_time = datetime.fromisoformat(last_validated)
                 now = datetime.now(timezone.utc)
                 if (now - validated_time).total_seconds() < DEBOUNCE_SECONDS:
-                    log.info("Skipping %s — validated %s ago", config_key, now - validated_time)
-                    return
+                    old_labels = _extract_labels(old_image)
+                    new_labels_check = _extract_labels(new_image)
+                    if old_labels == new_labels_check:
+                        log.info("Skipping %s — validated %s ago", config_key, now - validated_time)
+                        return
             except (ValueError, TypeError):
                 pass
 
         corrections = []
-
-        # Load existing _field_aliases (stable_id -> old_key, for dashboard resolveCell)
-        field_aliases = _extract_str_map(new_image, "_field_aliases")
 
         # Extract current state
         required_keys = _extract_required_keys(new_image)
@@ -727,19 +768,26 @@ def handler(event, context):
             log.info("No output_json_schema.required for %s — skipping", config_key)
             continue
 
-        # 0a. Restore alerts array wrapper if Bubble sync removed it
+        # 0a. Restore array wrapper if Bubble sync removed it or replaced it with a flat field
         full_schema = _extract_full_schema(new_image)
         cleaned_schema = None
-        if full_schema and config_key in REQUIRE_ALERTS_WRAPPER:
+        wrapper_key = WRAPPER_KEY_MAP.get(config_key)
+        if full_schema and wrapper_key:
             props = full_schema.get("properties", {})
-            if "alerts" not in props:
-                # Bubble wrote a flat schema; re-wrap it
-                full_schema = _wrap_flat_schema_in_alerts(full_schema)
+            wrapper_prop = props.get(wrapper_key, {})
+            is_proper_wrapper = (
+                isinstance(wrapper_prop, dict)
+                and wrapper_prop.get("type") == "array"
+                and isinstance(wrapper_prop.get("items"), dict)
+            )
+            if not is_proper_wrapper:
+                # Bubble wrote a flat schema (or agenda_items is a plain field); re-wrap it
+                full_schema = _wrap_flat_schema(full_schema, wrapper_key)
                 cleaned_schema = full_schema
                 # required_keys were already extracted from the flat schema (inner fields)
                 corrections.append(
-                    "Re-wrapped flat schema in alerts array — "
-                    "Bubble sync removed wrapper, multi-alert support restored"
+                    f"Re-wrapped flat schema in {wrapper_key} array — "
+                    "Bubble sync removed wrapper or replaced it with a flat field"
                 )
 
         # 0b. Remove garbage schema property keys
@@ -754,20 +802,38 @@ def handler(event, context):
                     + ", ".join(repr(k[:60]) for k in schema_garbage)
                 )
 
+        # Track whether labels were actually modified (garbage removed or padding added).
+        # We only write output_requested_values back if we changed it — writing it back
+        # unconditionally causes a race: Bubble syncs schema and labels as separate DynamoDB
+        # writes; Lambda fires on the schema write (which still has old labels), reads old
+        # labels, and overwrites Bubble's subsequent label write with the old value.
+        labels_modified = False
+
         # 1. Remove garbage labels
         cleaned_labels, garbage = _remove_garbage_labels(labels)
         if garbage:
             labels = cleaned_labels
+            labels_modified = True
             corrections.append(
                 f"Removed {len(garbage)} garbage label(s): "
                 + ", ".join(f"[{i}] {repr(t[:50])}" for i, t in garbage)
             )
 
-        # 2. Fix label count
-        if len(labels) != len(required_keys):
+        # 2. Fix label count (only pads when too few; extra labels are preserved)
+        if len(labels) < len(required_keys):
             old_count = len(labels)
             labels = _fix_label_count(labels, required_keys)
-            corrections.append(f"Fixed label count: {old_count} -> {len(required_keys)}")
+            labels_modified = True
+            corrections.append(f"Padded label count: {old_count} -> {len(labels)}")
+        elif len(labels) > len(required_keys):
+            # Extra labels are valid pipeline metadata columns — just remove garbage
+            labels, garbage = _remove_garbage_labels(labels)
+            if garbage:
+                labels_modified = True
+                corrections.append(
+                    f"Removed {len(garbage)} garbage label(s) from excess: "
+                    + ", ".join(f"[{i}] {repr(t[:50])}" for i, t in garbage)
+                )
 
         # 3. Update column registry (stable IDs)
         updated_registry, registry_changed = _update_column_registry(registry, labels, config_key, required_keys=required_keys)
@@ -775,31 +841,11 @@ def handler(event, context):
             registry = updated_registry
             corrections.append(f"Updated column registry ({len(registry)} columns)")
 
-        # 4. Normalize output_json_schema to use stable IDs
-        if full_schema and registry:
-            normalized, detected_renames = _normalize_schema_with_registry(full_schema, registry)
-            if normalized is not full_schema:
-                cleaned_schema = normalized
-                corrections.append("Normalized schema to use stable column IDs")
-            if detected_renames:
-                # Invert to {stable_id: old_key} so dashboard resolveCell can walk backward
-                new_aliases = {stable: old for old, stable in detected_renames.items()}
-                # Merge with existing (don't overwrite chains already recorded)
-                merged = {**new_aliases, **field_aliases}  # existing takes priority for stable chains
-                if merged != field_aliases:
-                    field_aliases = merged
-                    corrections.append(
-                        f"Recorded {len(detected_renames)} field alias(es): "
-                        + ", ".join(f"{old}->{stable}" for old, stable in detected_renames.items())
-                    )
-
-        # 5. Enforce correct field types
-        schema_to_check = cleaned_schema or full_schema
-        if schema_to_check:
-            type_enforced, type_fixes = _enforce_field_types(schema_to_check)
-            if type_fixes:
-                cleaned_schema = type_enforced
-                corrections.append("Type enforcement: " + "; ".join(type_fixes))
+        # Steps 4 (key normalization) and 5 (type enforcement) removed.
+        # The backend now derives schema keys directly from the field registry in the
+        # same request, so schema and registry keys are always in sync at write time.
+        # Rewriting the schema here against the stale _column_registry was the root
+        # cause of all key mismatches. The whole Lambda will be deleted once verified.
 
         # Always update registry if it changed OR if it's absent from new_image
         # (Bubble full-item PUT can wipe Lambda-written fields; OldImage fallback in
@@ -817,10 +863,13 @@ def handler(event, context):
         expr_values = {}
 
         if corrections:
-            # Update labels
-            expr_parts.append("#labels = :labels")
-            expr_names["#labels"] = "output_requested_values"
-            expr_values[":labels"] = _ser_str_list(labels)
+            # Only write labels back if we actually modified them (garbage removed or padded).
+            # Never write them back just because schema changed — that races with Bubble's
+            # separate label update and overwrites the new label with the old one.
+            if labels_modified:
+                expr_parts.append("#labels = :labels")
+                expr_names["#labels"] = "output_requested_values"
+                expr_values[":labels"] = _ser_str_list(labels)
 
             # Update schema if changed (garbage removal or normalization)
             if cleaned_schema is not None:
@@ -833,12 +882,6 @@ def handler(event, context):
             expr_parts.append("#registry = :registry")
             expr_names["#registry"] = "_column_registry"
             expr_values[":registry"] = _ser_registry(registry)
-
-        # Write field aliases if we have any (dashboard uses these for zero-code renames)
-        if field_aliases:
-            expr_parts.append("#aliases = :aliases")
-            expr_names["#aliases"] = "_field_aliases"
-            expr_values[":aliases"] = _ser_str_map(field_aliases)
 
         # Debounce timestamp
         expr_parts.append("#validated = :validated")
