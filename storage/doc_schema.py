@@ -24,7 +24,8 @@ DOC_PIPELINE_FIELDS: frozenset[str] = frozenset({
     "config_hash",
     # Stamped by document_agent.extract_document_data() after the LLM call
     "doc_agent_context_key",
-    "data_extraction_datetime",
+    "data_extraction_datetime",    # old key (pre-normalization)
+    "data_extraction_date_time",   # current key (registry-normalized)
     # Stamped by spike.py post-extraction
     "extraction_source",
     "ingest_status",

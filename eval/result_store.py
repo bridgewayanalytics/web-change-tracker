@@ -88,13 +88,19 @@ def store_eval_results(eval_rows: list[dict], eval_run_id: str) -> None:
     bucket = _get_bucket()
     client = _s3_client()
 
+    # Normalize score keys — non-fatal; if field registry is unavailable, write un-normalized.
     try:
         from storage.field_normalizer import get_alert_norm_map, normalize_score_keys
         norm_map = get_alert_norm_map()
-        existing = _load_existing(client, bucket)
         for row in eval_rows:
             if isinstance(row.get("eval_scores"), dict):
                 row["eval_scores"] = normalize_score_keys(row["eval_scores"], norm_map)
+    except Exception as e:
+        log.warning("result_store: score key normalization skipped: %s", e)
+
+    try:
+        existing = _load_existing(client, bucket)
+        for row in eval_rows:
             key = _row_key(row)
             if key:
                 existing[key] = row
