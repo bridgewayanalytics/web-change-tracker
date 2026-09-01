@@ -140,10 +140,19 @@ def _extract_agenda_title(val: object) -> str:
     return str(val or "").strip()
 
 
+def _extract_official_title(val: object) -> str:
+    """Extract official_title string from list-of-dicts or plain string."""
+    if isinstance(val, list) and val:
+        first = val[0]
+        return str(first.get("official_title", "") if isinstance(first, dict) else first).strip()
+    return str(val or "").strip()
+
+
 def make_doc_eval_row_key(row: dict) -> str:
-    """Stable per-row eval key: agent_call_id|standardized_id (fallback: |title, then bare id).
-    Handles both current field names (agenda_item_*) and old field names (agenda_items_*),
-    and both list-of-dicts format (post-normalization) and plain string format (old rows)."""
+    """Stable per-row eval key, tried in order:
+    1. agenda_item_standardized_id  2. agenda_item_title_chronicle_topic
+    3. agenda_item_title_official   4. number field   5. bare agent_call_id
+    Handles both list-of-dicts (post-normalization) and plain string (old rows)."""
     call_id = row.get("agent_call_id", "unknown")
     std_id = _extract_std_id(
         row.get("agenda_item_standardized_id") or row.get("agenda_items_standardized_id")
@@ -157,6 +166,12 @@ def make_doc_eval_row_key(row: dict) -> str:
     )
     if title and title.upper() not in _NA_VALUES:
         return f"{call_id}|{title}"
+    official = _extract_official_title(row.get("agenda_item_title_official"))
+    if official and official.upper() not in _NA_VALUES:
+        return f"{call_id}|{official}"
+    number = str(row.get("number") or "").strip()
+    if number and number.upper() not in _NA_VALUES and number != "0":
+        return f"{call_id}|item_{number}"
     return call_id
 
 
