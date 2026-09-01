@@ -100,11 +100,14 @@ def _backup(client, key: str) -> str:
 _NESTED_ALERT_KEYS = frozenset({"events", "library_items", "agenda_items"})
 
 
-def _is_nested_schema_alert_row(row: dict) -> bool:
-    """Old nested-schema rows store agenda_items/events/library_items as lists.
-    Must not be normalized — those are schema arrays, not field name variants.
-    The write-time normalizer already skips this path (flat-schema branch only)."""
-    return any(isinstance(row.get(k), list) and row.get(k) for k in _NESTED_ALERT_KEYS)
+def _nested_safe_skip_keys(row: dict, base_skip: frozenset) -> frozenset:
+    """
+    For nested-schema rows, add any list-valued keys to skip_keys so they pass
+    through untouched. This lets us rename other top-level keys (alert_datetime_et,
+    art_newsreel_relevance, etc.) while leaving the nested arrays as-is.
+    """
+    extra = {k for k in _NESTED_ALERT_KEYS if isinstance(row.get(k), list) and row.get(k)}
+    return base_skip | extra if extra else base_skip
 
 
 def _normalize_data_rows(
@@ -116,6 +119,11 @@ def _normalize_data_rows(
     """
     Normalize rows in memory. Returns (normalized_rows, changed_count, skipped_nested, changed_keys).
     Does not touch S3.
+
+    For nested-schema alert rows (pre-May 2026): normalizes all top-level scalar keys
+    but leaves list-valued nested arrays (events, library_items, agenda_items) untouched.
+    This avoids the agenda_items → agenda_item_title_chronicle_topics rename for the array
+    while still cleaning up old keys like alert_datetime_et.
     """
     from storage.field_normalizer import normalize_row_keys
 
@@ -125,14 +133,16 @@ def _normalize_data_rows(
     changed_keys: dict[str, int] = {}
 
     for row in rows:
-        if skip_nested_alerts and _is_nested_schema_alert_row(row):
-            normalized_rows.append(row)
+        is_nested = skip_nested_alerts and any(
+            isinstance(row.get(k), list) and row.get(k) for k in _NESTED_ALERT_KEYS
+        )
+        effective_skip = _nested_safe_skip_keys(row, skip_keys) if is_nested else skip_keys
+        if is_nested:
             skipped_nested += 1
-            continue
-        norm = normalize_row_keys(row, norm_map, skip_keys)
+        norm = normalize_row_keys(row, norm_map, effective_skip)
         normalized_rows.append(norm)
         for old_key in row:
-            if old_key in skip_keys:
+            if old_key in effective_skip:
                 continue
             new_key = norm_map.get(old_key, old_key)
             if new_key != old_key:
@@ -175,7 +185,7 @@ def _normalize_eval_rows(
 
 def _log_summary(total: int, changed: int, skipped: int, changed_keys: dict, key_label: str = "Key") -> None:
     if skipped:
-        log.info("  %d nested-schema rows skipped (pre-May 2026, untouched)", skipped)
+        log.info("  %d nested-schema rows (pre-May 2026): scalar keys normalized, list arrays preserved", skipped)
     log.info("  %d total rows, %d rows have changes", total, changed)
     if changed_keys:
         log.info("  %s renames:", key_label)

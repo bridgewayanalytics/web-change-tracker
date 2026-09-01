@@ -27,16 +27,16 @@ _DOC_AGENT_ID = "document-data-extraction"
 # Format: {old_key: stable_id}  — resolved to the FINAL stable ID, not a chain.
 _HISTORICAL_ALIASES: dict[str, dict[str, str]] = {
     _WEB_AGENT_ID: {
-        # Label-as-key era → current stable IDs
+        # Label-as-key era → current registry keys
         "Alert Type1":                                              "alert_type",
         "Alert Title":                                              "alert_title",
         "Alert Description":                                        "alert_description",
         "Alert URL":                                                "alert_url",
         "Organization":                                             "organization",
-        "Alert Date & Time (ET)":                                   "alert_date_time",
+        "Alert Date & Time (ET)":                                   "alert_date_time_et",
         "Event Title":                                              "event_title",
-        "Event Start Date & Time (ET)":                             "event_start_date_time",
-        "Event End Date & Time (ET)":                               "event_end_date_time",
+        "Event Start Date & Time (ET)":                             "event_start_date_time_et",
+        "Event End Date & Time (ET)":                               "event_end_date_time_et",
         "Event Duration":                                           "event_duration",
         "Event is Full Day":                                        "event_is_full_day",
         "Event URL":                                                "event_url",
@@ -46,92 +46,133 @@ _HISTORICAL_ALIASES: dict[str, dict[str, str]] = {
         "Library Item URL":                                         "library_item_url",
         "Library Items File Name":                                  "library_items_file_name",
         "Agenda Item Title & Chronicle Topics":                     "agenda_item_title_chronicle_topics",
-        # Intermediate stable ID era → current stable IDs
-        "alert_datetime_et":                                        "alert_date_time",
-        "event_start_datetime_et":                                  "event_start_date_time",
-        "event_end_datetime_et":                                    "event_end_date_time",
+        # Pre-registry snake_case era → current registry keys
+        "alert_date_time":                                          "alert_date_time_et",
+        "event_start_date_time":                                    "event_start_date_time_et",
+        "event_end_date_time":                                      "event_end_date_time_et",
+        "alert_datetime_et":                                        "alert_date_time_et",
+        "event_start_datetime_et":                                  "event_start_date_time_et",
+        "event_end_datetime_et":                                    "event_end_date_time_et",
         "event_call_in_number_and_access_code":                     "event_call_in_number_access_code",
+        "event_call_in_access_code":                                "event_call_in_number_access_code",
         "agenda_items":                                             "agenda_item_title_chronicle_topics",
         "art_newsreel_relevance":                                   "is_the_alert_relevant_for_an_art_newsreel_article",
         "is_alert_relevant_for_art_newsreel":                       "is_the_alert_relevant_for_an_art_newsreel_article",
         "is_relevant_for_art_newsreel":                             "is_the_alert_relevant_for_an_art_newsreel_article",
-        # Even older intermediate names
-        "event_start_datetime":                                     "event_start_date_time",
-        "event_end_datetime":                                       "event_end_date_time",
-        "event_call_in_access_code":                                "event_call_in_number_access_code",
+        "event_start_datetime":                                     "event_start_date_time_et",
+        "event_end_datetime":                                       "event_end_date_time_et",
         "agenda_item_title_and_chronicle_topics":                   "agenda_item_title_chronicle_topics",
         "agenda_item_official_title":                               "agenda_item_title_official",
     },
     _DOC_AGENT_ID: {
-        # Old data field names → current stable IDs
-        "organization":                             "organization_or_publisher",
-        "meeting_date_or_last_comment_date":        "meeting_or_last_comment_date",
-        "updated_or_new_document":                  "existing_updated_or_new_document",
-        "existing_or_new_document":                 "existing_updated_or_new_document",
-        "agenda_item_title":                        "agenda_items",
-        "agenda_item_title_official":               "agenda_items_official",
-        "agenda_item_standardized_id":              "agenda_items_standardized_id",
-        "agenda_item_official_id":                  "agenda_items_official_id",
-        "is_newsreel_relevant":                     "newsreel_relevance",
-        # Label variants from QA eval scores (LLM used display names as keys)
-        "Organization Author":                      "organization_or_publisher",
-        "Organization Author ":                     "organization_or_publisher",
-        "organization_author":                      "organization_or_publisher",
-        "Organization Publisher":                   "organization_publisher",
-        "Organization Publisher ":                  "organization_publisher",
-        "Agenda Item Title & Chronicle Topic":      "agenda_items",
-        "Agenda Item Title & Chronicle Topics":     "agenda_items",
-        "agenda_item_title_chronicle_topic":        "agenda_items",
-        "agenda_item_title_and_chronicle_topic":    "agenda_items",
-        "agenda_item_title_chronicle_topics":       "agenda_items",
-        "Agenda Item Title - Official":             "agenda_items_official",
-        "Agenda Item - Standardized ID":            "agenda_items_standardized_id",
-        "Agenda Item - Official ID":                "agenda_items_official_id",
-        "Document Description":                     "document_description",
-        "Document description":                     "document_description",
-        "Document Type":                            "document_type",
-        "Document Title":                           "document_title",
-        "Date Published":                           "date_published",
-        "Meeting Date or Last Comment Date":        "meeting_or_last_comment_date",
-        "Existing, Updated, or New Document":       "existing_updated_or_new_document",
-        "Is the document relevant for a Newsreel Article?":         "newsreel_relevance",
-        "Is the document relevant for a future Newsreel Article?":  "newsreel_relevance",
-        "Number":                                   "number",
-        "Document URL (Web Tracking Agent)":        "document_url_web_tracking_agent",
-        "Document URL (Web Tracking Agent) ":       "document_url_web_tracking_agent",
-        "Web Page URL":                             "web_page_url",
-        "Web Page Url":                             "web_page_url",
+        # Lambda-era storage keys → current registry keys
+        # (These are also seeded into prior_keys in the field registry after the Aug 2026 sync,
+        # but kept here as a safety net for rows that bypassed normalization.)
+        "data_extraction_datetime":             "data_extraction_date_time",
+        "organization_or_publisher":            "organization_author",
+        "agenda_items":                         "agenda_item_title_chronicle_topic",
+        "agenda_items_official":                "agenda_item_title_official",
+        "agenda_items_standardized_id":         "agenda_item_standardized_id",
+        "meeting_or_last_comment_date":         "meeting_date_or_last_comment_date",
+        "newsreel_relevance":                   "is_the_document_relevant_for_a_future_newsreel_article",
+        "agenda_items_official_id":             "agenda_item_official_id",
+        # Pre-lambda old field names → current registry keys
+        "organization":                         "organization_author",
+        "is_newsreel_relevant":                 "is_the_document_relevant_for_a_future_newsreel_article",
+        "is_the_document_relevant_for_a_newsreel_article": "is_the_document_relevant_for_a_future_newsreel_article",
+        "updated_or_new_document":              "existing_updated_or_new_document",
+        "existing_or_new_document":             "existing_updated_or_new_document",
+        "agenda_item_title":                    "agenda_item_title_chronicle_topic",
+        "agenda_item_title_chronicle_topics":   "agenda_item_title_chronicle_topic",
+        "agenda_item_title_and_chronicle_topic": "agenda_item_title_chronicle_topic",
+        # Rename experiment variants
+        "organization_author_s":                "organization_author",
+        "organization_author0":                 "organization_author",
+        "organization_authors":                 "organization_author",
+        # Label variants (QA eval agent uses display names as score keys)
+        "Organization Author":                  "organization_author",
+        "Organization Author ":                 "organization_author",
+        "Organization Publisher":               "organization_publisher",
+        "Organization Publisher ":              "organization_publisher",
+        "Agenda Item Title & Chronicle Topic":  "agenda_item_title_chronicle_topic",
+        "Agenda Item Title & Chronicle Topics": "agenda_item_title_chronicle_topic",
+        "Agenda Item Title - Official":         "agenda_item_title_official",
+        "Agenda Item - Standardized ID":        "agenda_item_standardized_id",
+        "Agenda Item - Official ID":            "agenda_item_official_id",
+        "Document Description":                 "document_description",
+        "Document description":                 "document_description",
+        "Document Type":                        "document_type",
+        "Document Title":                       "document_title",
+        "Date Published":                       "date_published",
+        "Meeting Date or Last Comment Date":    "meeting_date_or_last_comment_date",
+        "Existing, Updated, or New Document":   "existing_updated_or_new_document",
+        "Is the document relevant for a Newsreel Article?":        "is_the_document_relevant_for_a_future_newsreel_article",
+        "Is the document relevant for a future Newsreel Article?": "is_the_document_relevant_for_a_future_newsreel_article",
+        "Number":                               "number",
+        "Document URL (Web Tracking Agent)":    "document_url_web_tracking_agent",
+        "Document URL (Web Tracking Agent) ":   "document_url_web_tracking_agent",
+        "Web Page URL":                         "web_page_url",
+        "Web Page Url":                         "web_page_url",
     },
 }
 
 _norm_map_cache: dict[str, dict[str, str]] = {}
 
 
+def _read_field_registry(agent_id: str) -> list[dict]:
+    """Read field registry from chatkit_production_field_registry."""
+    import os
+    import boto3
+    try:
+        table = os.environ.get("FIELD_REGISTRY_TABLE", "chatkit_production_field_registry")
+        region = os.environ.get("AWS_REGION", "us-east-1")
+        dynamo = boto3.client("dynamodb", region_name=region)
+        resp = dynamo.get_item(TableName=table, Key={"agent_id": {"S": agent_id}})
+        item = resp.get("Item", {})
+        fields_raw = item.get("fields", {})
+        if "L" not in fields_raw:
+            return []
+        fields = []
+        for f_raw in fields_raw["L"]:
+            if "M" not in f_raw:
+                continue
+            f: dict = {}
+            for k, v in f_raw["M"].items():
+                if "S" in v:
+                    f[k] = v["S"]
+                elif "L" in v:
+                    f[k] = [x.get("S", "") for x in v["L"] if "S" in x]
+            fields.append(f)
+        return fields
+    except Exception as e:
+        log.warning("field_normalizer: failed to read field registry for %s: %s", agent_id, e)
+        return []
+
+
 def _build_norm_map(agent_id: str) -> dict[str, str]:
-    """Build {any_variant → stable_id} map from DynamoDB + historical aliases."""
-    from config.chatkit_config import get_chat_config
-    cfg = get_chat_config(agent_id)
+    """Build {any_variant → stable_id} map from field registry + historical aliases.
+
+    Priority (highest wins):
+      2. chatkit_production_field_registry — identity, label, and prior_keys for each field
+      1. _HISTORICAL_ALIASES — hardcoded safety net for very old keys not yet in prior_keys
+    """
     norm: dict[str, str] = {}
 
-    # 1. Historical aliases (lowest priority)
+    # 1. Historical aliases (lowest priority — safety net for pre-registry-era keys)
     norm.update(_HISTORICAL_ALIASES.get(agent_id, {}))
 
-    # 2. _field_aliases from DynamoDB: stored as {stable_id: old_key} — invert
-    for stable_id, old_key in (cfg.get("_field_aliases") or {}).items():
-        if isinstance(old_key, str):
-            norm[old_key] = stable_id
-
-    # 3. _column_registry: identity + label variants (highest priority)
-    for entry in (cfg.get("_column_registry") or []):
-        if not isinstance(entry, dict):
+    # 2. Field registry (highest priority — authoritative current + rename history)
+    for field in _read_field_registry(agent_id):
+        current_key = field.get("key", "")
+        if not current_key:
             continue
-        sid = entry.get("id")
-        label = entry.get("label") or ""
-        if not sid:
-            continue
-        norm[sid] = sid                      # identity — stable ID maps to itself
-        norm[label.strip()] = sid            # trimmed label
-        norm[label.strip().lower()] = sid    # lowercase label
+        norm[current_key] = current_key          # identity
+        label = field.get("label", "")
+        if label:
+            norm[label.strip()] = current_key       # trimmed label
+            norm[label.strip().lower()] = current_key  # lowercase label
+        for old_key in field.get("prior_keys", []):
+            norm[old_key] = current_key          # all prior keys → current
 
     log.debug("field_normalizer: built norm_map for %s with %d entries", agent_id, len(norm))
     return norm

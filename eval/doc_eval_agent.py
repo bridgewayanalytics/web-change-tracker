@@ -121,27 +121,59 @@ def _fetch_pdf_text(url: str) -> str | None:
 _ALERT_INCLUDE_KEYS = {"organization", "alert_type", "event_title", "event_start_date_time", "source_url"}
 _HTML_CONTEXT_LIMIT = 8000  # chars per before/after HTML snippet
 
+_NA_VALUES = frozenset({"N/A", "N/A.", "-", ""})
+
+
+def _extract_std_id(val: object) -> str:
+    """Extract plain standardized_id string from list-of-dicts or plain string."""
+    if isinstance(val, list) and val:
+        first = val[0]
+        return str(first.get("standardized_id", "") if isinstance(first, dict) else first).strip()
+    return str(val or "").strip()
+
+
+def _extract_agenda_title(val: object) -> str:
+    """Extract plain agenda_item_title string from list-of-dicts or plain string."""
+    if isinstance(val, list) and val:
+        first = val[0]
+        return str(first.get("agenda_item_title", "") if isinstance(first, dict) else first).strip()
+    return str(val or "").strip()
+
+
+def make_doc_eval_row_key(row: dict) -> str:
+    """Stable per-row eval key: agent_call_id|standardized_id (fallback: |title, then bare id).
+    Handles both current field names (agenda_item_*) and old field names (agenda_items_*),
+    and both list-of-dicts format (post-normalization) and plain string format (old rows)."""
+    call_id = row.get("agent_call_id", "unknown")
+    std_id = _extract_std_id(
+        row.get("agenda_item_standardized_id") or row.get("agenda_items_standardized_id")
+    )
+    if std_id and std_id.upper() not in _NA_VALUES:
+        return f"{call_id}|{std_id}"
+    title = _extract_agenda_title(
+        row.get("agenda_item_title_chronicle_topic")
+        or row.get("agenda_item_title")
+        or row.get("agenda_items")
+    )
+    if title and title.upper() not in _NA_VALUES:
+        return f"{call_id}|{title}"
+    return call_id
+
 
 def _build_user_message(
-    row: dict,
+    rows: list[dict],
     pdf_text: str | None,
+    eval_row_keys: list[str],
     alert_row: dict | None = None,
     before_html: str | None = None,
     after_html: str | None = None,
 ) -> str:
     """
-    Build the QA agent prompt with the exact same source input the extraction agent
-    received (document title, URL, PDF text, pgvector) plus the extraction output
-    to evaluate.
+    Build the QA agent prompt for one or more agenda item rows from the same extraction call.
     """
-    document_name = str(row.get("library_item_title") or row.get("document_title") or "N/A")
-    document_url = str(row.get("library_item_url") or "N/A")
-
-    extraction_json = json.dumps(
-        {k: v for k, v in row.items() if k not in _EXCLUDE_KEYS},
-        indent=2,
-        default=str,
-    )
+    first = rows[0]
+    document_name = str(first.get("library_item_title") or first.get("document_title") or "N/A")
+    document_url = str(first.get("library_item_url") or "N/A")
 
     parts = [
         "## Source Document (same input given to the extraction agent)",
@@ -173,20 +205,27 @@ def _build_user_message(
     if org_tree:
         parts += ["\n## Organization Reference (valid org names)", org_tree]
 
+    parts.append(f"\n## Document Extraction Output ({len(rows)} agenda item row(s) to evaluate)")
+    for key, row in zip(eval_row_keys, rows):
+        extraction_json = json.dumps(
+            {k: v for k, v in row.items() if k not in _EXCLUDE_KEYS},
+            indent=2,
+            default=str,
+        )
+        parts += [f"\n### Row: {key}\n```json", extraction_json, "```"]
+
     parts += [
-        "\n## Document Extraction Output (the row to evaluate)\n```json",
-        extraction_json,
-        "```",
-        "\nEvaluate every field in the Document Extraction Output above against the source "
-        "document provided above (the same document the extraction agent read). "
-        "Return a JSON object where each key is a field name and each value is:\n"
+        "\nEvaluate every field in each row above against the source document. "
+        "Return a JSON object with one key per eval_row_key. Each value is itself a JSON object "
+        "where each field name maps to:\n"
         '{"score": "Correct" | "Partially Correct" | "Incorrect", "reasoning": "<evidence-based explanation>"}\n\n'
         "Reasoning MUST be auditable — cite specific evidence from the document content:\n"
         "- Quote or reference the source document text that supports your score\n"
-        "- If the agent output is wrong, state what the correct answer should be\n"
-        "- For fields not verifiable from the document (e.g. pgvector-dependent fields with no PDF), "
-        "use your knowledge base search results as evidence\n\n"
-        'Include an "overall_summary" key: {"correct": N, "partially_correct": N, "incorrect": N, "total": N, "pattern": "<any systematic patterns>"}'
+        "- If the agent output is wrong, state what the correct answer should be\n\n"
+        'Each per-row object must also include an "overall_summary" key: '
+        '{"correct": N, "partially_correct": N, "incorrect": N, "total": N, "pattern": "<any systematic patterns>"}\n\n'
+        "Top-level output structure:\n"
+        '{"<eval_row_key>": {"<field>": {"score": ..., "reasoning": ...}, ..., "overall_summary": {...}}, ...}'
     ]
 
     return "\n".join(parts)
@@ -198,7 +237,8 @@ async def _run_with_pgvector(
     model: str,
     reasoning_effort: str,
     namespaces: list[str],
-    field_names: list[str],
+    eval_row_keys: list[str],
+    field_names: list[str] | None = None,
 ) -> dict:
     from agents import Agent, Runner, ModelSettings
     from agents.model_settings import Reasoning
@@ -230,19 +270,24 @@ async def _run_with_pgvector(
     if not gathered:
         return {"error": "Agent returned empty output"}
 
-    field_names_str = ", ".join(f'"{f}"' for f in field_names)
+    keys_str = ", ".join(f'"{k}"' for k in eval_row_keys)
+    field_names_str = ", ".join(f'"{k}"' for k in (field_names or []))
     from bubble.openai_client import chat_json
     messages = [
         {
             "role": "system",
             "content": (
                 "You are a JSON formatter. Given the QA evaluation analysis below, produce a JSON object "
-                "where each key is EXACTLY a field name from the evaluated document extraction row and each value is: "
+                f"with exactly these top-level keys (one per evaluated row): {keys_str}. "
+                "Each value is a JSON object where each field maps to: "
                 '{"score": "Correct" | "Partially Correct" | "Incorrect", "reasoning": "<evidence-based explanation>"}. '
-                'Also include an "overall_summary" key: '
-                '{"correct": N, "partially_correct": N, "incorrect": N, "total": N, "pattern": "<systematic patterns>"}. '
-                "CRITICAL: Use the EXACT field names listed below — do not rename, abbreviate, pluralize, "
-                f"or singularize any field name. Valid field names: {field_names_str}"
+                + (
+                    f"Use EXACTLY these field names as the inner score keys (same as the extraction JSON field names): {field_names_str}. "
+                    "Do NOT use display labels or human-readable names — use only the exact field names listed above. "
+                    if field_names_str else ""
+                ) +
+                'Each per-row object must also include an "overall_summary" key: '
+                '{"correct": N, "partially_correct": N, "incorrect": N, "total": N, "pattern": "<systematic patterns>"}.'
             ),
         },
         {"role": "user", "content": gathered},
@@ -250,86 +295,124 @@ async def _run_with_pgvector(
     return chat_json(messages, model=model, reasoning_effort=reasoning_effort)
 
 
-def evaluate_doc_row(row: dict, alert_row: dict | None = None) -> dict:
+def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None) -> list[dict]:
     """
-    Run the doc extraction QA agent on one doc extraction row.
+    Run the doc extraction QA agent on all agenda item rows from one extraction call.
 
-    Fetches the source PDF (same as document_agent does) so the QA agent
-    evaluates against the actual document content, not page HTML.
-
-    Returns a dict with per-field scores and overall_summary.
-    On failure returns {"error": "<message>"}.
+    All rows share the same agent_call_id and library_item_url (same document).
+    Returns a list of per-row result dicts, each including eval_scores and overall_summary.
+    On failure returns [{"error": "<message>"}].
     """
+    if not rows:
+        return []
+
     system_prompt = _get_system_prompt()
     model = _get_model()
     reasoning_effort = _get_reasoning_effort()
 
-    # Fetch PDF text the same way document_agent does
-    document_url = str(row.get("library_item_url") or "")
+    # Fetch PDF text once — all rows in a call share the same document URL
+    first = rows[0]
+    document_url = str(first.get("library_item_url") or "")
     pdf_text = _fetch_pdf_text(document_url) if document_url and document_url != "N/A" else None
 
-    # Fetch before/after HTML from S3 using the row's run metadata
+    # Fetch before/after HTML from S3 using the first row's run metadata
     before_html, after_html = "", ""
-    run_id = str(row.get("run_id") or "")
-    target_id = str(row.get("target_id") or "")
-    run_timestamp = row.get("run_timestamp")
+    run_id = str(first.get("run_id") or "")
+    target_id = str(first.get("target_id") or "")
+    run_timestamp = first.get("run_timestamp")
     if run_id and target_id and run_timestamp:
         try:
             from storage.page_change_s3 import fetch_page_html
-            # run_timestamp in doc extraction JSONL is an ISO string; fetch_page_html expects int/float
             if isinstance(run_timestamp, str):
                 from datetime import datetime, timezone
                 run_timestamp = datetime.fromisoformat(run_timestamp).timestamp()
             before_html, after_html = fetch_page_html(run_id, target_id, run_timestamp)
             if before_html or after_html:
                 log.info("doc_eval_agent: fetched page HTML (before=%d chars, after=%d chars) for run_id=%s", len(before_html), len(after_html), run_id)
-            else:
-                log.debug("doc_eval_agent: page HTML not found in S3 for run_id=%s target_id=%s", run_id, target_id)
         except Exception as e:
             log.debug("doc_eval_agent: could not fetch page HTML: %s", e)
 
-    user_message = _build_user_message(row, pdf_text, alert_row=alert_row, before_html=before_html, after_html=after_html)
+    # Build stable per-row keys for the agent to reference
+    eval_row_keys = [make_doc_eval_row_key(row) for row in rows]
 
-    # Capture exact field names before any API call so the formatter can't rename them
-    field_names = [k for k in row if k not in _EXCLUDE_KEYS]
+    user_message = _build_user_message(
+        rows, pdf_text, eval_row_keys,
+        alert_row=alert_row, before_html=before_html, after_html=after_html,
+    )
+
+    agent_call_id = first.get("agent_call_id", "unknown")
+
+    # Collect the actual field names from the rows (excluding pipeline metadata).
+    # Passed to the formatter so scores are keyed by field ID, not display labels.
+    seen_fields: set[str] = set()
+    field_names: list[str] = []
+    for row in rows:
+        for k in row.keys():
+            if k not in _EXCLUDE_KEYS and k not in seen_fields:
+                field_names.append(k)
+                seen_fields.add(k)
 
     if _pgvector_enabled():
-        namespaces = _get_pgvector_namespaces()
+        namespaces = list(_get_pgvector_namespaces())
+        if document_url and document_url.strip() and document_url != "N/A":
+            from bubble.doc_extraction_ingest import ingest_and_arm
+            doc_namespace = ingest_and_arm(document_url, pdf_text, str(first.get("library_item_title") or ""))
+            if doc_namespace:
+                namespaces.append(doc_namespace)
+                log.info("doc_eval_agent: armed document namespace %s", doc_namespace)
+
         log.info(
-            "doc_eval_agent: running with pgvector (model=%s namespaces=%s) agent_call_id=%s",
-            model, namespaces, row.get("agent_call_id"),
+            "doc_eval_agent: running with pgvector (model=%s namespaces=%s) agent_call_id=%s rows=%d",
+            model, namespaces, agent_call_id, len(rows),
         )
         try:
-            result = asyncio.run(
-                _run_with_pgvector(system_prompt, user_message, model, reasoning_effort, namespaces, field_names)
+            raw = asyncio.run(
+                _run_with_pgvector(system_prompt, user_message, model, reasoning_effort, namespaces, eval_row_keys, field_names)
             )
-            if not isinstance(result, dict):
-                return {"error": "Agent returned non-dict response"}
-            return result
+            if not isinstance(raw, dict):
+                return [{"error": "Agent returned non-dict response"}]
+            return _flatten_scores(raw, rows, eval_row_keys)
         except Exception as e:
-            log.error("Doc eval agent (pgvector) failed agent_call_id=%s: %s", row.get("agent_call_id"), e)
-            return {"error": str(e)}
+            log.error("Doc eval agent (pgvector) failed agent_call_id=%s: %s", agent_call_id, e)
+            return [{"error": str(e)}]
 
     from bubble.openai_client import chat_json
     log.info(
-        "doc_eval_agent: running via direct API (model=%s, pdf=%s) agent_call_id=%s",
-        model, "yes" if pdf_text else "no", row.get("agent_call_id"),
+        "doc_eval_agent: running via direct API (model=%s, pdf=%s) agent_call_id=%s rows=%d",
+        model, "yes" if pdf_text else "no", agent_call_id, len(rows),
     )
-    field_names_str = ", ".join(f'"{f}"' for f in field_names)
+    keys_str = ", ".join(f'"{k}"' for k in eval_row_keys)
+    field_names_str = ", ".join(f'"{k}"' for k in field_names)
     direct_system_prompt = (
         system_prompt
-        + f"\n\nCRITICAL: When producing JSON output, use EXACT field names from the extraction row. "
-        f"Valid field names: {field_names_str}. Do not rename, abbreviate, pluralize, or singularize any field name."
+        + f"\n\nReturn a JSON object with exactly these top-level keys: {keys_str}. "
+        f"Each value is an object whose score keys are EXACTLY these field names (same as the extraction JSON, not display labels): {field_names_str}. "
+        "Each field maps to: {\"score\": \"Correct\" | \"Partially Correct\" | \"Incorrect\", \"reasoning\": \"...\"}. "
+        "Also include an overall_summary key per row."
     )
     messages = [
         {"role": "system", "content": direct_system_prompt},
         {"role": "user", "content": user_message},
     ]
     try:
-        result = chat_json(messages, model=model, reasoning_effort=reasoning_effort)
-        if not isinstance(result, dict):
-            return {"error": "Agent returned non-dict response"}
-        return result
+        raw = chat_json(messages, model=model, reasoning_effort=reasoning_effort)
+        if not isinstance(raw, dict):
+            return [{"error": "Agent returned non-dict response"}]
+        return _flatten_scores(raw, rows, eval_row_keys)
     except Exception as e:
-        log.error("Doc eval agent failed agent_call_id=%s: %s", row.get("agent_call_id"), e)
-        return {"error": str(e)}
+        log.error("Doc eval agent failed agent_call_id=%s: %s", agent_call_id, e)
+        return [{"error": str(e)}]
+
+
+def _flatten_scores(raw: dict, rows: list[dict], eval_row_keys: list[str]) -> list[dict]:
+    """Convert the agent's {eval_row_key: {field_scores}} response into per-row result dicts."""
+    results = []
+    for key, row in zip(eval_row_keys, rows):
+        scores = raw.get(key, {})
+        overall_summary = scores.pop("overall_summary", None) if isinstance(scores, dict) else None
+        results.append({
+            "eval_row_key": key,
+            "eval_scores": scores,
+            "overall_summary": overall_summary,
+        })
+    return results

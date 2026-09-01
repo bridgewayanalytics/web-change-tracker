@@ -1742,20 +1742,15 @@ def _run_pipeline_agents(change_events: list[dict], run_id: str = "") -> None:
                 url = item.get("url") or ""
                 if not name or name.strip().upper() in ("N/A", "N/A.", "-", ""):
                     continue
-                doc_result = _extract_doc(
+                doc_result_list = _extract_doc(
                     name, url,
                     alert_context=agent_output,
                     before_html=ev.get("prev_content_html") or "",
                     after_html=ev.get("content_html") or "",
                 )
-                if doc_result:
+                log.info("document_agent: %s -> %d row(s)", name[:60], len(doc_result_list))
+                for doc_result in doc_result_list:
                     doc_results.append({"item": item, "extraction": doc_result})
-                    log.info(
-                        "document_agent: %s -> topics=%s agenda=%s",
-                        name[:60],
-                        doc_result.get("topic_ids"),
-                        doc_result.get("agenda_item_ids"),
-                    )
                     relevance = doc_result.get("newsreel_relevance")
                     if isinstance(relevance, dict) and relevance.get("status") == "Yes":
                         doc_result["ingest_status"] = "pending"
@@ -1814,23 +1809,23 @@ def _run_pipeline_agents(change_events: list[dict], run_id: str = "") -> None:
                     log.warning("transcript_doc_agent: failed to download %s: %s", t_key, _dl_exc)
                     continue
                 doc_name = f"Meeting Transcript: {event_title}"
-                doc_result = _extract_doc_from_transcript(
+                doc_result_list = _extract_doc_from_transcript(
                     doc_name, document_url="", pdf_text=transcript_text, text_limit=40_000,
                     alert_context=alert,
                 )
-                if doc_result:
+                item = {
+                    "preliminary_title": doc_name,
+                    "url": "",
+                    "file_name": t_key.split("/")[-1],
+                }
+                for doc_result in doc_result_list:
                     doc_result["extraction_source"] = "transcript"
                     doc_result["transcript_s3_key"] = t_key
-                    item = {
-                        "preliminary_title": doc_name,
-                        "url": "",
-                        "file_name": t_key.split("/")[-1],
-                    }
                     ev.setdefault("__doc_extraction", []).append({"item": item, "extraction": doc_result})
-                    log.info(
-                        "transcript_doc_agent: extracted %d field(s) for: %s",
-                        len(doc_result), doc_name[:60],
-                    )
+                log.info(
+                    "transcript_doc_agent: extracted %d row(s) for: %s",
+                    len(doc_result_list), doc_name[:60],
+                )
     except Exception as _tx_exc:
         log.warning("transcript document extraction: non-fatal error: %s", _tx_exc)
 
@@ -2353,7 +2348,7 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
                     _row = json.loads(_line)
                     if _row.get("run_id") == rerun_run_id and _row.get("target_id") == rerun_target_id:
                         _url = _row.get("library_item_url") or ""
-                        _dt = _row.get("data_extraction_datetime") or ""
+                        _dt = _row.get("data_extraction_date_time") or _row.get("data_extraction_datetime") or ""
                         if _url and _dt and _dt.strip().upper() != "N/A" and _url not in _orig_dt_by_url:
                             _orig_dt_by_url[_url] = _dt
                 except Exception:
@@ -2393,14 +2388,14 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
                     log.info("rerun: skipping document (URL mismatch): %s", name[:60])
                     continue
                 log.info("rerun: document agent: %s", name[:60])
-                doc_result = extract_document_data(
+                doc_result_list = extract_document_data(
                     name, url,
                     alert_context=agent_output,
                     before_html=before_html,
                     after_html=after_html,
                     original_datetime=_orig_dt_by_url.get(url),
                 )
-                if doc_result:
+                for doc_result in doc_result_list:
                     doc_extractions.append({"item": item, "extraction": doc_result})
                     relevance = doc_result.get("newsreel_relevance")
                     if isinstance(relevance, dict) and relevance.get("status") == "Yes":
@@ -2710,11 +2705,11 @@ def _run_recording_ingest(recording_s3_key: str) -> None:
             seen_titles_for_extraction.add(event_title)
             try:
                 doc_name = f"Meeting Transcript: {event_title}"
-                doc_result = extract_document_data(
+                doc_result_list = extract_document_data(
                     doc_name, document_url="", pdf_text=transcript_text, text_limit=40_000,
                     alert_context=row,
                 )
-                if doc_result:
+                for doc_result in doc_result_list:
                     doc_result["extraction_source"] = "transcript"
                     doc_result["transcript_s3_key"] = transcript_key
                     doc_extraction_rows.append({
@@ -2728,7 +2723,7 @@ def _run_recording_ingest(recording_s3_key: str) -> None:
                         "library_item_file_name": transcript_key.split("/")[-1],
                         **doc_result,
                     })
-                    log.info("recording_ingest: doc extraction done for %s (%d fields)", event_title[:60], len(doc_result))
+                log.info("recording_ingest: doc extraction done for %s (%d row(s))", event_title[:60], len(doc_result_list))
             except Exception as exc:
                 log.warning("recording_ingest: doc extraction failed for %s: %s", event_title[:60], exc)
 
@@ -2888,16 +2883,18 @@ def _run_manual_doc(agent_call_id: str) -> None:
     log.info("manual_doc: extracting '%s' from %s", document_name[:60], document_url[:80])
 
     from bubble.document_agent import extract_document_data
-    result = extract_document_data(document_name=document_name, document_url=document_url)
+    result_list = extract_document_data(document_name=document_name, document_url=document_url)
 
-    if not result:
+    if not result_list:
         log.error("manual_doc: extraction returned empty result for agent_call_id=%s", agent_call_id)
         raise SystemExit(1)
 
-    log.info("manual_doc: extracted %d field(s) for agent_call_id=%s", len(result), agent_call_id)
+    log.info("manual_doc: extracted %d row(s) for agent_call_id=%s", len(result_list), agent_call_id)
 
+    # Patch the stub row with the first extracted result
+    first_result = result_list[0]
     update_fields = {
-        **result,
+        **first_result,
         "run_id": stub_row.get("run_id") or "manual",
         "ingest_status": "pending",
         # Preserve stub metadata
@@ -2915,6 +2912,37 @@ def _run_manual_doc(agent_call_id: str) -> None:
         bucket=bucket,
     )
     log.info("manual_doc: patched %d row(s) for agent_call_id=%s", patched, agent_call_id)
+
+    # Append additional agenda item rows if the document produced more than one
+    if len(result_list) > 1:
+        try:
+            extra_rows = []
+            stub_meta = {
+                "run_id": stub_row.get("run_id") or "manual",
+                "run_timestamp": stub_row.get("run_timestamp", ""),
+                "target_id": stub_row.get("target_id", ""),
+                "source_url": str(stub_row.get("source_url") or ""),
+                "agent_call_id": agent_call_id,
+                "library_item_title": document_name,
+                "library_item_url": document_url if not manual_doc_s3_key else stub_row.get("library_item_url", ""),
+                "library_item_file_name": document_name,
+                "manual_doc_s3_key": manual_doc_s3_key,
+                "ingest_status": "pending",
+            }
+            for extra in result_list[1:]:
+                extra_rows.append({**stub_meta, **extra})
+            existing_body = ""
+            try:
+                existing_body = s3.get_object(Bucket=bucket, Key=doc_key)["Body"].read().decode("utf-8")
+            except Exception:
+                pass
+            new_lines = "\n".join(json.dumps(r, ensure_ascii=False) for r in extra_rows)
+            combined = (existing_body.rstrip("\n") + "\n" + new_lines).strip() + "\n"
+            s3.put_object(Bucket=bucket, Key=doc_key, Body=combined.encode("utf-8"),
+                          ContentType="application/x-ndjson")
+            log.info("manual_doc: appended %d additional agenda item row(s) for agent_call_id=%s", len(extra_rows), agent_call_id)
+        except Exception as exc:
+            log.warning("manual_doc: failed to append extra agenda item rows: %s", exc)
 
 
 def main() -> None:

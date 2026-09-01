@@ -57,9 +57,10 @@ Return ONLY valid JSON — no markdown fences, no commentary outside the JSON.
 _JSON_OUTPUT_SUFFIX = """
 
 ## Output Format
-Return your response as a single JSON object containing all extracted values.
-Use snake_case keys (e.g., agenda_item_title, organization, document_type).
-Return ONLY the JSON object — no markdown fences, no commentary outside the JSON.
+For documents with multiple agenda items, cover each in sequential order (number = 1, 2, 3...).
+All document-level fields (organization, dates, document type, URLs) repeat for every agenda item.
+If the document contains no distinct agenda items, report a single entry with agenda_item_title = "N/A".
+Return your analysis as structured JSON.
 """
 
 # Lazily loaded from DynamoDB; None means not yet fetched
@@ -200,6 +201,8 @@ async def _run_with_pgvector(
     if not gathered:
         return {}
 
+    log.info("document_agent [STEP1_OUTPUT]: %s", gathered[:2000])
+
     # Step 2: enforce schema via Structured Outputs so output always matches DynamoDB schema
     if json_schema:
         from bubble.openai_client import chat_json
@@ -207,11 +210,13 @@ async def _run_with_pgvector(
             {
                 "role": "system",
                 "content": (
-                    "You are a JSON formatter. Format the document extraction data below "
-                    "into a JSON object that strictly matches the required schema. "
-                    "Use only the data provided — do not invent values. "
-                    "For required string fields where the analysis provides no explicit value, "
-                    "output the string 'N/A' rather than null."
+                    "You are a JSON formatter. Format the document extraction analysis below "
+                    "into the required schema. The schema expects an 'agenda_items' array with "
+                    "exactly one element per agenda item covered in the analysis — do NOT collapse "
+                    "multiple agenda items into a single element. Repeat all document-level fields "
+                    "(organization, document title, type, dates, URLs) on every element. "
+                    "Use only data from the analysis — do not invent values. "
+                    "For required string fields with no explicit value, output 'N/A'."
                 ),
             },
             {"role": "user", "content": gathered},
@@ -310,21 +315,29 @@ _NA_VALUES = frozenset({"N/A", "N/A.", "-", ""})
 _ET_OFFSET = -4  # Eastern Daylight Time (UTC-4); close enough for a timestamp field
 
 
+def _unwrap_agenda_items(result: dict) -> list[dict]:
+    """Extract per-row list from agenda_items wrapper, or wrap flat result in a list."""
+    items = result.get("agenda_items")
+    if isinstance(items, list) and items:
+        return [item for item in items if isinstance(item, dict)]
+    return [result]
+
+
 def _stamp_extraction_datetime(out: dict, original_datetime: str | None = None) -> None:
-    """Stamp data_extraction_datetime on the output dict.
+    """Stamp data_extraction_date_time on the output dict (always overwrites agent output).
     Uses original_datetime if provided (rerun path — preserves the first-run value).
     Falls back to current wall-clock time (first run — LLM cannot reliably know the time).
     """
     if not out:
         return
-    if original_datetime and original_datetime.strip().upper() != "N/A":
-        out["data_extraction_datetime"] = original_datetime
+    if original_datetime and original_datetime.strip().upper() not in _NA_VALUES:
+        out["data_extraction_date_time"] = original_datetime
         return
     from datetime import timedelta
     et_now = datetime.now(timezone.utc).astimezone(
         timezone(timedelta(hours=_ET_OFFSET))
     )
-    out["data_extraction_datetime"] = et_now.strftime("%Y-%m-%dT%H:%M:%S%z")
+    out["data_extraction_date_time"] = et_now.strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
 def _item_has_real_name(item: dict) -> bool:
@@ -359,18 +372,17 @@ def extract_document_data(
     before_html: str | None = None,
     after_html: str | None = None,
     original_datetime: str | None = None,
-) -> dict:
+) -> list[dict]:
     """
     Extract structured data from a document using the document-data-extraction agent.
 
     Output is fully dynamic — fields are whatever the DynamoDB config instructs
-    the model to return. No hardcoded output schema.
-
-    Returns a dict of extracted fields, or {} on any failure (never raises).
+    the model to return. Returns one dict per agenda item (may be multiple for
+    documents with multiple agenda items). Returns [] on any failure (never raises).
     """
     from bubble.page_change_agent import PAGE_CHANGE_AGENT_ENABLED, _store_agent_context
     if not PAGE_CHANGE_AGENT_ENABLED:
-        return {}
+        return []
 
     import uuid
     doc_call_id = str(uuid.uuid4())
@@ -446,17 +458,27 @@ def extract_document_data(
                 json_schema_name=json_schema_name,
                 json_schema_strict=json_schema_strict,
             )
-            if result:
-                log.info("document_agent: extracted %d field(s) for: %s", len(result), document_name[:60])
-            else:
-                log.info("document_agent: no output for: %s", document_name[:60])
             out = result if isinstance(result, dict) else {}
-            if out:
-                for _f in DOC_PIPELINE_FIELDS:
-                    out.pop(_f, None)
-                out["doc_agent_context_key"] = f"alerts/contexts/document/{doc_call_id}.txt"
-                _stamp_extraction_datetime(out, original_datetime=original_datetime)
-            return out
+            if not out:
+                log.info("document_agent: no output for: %s", document_name[:60])
+                return []
+            for _f in DOC_PIPELINE_FIELDS:
+                out.pop(_f, None)
+            out["doc_agent_context_key"] = f"alerts/contexts/document/{doc_call_id}.txt"
+            rows = _unwrap_agenda_items(out)
+            for row in rows:
+                _stamp_extraction_datetime(row, original_datetime=original_datetime)
+            log.info("document_agent: extracted %d row(s) for: %s", len(rows), document_name[:60])
+            return rows
+
+        # Ingest the document into pgvector so the agent can search the full text,
+        # not just the 12k-char excerpt in the prompt. Deterministic doc_uuid means
+        # reruns and QA agent runs hit the same already-indexed namespace (no-op upload).
+        if document_url and document_url.strip():
+            from bubble.doc_extraction_ingest import ingest_and_arm
+            doc_namespace = ingest_and_arm(document_url, pdf_text, document_name)
+            if doc_namespace:
+                pgvector_namespaces = list(pgvector_namespaces) + [doc_namespace]
 
         log.info("document_agent: running with pgvector (model=%s) for: %s", model, document_name[:80])
         result = asyncio.run(_run_with_pgvector(
@@ -466,19 +488,19 @@ def extract_document_data(
             json_schema_strict=json_schema_strict,
         ))
 
-        if result:
-            log.info("document_agent: extracted %d field(s) for: %s", len(result), document_name[:60])
-        else:
-            log.info("document_agent: no output for: %s", document_name[:60])
-
         out = result if isinstance(result, dict) else {}
-        if out:
-            for _f in DOC_PIPELINE_FIELDS:
-                out.pop(_f, None)
-            out["doc_agent_context_key"] = f"alerts/contexts/document/{doc_call_id}.txt"
-            _stamp_extraction_datetime(out)
-        return out
+        if not out:
+            log.info("document_agent: no output for: %s", document_name[:60])
+            return []
+        for _f in DOC_PIPELINE_FIELDS:
+            out.pop(_f, None)
+        out["doc_agent_context_key"] = f"alerts/contexts/document/{doc_call_id}.txt"
+        rows = _unwrap_agenda_items(out)
+        for row in rows:
+            _stamp_extraction_datetime(row)
+        log.info("document_agent: extracted %d row(s) for: %s", len(rows), document_name[:60])
+        return rows
 
     except Exception as e:
         log.warning("document_agent failed (non-fatal): %r", e, exc_info=True)
-        return {}
+        return []

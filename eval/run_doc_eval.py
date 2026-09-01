@@ -102,23 +102,32 @@ def _load_doc_rows(agent_call_ids: list[str] | None, limit: int, library_item_ur
     # Most recent first
     eligible.sort(key=lambda r: r.get("run_timestamp", ""), reverse=True)
 
-    # Deduplicate by agent_call_id, take most recent N unique calls
+    # Deduplicate at the agent_call level (not row level), take most recent N calls
     seen: set[str] = set()
     selected: list[dict] = []
     for row in eligible:
         cid = row.get("agent_call_id", "")
         if cid not in seen:
             seen.add(cid)
-            selected.append(row)
+        selected.append(row)  # collect ALL rows per call
         if len(seen) >= limit:
             break
 
-    log.info("Selected %d doc extraction rows for evaluation", len(selected))
+    log.info("Selected %d doc extraction rows across %d call(s) for evaluation", len(selected), len(seen))
     return selected
 
 
 def _make_eval_run_id() -> str:
     return f"doc-eval-{int(time.time())}"
+
+
+def _group_by_call(rows: list[dict]) -> list[list[dict]]:
+    """Group rows by agent_call_id, preserving order of first appearance."""
+    groups: dict[str, list[dict]] = {}
+    for row in rows:
+        cid = row.get("agent_call_id", "unknown")
+        groups.setdefault(cid, []).append(row)
+    return list(groups.values())
 
 
 def run(
@@ -127,7 +136,7 @@ def run(
     library_item_url: str | None = None,
     dry_run: bool = False,
 ) -> list[dict]:
-    from eval.doc_eval_agent import evaluate_doc_row
+    from eval.doc_eval_agent import evaluate_doc_extraction_call, make_doc_eval_row_key
     from eval.doc_result_store import store_doc_eval_results
 
     eval_run_id = _make_eval_run_id()
@@ -141,12 +150,14 @@ def run(
         return []
 
     alert_lookup = _load_alert_lookup()
-    log.info("Evaluating %d doc extraction rows", len(rows))
+    groups = _group_by_call(rows)
+    log.info("Evaluating %d doc extraction row(s) across %d call(s)", len(rows), len(groups))
 
     if dry_run:
         for row in rows:
             print(json.dumps({
                 "agent_call_id": row.get("agent_call_id"),
+                "eval_row_key": make_doc_eval_row_key(row),
                 "document_title": row.get("document_title"),
                 "library_item_url": row.get("library_item_url"),
                 "run_id": row.get("run_id"),
@@ -155,29 +166,30 @@ def run(
         return rows
 
     eval_rows = []
-    for i, row in enumerate(rows, 1):
-        call_id = row.get("agent_call_id", "unknown")
-        lib_url = row.get("library_item_url", "") or ""
+    for i, group in enumerate(groups, 1):
+        call_id = group[0].get("agent_call_id", "unknown")
+        lib_url = group[0].get("library_item_url", "") or ""
         alert_row = alert_lookup.get((call_id, lib_url)) or alert_lookup.get((call_id, ""))
         log.info(
-            "[%d/%d] Evaluating agent_call_id=%s document=%s alert_found=%s",
-            i, len(rows), call_id,
-            row.get("document_title") or lib_url,
+            "[%d/%d] Evaluating agent_call_id=%s rows=%d document=%s alert_found=%s",
+            i, len(groups), call_id, len(group),
+            group[0].get("document_title") or lib_url,
             alert_row is not None,
         )
 
-        scores = evaluate_doc_row(row=row, alert_row=alert_row)
+        score_results = evaluate_doc_extraction_call(rows=group, alert_row=alert_row)
 
-        eval_row_key = f"{call_id}|{lib_url}" if lib_url and lib_url.lower() != "n/a" else call_id
-
-        eval_row = {
-            **row,
-            "eval_run_id": eval_run_id,
-            "eval_timestamp": eval_timestamp,
-            "eval_scores": scores,
-            "eval_row_key": eval_row_key,
-        }
-        eval_rows.append(eval_row)
+        # Merge per-row scores back into source rows
+        for row, score_result in zip(group, score_results):
+            eval_row_key = score_result.get("eval_row_key") or make_doc_eval_row_key(row)
+            eval_rows.append({
+                **row,
+                "eval_run_id": eval_run_id,
+                "eval_timestamp": eval_timestamp,
+                "eval_scores": score_result.get("eval_scores", {}),
+                "overall_summary": score_result.get("overall_summary"),
+                "eval_row_key": eval_row_key,
+            })
 
     store_doc_eval_results(eval_rows, eval_run_id)
     log.info("Doc eval run %s complete — %d rows evaluated", eval_run_id, len(eval_rows))
