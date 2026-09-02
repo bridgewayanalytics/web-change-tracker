@@ -140,11 +140,16 @@ def _make_eval_run_id() -> str:
 
 
 def _group_by_call(rows: list[dict]) -> list[list[dict]]:
-    """Group rows by agent_call_id, preserving order of first appearance."""
-    groups: dict[str, list[dict]] = {}
+    """Group rows by (agent_call_id, library_item_url) so each document gets its own QA call.
+    Rows from the same agent_call_id but different documents (different library_item_url) are
+    evaluated separately — each group fetches the right PDF for its document.
+    """
+    groups: dict[tuple, list[dict]] = {}
     for row in rows:
         cid = row.get("agent_call_id", "unknown")
-        groups.setdefault(cid, []).append(row)
+        url = row.get("library_item_url") or ""
+        key = (cid, url)
+        groups.setdefault(key, []).append(row)
     return list(groups.values())
 
 
