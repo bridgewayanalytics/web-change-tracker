@@ -38,6 +38,9 @@ htmlcov/
 # ARCHITECTURE.md
 # README.md
 # infra/
+infra/terraform/.terraform/
+infra/terraform/terraform.tfstate*
+infra/terraform/tfplan
 
 # Misc
 *.log
