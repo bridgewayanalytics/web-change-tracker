@@ -25,7 +25,7 @@ import requests
 log = logging.getLogger(__name__)
 
 _CHAT_API_BASE = os.environ.get("CHAT_API_BASE", "https://chat-api.bridgewayanalytics.com")
-_DEFAULT_TIMEOUT_S = 300  # 5 min — enough for CPU worker; GPU cold-start can take longer
+_DEFAULT_TIMEOUT_S = 600  # 10 min — large meeting packets can take 6-8 min to chunk
 _POLL_INTERVAL_S = 10
 
 

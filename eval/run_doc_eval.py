@@ -88,7 +88,17 @@ def _load_doc_rows(agent_call_ids: list[str] | None, limit: int, library_item_ur
         result = [r for r in all_rows if r.get("agent_call_id") in agent_call_ids]
         if library_item_url:
             result = [r for r in result if r.get("library_item_url") == library_item_url]
-        log.info("Selected %d row(s) by agent_call_id", len(result))
+        # Deduplicate by eval_row_key — old and new format rows for the same agenda item
+        # can coexist in the JSONL. Keep the most recent by run_timestamp.
+        from eval.doc_eval_agent import make_doc_eval_row_key
+        dedup: dict[str, dict] = {}
+        for row in result:
+            key = make_doc_eval_row_key(row)
+            existing = dedup.get(key)
+            if existing is None or (row.get("run_timestamp", "") > existing.get("run_timestamp", "")):
+                dedup[key] = row
+        result = list(dedup.values())
+        log.info("Selected %d row(s) by agent_call_id (after dedup)", len(result))
         return result
 
     # Filter: skip transcript rows and rows with no real document URL
@@ -102,17 +112,25 @@ def _load_doc_rows(agent_call_ids: list[str] | None, limit: int, library_item_ur
     # Most recent first
     eligible.sort(key=lambda r: r.get("run_timestamp", ""), reverse=True)
 
-    # Deduplicate at the agent_call level (not row level), take most recent N calls
+    # Deduplicate at the agent_call level (not row level), take most recent N calls.
+    # Within each call, deduplicate by eval_row_key keeping most recent row per key.
+    from eval.doc_eval_agent import make_doc_eval_row_key
     seen: set[str] = set()
-    selected: list[dict] = []
+    dedup_by_key: dict[str, dict] = {}
+    call_order: list[str] = []
     for row in eligible:
         cid = row.get("agent_call_id", "")
         if cid not in seen:
             seen.add(cid)
-        selected.append(row)  # collect ALL rows per call
+            call_order.append(cid)
+        rk = make_doc_eval_row_key(row)
+        existing = dedup_by_key.get(rk)
+        if existing is None or (row.get("run_timestamp", "") > existing.get("run_timestamp", "")):
+            dedup_by_key[rk] = row
         if len(seen) >= limit:
             break
 
+    selected = list(dedup_by_key.values())
     log.info("Selected %d doc extraction rows across %d call(s) for evaluation", len(selected), len(seen))
     return selected
 

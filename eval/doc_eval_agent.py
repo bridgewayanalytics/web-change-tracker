@@ -161,6 +161,7 @@ def make_doc_eval_row_key(row: dict) -> str:
         return f"{call_id}|{std_id}"
     title = _extract_agenda_title(
         row.get("agenda_item_title_chronicle_topic")
+        or row.get("agenda_item_bridgeway_title_chronicle_topic")
         or row.get("agenda_item_title")
         or row.get("agenda_items")
     )
