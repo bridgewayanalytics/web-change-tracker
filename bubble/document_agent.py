@@ -341,15 +341,13 @@ def _stamp_extraction_datetime(out: dict, original_datetime: str | None = None) 
 
 
 def _stamp_web_page_url(out: dict, alert_context: dict | None) -> None:
-    """Override web_page_url=N/A/'' with source_url when the agent fails to populate it.
-    Only acts when the field exists in output (schema includes it) but agent output is empty.
+    """Stamp web_page_url = source_url (always overrides agent output).
+    The web_page_url must be the exact monitored page URL. The agent sometimes
+    normalizes or guesses a different URL — source_url is the ground truth.
     """
     if not out or not alert_context:
         return
     if "web_page_url" not in out:
-        return
-    current = str(out.get("web_page_url") or "").strip()
-    if current.upper() not in _NA_VALUES:
         return
     source_url = str(alert_context.get("source_url") or "").strip()
     if source_url:
