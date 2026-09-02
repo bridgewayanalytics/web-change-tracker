@@ -41,7 +41,10 @@ def _s3_client():
 
 
 def _load_alert_lookup() -> dict[tuple[str, str], dict]:
-    """Return a dict keyed by (agent_call_id, library_item_url) → alert row."""
+    """Return a dict keyed by (agent_call_id, library_item_url) → alert row.
+    Handles compound (semicolon-separated) library_item_url values by also
+    indexing each individual URL so single-URL doc extraction rows match.
+    """
     bucket = _get_bucket()
     client = _s3_client()
     lookup: dict[tuple[str, str], dict] = {}
@@ -58,8 +61,15 @@ def _load_alert_lookup() -> dict[tuple[str, str], dict]:
             row = json.loads(line)
             cid = row.get("agent_call_id", "")
             url = row.get("library_item_url", "") or ""
-            if cid:
-                lookup[(cid, url)] = row
+            if not cid:
+                continue
+            lookup[(cid, url)] = row
+            # Also index individual URLs from semicolon-separated compound values
+            if ";" in url:
+                for single_url in url.split(";"):
+                    single_url = single_url.strip()
+                    if single_url:
+                        lookup[(cid, single_url)] = row
         except json.JSONDecodeError:
             continue
     return lookup
