@@ -340,6 +340,22 @@ def _stamp_extraction_datetime(out: dict, original_datetime: str | None = None) 
     out["data_extraction_date_time"] = et_now.strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
+def _stamp_web_page_url(out: dict, alert_context: dict | None) -> None:
+    """Override web_page_url=N/A/'' with source_url when the agent fails to populate it.
+    Only acts when the field exists in output (schema includes it) but agent output is empty.
+    """
+    if not out or not alert_context:
+        return
+    if "web_page_url" not in out:
+        return
+    current = str(out.get("web_page_url") or "").strip()
+    if current.upper() not in _NA_VALUES:
+        return
+    source_url = str(alert_context.get("source_url") or "").strip()
+    if source_url:
+        out["web_page_url"] = source_url
+
+
 def _item_has_real_name(item: dict) -> bool:
     name = (
         item.get("preliminary_title")
@@ -468,6 +484,7 @@ def extract_document_data(
             rows = _unwrap_agenda_items(out)
             for row in rows:
                 _stamp_extraction_datetime(row, original_datetime=original_datetime)
+                _stamp_web_page_url(row, alert_context)
             log.info("document_agent: extracted %d row(s) for: %s", len(rows), document_name[:60])
             return rows
 
@@ -498,6 +515,7 @@ def extract_document_data(
         rows = _unwrap_agenda_items(out)
         for row in rows:
             _stamp_extraction_datetime(row)
+            _stamp_web_page_url(row, alert_context)
         log.info("document_agent: extracted %d row(s) for: %s", len(rows), document_name[:60])
         return rows
 
