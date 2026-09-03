@@ -153,6 +153,7 @@ async def _run_with_pgvector(
     model: str,
     reasoning_effort: str,
     namespaces: list[str],
+    field_names: list[str] | None = None,
 ) -> dict:
     """
     Two-step evaluation with pgvector tool access:
@@ -190,7 +191,10 @@ async def _run_with_pgvector(
     if not gathered:
         return {"error": "Agent returned empty output"}
 
-    # Step 2: format gathered analysis into structured per-field JSON scores
+    # Step 2: format gathered analysis into structured per-field JSON scores.
+    # Pass explicit field_names so the formatter scores EVERY field, not just
+    # the ones the Step 1 analysis happened to mention.
+    field_names_str = ", ".join(f'"{k}"' for k in (field_names or []))
     from bubble.openai_client import chat_json
     messages = [
         {
@@ -199,9 +203,15 @@ async def _run_with_pgvector(
                 "You are a JSON formatter. Given the QA evaluation analysis below, produce a JSON object "
                 "where each key is a field name from the evaluated alert and each value is: "
                 '{"score": "Correct" | "Partially Correct" | "Incorrect", "reasoning": "<evidence-based explanation>"}. '
+                + (
+                    f"Use EXACTLY these field names as score keys: {field_names_str}. "
+                    "Score ALL listed fields — if the analysis did not explicitly discuss a field, "
+                    "infer its score from any available evidence in the analysis. "
+                    "Do NOT use display labels or human-readable names — use only the exact field names listed above. "
+                    if field_names_str else ""
+                ) +
                 'Also include an "overall_summary" key: '
-                '{"correct": N, "partially_correct": N, "incorrect": N, "total": N, "pattern": "<systematic patterns>"}. '
-                "Use only the analysis provided — do not invent or omit scores."
+                '{"correct": N, "partially_correct": N, "incorrect": N, "total": N, "pattern": "<systematic patterns>"}.'
             ),
         },
         {"role": "user", "content": gathered},
@@ -226,6 +236,13 @@ def evaluate_row(
     reasoning_effort = _get_reasoning_effort()
     user_message = _build_user_message(row, before_html, after_html, reference_context, sibling_rows)
 
+    # Build explicit field list so the formatter scores EVERY field, not just ones
+    # the Step 1 analysis happened to mention (e.g. alert_url was routinely skipped).
+    field_names = [
+        k for k in row
+        if k not in ALERT_PIPELINE_FIELDS and not k.startswith("bubble_action")
+    ]
+
     if _pgvector_enabled():
         namespaces = _get_pgvector_namespaces()
         log.info(
@@ -234,7 +251,7 @@ def evaluate_row(
         )
         try:
             result = asyncio.run(
-                _run_with_pgvector(system_prompt, user_message, model, reasoning_effort, namespaces)
+                _run_with_pgvector(system_prompt, user_message, model, reasoning_effort, namespaces, field_names)
             )
             if not isinstance(result, dict):
                 return {"error": "Agent returned non-dict response"}
