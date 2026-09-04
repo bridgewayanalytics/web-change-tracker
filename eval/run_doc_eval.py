@@ -202,6 +202,16 @@ def run(
     for i, group in enumerate(groups, 1):
         call_id = group[0].get("agent_call_id", "unknown")
         lib_url = group[0].get("library_item_url", "") or ""
+
+        # Skip non-PDF documents — the QA agent cannot evaluate without PDF text,
+        # and storing scores based on title/URL alone produces misleading results.
+        if lib_url and not lib_url.lower().split("?")[0].endswith(".pdf"):
+            log.info(
+                "[%d/%d] Skipping agent_call_id=%s — non-PDF URL (%s)",
+                i, len(groups), call_id, lib_url.split("/")[-1],
+            )
+            continue
+
         alert_row = alert_lookup.get((call_id, lib_url)) or alert_lookup.get((call_id, ""))
         log.info(
             "[%d/%d] Evaluating agent_call_id=%s rows=%d document=%s alert_found=%s",
