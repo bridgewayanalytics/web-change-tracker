@@ -276,7 +276,11 @@ def _fetch_single_pdf(url: str) -> str | None:
         return None
     try:
         import requests
-        resp = requests.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+        resp = requests.get(url, timeout=30, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://content.naic.org/",
+            "Accept": "application/pdf,*/*",
+        })
         resp.raise_for_status()
         from scrape.pdf_meeting_meta import _extract_plain_text
         text = _extract_plain_text(resp.content)
