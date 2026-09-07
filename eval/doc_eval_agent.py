@@ -153,16 +153,26 @@ def _extract_official_title(val: object) -> str:
 
 
 def make_doc_eval_row_key(row: dict) -> str:
-    """Stable per-row eval key, tried in order:
-    1. agenda_item_standardized_id  2. agenda_item_title_chronicle_topic
-    3. agenda_item_title_official   4. number field   5. bare agent_call_id
+    """Stable per-row eval key: call_id | url_filename | discriminator.
+
+    The URL filename is included to prevent collision when the same agent_call_id
+    produces rows for multiple documents that happen to share a std_id.
+    Discriminator priority: std_id → agenda title → official title → number → bare.
     Handles both list-of-dicts (post-normalization) and plain string (old rows)."""
     call_id = row.get("agent_call_id", "unknown")
+
+    lib_url = (row.get("library_item_url") or "").strip()
+    url_slug = lib_url.rstrip("/").split("/")[-1].split("?")[0] if lib_url and lib_url.upper() not in _NA_VALUES else ""
+
+    def _k(*parts: str) -> str:
+        segments = [call_id] + [p for p in parts if p]
+        return "|".join(segments)
+
     std_id = _extract_std_id(
         row.get("agenda_item_standardized_id") or row.get("agenda_items_standardized_id")
     )
     if std_id and std_id.upper() not in _NA_VALUES:
-        return f"{call_id}|{std_id}"
+        return _k(url_slug, std_id)
     title = _extract_agenda_title(
         row.get("agenda_item_title_chronicle_topic")
         or row.get("agenda_item_bridgeway_title_chronicle_topic")
@@ -170,14 +180,14 @@ def make_doc_eval_row_key(row: dict) -> str:
         or row.get("agenda_items")
     )
     if title and title.upper() not in _NA_VALUES:
-        return f"{call_id}|{title}"
+        return _k(url_slug, title)
     official = _extract_official_title(row.get("agenda_item_title_official"))
     if official and official.upper() not in _NA_VALUES:
-        return f"{call_id}|{official}"
+        return _k(url_slug, official)
     number = str(row.get("number") or "").strip()
     if number and number.upper() not in _NA_VALUES and number != "0":
-        return f"{call_id}|item_{number}"
-    return call_id
+        return _k(url_slug, f"item_{number}")
+    return _k(url_slug)
 
 
 def _build_user_message(
