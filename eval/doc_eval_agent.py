@@ -21,7 +21,6 @@ from storage.doc_schema import DOC_PIPELINE_FIELDS
 log = logging.getLogger(__name__)
 
 _CHAT_ID = "document-extraction-qa-agent"
-_PDF_TEXT_LIMIT = 12000  # mirrors document_agent._PDF_TEXT_LIMIT
 
 _FALLBACK_SYSTEM_PROMPT = """\
 You are a QA evaluation agent for document extraction output. Evaluate the accuracy
@@ -88,7 +87,8 @@ def _pgvector_enabled() -> bool:
 def _fetch_single_pdf(url: str) -> str | None:
     """Fetch and extract text from a single PDF URL. Returns None on any failure."""
     url = url.strip()
-    if not url or not url.lower().endswith(".pdf"):
+    if not url or not url.lower().split("?")[0].endswith(".pdf"):
+        log.info("doc_eval_agent: skipping non-PDF URL %s", url[:80])
         return None
     try:
         import requests
@@ -103,8 +103,9 @@ def _fetch_single_pdf(url: str) -> str | None:
         if text and text.strip():
             log.info("doc_eval_agent: fetched PDF text (%d chars) from %s", len(text), url[:80])
             return text.strip()
+        log.warning("doc_eval_agent: PDF fetched but extracted no text from %s", url[:80])
     except Exception as e:
-        log.debug("doc_eval_agent: could not fetch PDF from %s: %s", url[:80], e)
+        log.warning("doc_eval_agent: could not fetch PDF from %s: %s", url[:80], e)
     return None
 
 
@@ -192,7 +193,6 @@ def make_doc_eval_row_key(row: dict) -> str:
 
 def _build_user_message(
     rows: list[dict],
-    pdf_text: str | None,
     eval_row_keys: list[str],
     alert_row: dict | None = None,
     before_html: str | None = None,
@@ -200,21 +200,18 @@ def _build_user_message(
 ) -> str:
     """
     Build the QA agent prompt for one or more agenda item rows from the same extraction call.
+    PDF content is accessed exclusively via pgvector search — never injected directly into the prompt.
     """
     first = rows[0]
     document_name = str(first.get("library_item_title") or first.get("document_title") or "N/A")
     document_url = str(first.get("library_item_url") or "N/A")
 
     parts = [
-        "## Source Document (same input given to the extraction agent)",
+        "## Source Document",
         f"Document title: {document_name}",
         f"URL: {document_url}",
+        "(Full document content is available via your knowledge base search tools — search for specific sections as needed to verify each field.)",
     ]
-
-    if pdf_text:
-        parts.append(f"\nDocument content:\n{pdf_text[:_PDF_TEXT_LIMIT]}")
-    else:
-        parts.append("\n(PDF text not available — evaluate based on document title, URL, and knowledge base context)")
 
     if alert_row:
         alert_context = {k: v for k, v in alert_row.items() if k in _ALERT_INCLUDE_KEYS}
@@ -340,10 +337,17 @@ def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None
     model = _get_model()
     reasoning_effort = _get_reasoning_effort()
 
-    # Fetch PDF text once — all rows in a call share the same document URL
+    # Fetch PDF text for vectorization only — never injected into the prompt.
+    # The agent accesses document content exclusively via pgvector search tools.
     first = rows[0]
     document_url = str(first.get("library_item_url") or "")
     pdf_text = _fetch_pdf_text(document_url) if document_url and document_url != "N/A" else None
+    log.info(
+        "doc_eval_agent: PDF for vectorization agent_call_id=%s url=%s — %s",
+        first.get("agent_call_id", "unknown"),
+        document_url[:80],
+        f"{len(pdf_text)} chars fetched" if pdf_text else "FAILED — will use cached namespace if available",
+    )
 
     # Fetch before/after HTML from S3 using the first row's run metadata
     before_html, after_html = "", ""
@@ -366,7 +370,7 @@ def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None
     eval_row_keys = [make_doc_eval_row_key(row) for row in rows]
 
     user_message = _build_user_message(
-        rows, pdf_text, eval_row_keys,
+        rows, eval_row_keys,
         alert_row=alert_row, before_html=before_html, after_html=after_html,
     )
 

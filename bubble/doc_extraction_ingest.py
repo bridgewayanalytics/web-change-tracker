@@ -102,11 +102,17 @@ def ingest_and_arm(
 
     Uses text/plain (the already-extracted pdf_text) for fast indexing —
     seconds on the CPU worker vs 3–10 min for a raw PDF on the GPU worker.
+
+    If pdf_text is unavailable (PDF fetch failed), checks whether the document
+    was already indexed in a previous run and returns the cached namespace if so.
     Falls back to None gracefully so the agent still runs without the namespace.
     """
     if not pdf_text or not pdf_text.strip():
-        log.debug("doc_extraction_ingest: no text for %s — skipping ingest", document_name[:60])
-        return None
+        log.info(
+            "doc_extraction_ingest: no text for %s — checking if already indexed (pdf_text unavailable)",
+            document_name[:60],
+        )
+        return arm_if_ready(document_url)
 
     if not document_url or not document_url.strip():
         return None

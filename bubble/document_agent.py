@@ -22,9 +22,6 @@ from datetime import datetime, timezone
 
 from storage.doc_schema import DOC_PIPELINE_FIELDS
 
-# Max characters of PDF text to include in the agent prompt
-_PDF_TEXT_LIMIT = 12000
-
 log = logging.getLogger(__name__)
 
 _CHAT_ID = "document-data-extraction"
@@ -272,7 +269,7 @@ def _parse_output(raw: str) -> dict:
 def _fetch_single_pdf(url: str) -> str | None:
     """Fetch and extract text from a single PDF URL. Returns None on any failure."""
     url = url.strip()
-    if not url or not url.lower().endswith(".pdf"):
+    if not url or not url.lower().split("?")[0].endswith(".pdf"):
         return None
     try:
         import requests
@@ -287,8 +284,9 @@ def _fetch_single_pdf(url: str) -> str | None:
         if text and text.strip():
             log.info("document_agent: fetched PDF text (%d chars) from %s", len(text), url[:80])
             return text.strip()
+        log.warning("document_agent: PDF fetched but extracted no text from %s", url[:80])
     except Exception as e:
-        log.debug("document_agent: could not fetch PDF text from %s: %s", url[:80], e)
+        log.warning("document_agent: could not fetch PDF text from %s: %s", url[:80], e)
     return None
 
 
@@ -385,7 +383,7 @@ def extract_document_data(
     document_name: str,
     document_url: str,
     pdf_text: str | None = None,
-    text_limit: int | None = None,
+    text_limit: int | None = None,  # retained for call-site compatibility; unused
     alert_context: dict | None = None,
     before_html: str | None = None,
     after_html: str | None = None,
@@ -422,8 +420,8 @@ def extract_document_data(
             f"Document title: {document_name}",
             f"URL: {document_url}",
         ]
-        if pdf_text:
-            lines.append(f"\nDocument content:\n{pdf_text[:(text_limit or _PDF_TEXT_LIMIT)]}")
+        if _pgvector_enabled():
+            lines.append("(Full document content is available via your knowledge base search tools — search for specific sections as needed to extract each field accurately.)")
         if org_tree:
             lines.append(f"\n=== ORGANIZATION REFERENCE ===\n{org_tree}")
         if alert_context:
