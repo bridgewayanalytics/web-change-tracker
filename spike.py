@@ -1810,7 +1810,7 @@ def _run_pipeline_agents(change_events: list[dict], run_id: str = "") -> None:
                     continue
                 doc_name = f"Meeting Transcript: {event_title}"
                 doc_result_list = _extract_doc_from_transcript(
-                    doc_name, document_url="", pdf_text=transcript_text, text_limit=40_000,
+                    doc_name, document_url=t_key, pdf_text=transcript_text,
                     alert_context=alert,
                 )
                 item = {
@@ -2706,7 +2706,7 @@ def _run_recording_ingest(recording_s3_key: str) -> None:
             try:
                 doc_name = f"Meeting Transcript: {event_title}"
                 doc_result_list = extract_document_data(
-                    doc_name, document_url="", pdf_text=transcript_text, text_limit=40_000,
+                    doc_name, document_url=transcript_key, pdf_text=transcript_text,
                     alert_context=row,
                 )
                 for doc_result in doc_result_list:
