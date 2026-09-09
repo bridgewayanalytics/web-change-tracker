@@ -1,12 +1,13 @@
 """
 Document extraction QA evaluation agent — one call per doc extraction row.
 
-The QA agent receives the exact same input as the document-data-extraction agent:
-  - Document title
-  - Document URL
-  - PDF text (fetched from library_item_url, same 12,000-char limit)
-  - pgvector access (same namespaces as document_agent)
+The QA agent accesses document content exclusively via pgvector search tools.
+PDF text is fetched only for vectorization via ingest_and_arm() — it is never
+injected into the prompt. The agent receives:
+  - Document title and URL
+  - Instruction to search the knowledge base (document-specific namespace appended)
   - Org tree reference
+  - The extraction output to evaluate
 
 Plus the extraction output to evaluate against that source material.
 """
