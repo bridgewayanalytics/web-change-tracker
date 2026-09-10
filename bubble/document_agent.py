@@ -429,7 +429,7 @@ def extract_document_data(
             org = alert_context.get("organization")
             if org:
                 org_str = ", ".join(org) if isinstance(org, list) else str(org)
-                ctx_parts.append(f"Organization: {org_str}")
+                ctx_parts.append(f"Authoring Organization: {org_str}")
             alert_type = str(alert_context.get("alert_type") or "").strip()
             if alert_type and alert_type.upper() not in ("N/A", ""):
                 ctx_parts.append(f"Alert type: {alert_type}")
