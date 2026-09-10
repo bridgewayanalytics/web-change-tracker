@@ -24,6 +24,7 @@ log = logging.getLogger(__name__)
 _DEFAULT_LIMIT = 20
 _DOC_EXTRACTIONS_KEY = "alerts/document_extractions_table.jsonl"
 _ALERTS_KEY = "alerts/alerts_table.jsonl"
+_RESULTS_KEY = "alerts/doc_eval_results_table.jsonl"
 _DEFAULT_BUCKET = "web-change-tracker-prod-artifacts-815039343351"
 
 
@@ -75,7 +76,8 @@ def _load_alert_lookup() -> dict[tuple[str, str], dict]:
     return lookup
 
 
-def _load_doc_rows(agent_call_ids: list[str] | None, limit: int, library_item_url: str | None = None) -> list[dict]:
+def _load_doc_rows(agent_call_ids: list[str] | None, limit: int = _DEFAULT_LIMIT, library_item_url: str | None = None) -> list[dict]:
+    # `limit` is only used for the agent_call_ids path; bulk path selects all eligible rows.
     bucket = _get_bucket()
     client = _s3_client()
     try:
@@ -112,38 +114,74 @@ def _load_doc_rows(agent_call_ids: list[str] | None, limit: int, library_item_ur
         log.info("Selected %d row(s) by agent_call_id (after dedup)", len(result))
         return result
 
-    # Filter: skip transcript rows and rows with no real document URL
+    # Bulk path: evaluate all eligible rows up to the upper bound (most recently
+    # synced-to-Bubble alert), skipping rows already QA'd and transcript rows.
+
+    # --- Upper bound: run_timestamp of the most recently synced alert ---
+    upper_bound: str | None = None
+    try:
+        alerts_resp = client.get_object(Bucket=bucket, Key=_ALERTS_KEY)
+        for line in alerts_resp["Body"].read().decode("utf-8").split("\n"):
+            if not line.strip():
+                continue
+            try:
+                a = json.loads(line)
+                if a.get("bubble_sync_status") == "synced":
+                    ts = a.get("run_timestamp", "")
+                    if ts and (upper_bound is None or ts > upper_bound):
+                        upper_bound = ts
+            except json.JSONDecodeError:
+                continue
+    except Exception as e:
+        log.warning("Could not load alerts_table.jsonl for upper bound: %s", e)
+
+    if upper_bound:
+        log.info("Bulk doc eval upper bound (latest bubble sync): %s", upper_bound)
+    else:
+        log.info("No synced alerts found; evaluating all eligible rows")
+
+    # --- Already-QA'd agent_call_ids ---
+    already_evald: set[str] = set()
+    try:
+        eval_resp = client.get_object(Bucket=bucket, Key=_RESULTS_KEY)
+        for line in eval_resp["Body"].read().decode("utf-8").split("\n"):
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+                cid = r.get("agent_call_id", "")
+                if cid:
+                    already_evald.add(cid)
+            except json.JSONDecodeError:
+                continue
+    except Exception as e:
+        log.warning("Could not load doc_eval_results for dedup: %s", e)
+
+    # --- Filter eligible rows ---
+    from eval.doc_eval_agent import make_doc_eval_row_key
     eligible = [
         r for r in all_rows
         if r.get("extraction_source") != "transcript"
         and r.get("library_item_url", "").strip().lower() not in ("", "n/a")
         and r.get("agent_call_id")
+        and r.get("agent_call_id") not in already_evald
+        and (upper_bound is None or r.get("run_timestamp", "") <= upper_bound)
     ]
 
-    # Most recent first
-    eligible.sort(key=lambda r: r.get("run_timestamp", ""), reverse=True)
-
-    # Deduplicate at the agent_call level (not row level), take most recent N calls.
-    # Within each call, deduplicate by (library_item_url, eval_row_key) so rows from
-    # different documents with the same std_id don't collapse into one.
-    from eval.doc_eval_agent import make_doc_eval_row_key
-    seen: set[str] = set()
+    # Deduplicate by (library_item_url, eval_row_key) keeping most recent row per key
     dedup_by_key: dict[tuple, dict] = {}
-    call_order: list[str] = []
     for row in eligible:
-        cid = row.get("agent_call_id", "")
-        if cid not in seen:
-            seen.add(cid)
-            call_order.append(cid)
         rk = (row.get("library_item_url", ""), make_doc_eval_row_key(row))
         existing = dedup_by_key.get(rk)
         if existing is None or (row.get("run_timestamp", "") > existing.get("run_timestamp", "")):
             dedup_by_key[rk] = row
-        if len(seen) >= limit:
-            break
 
     selected = list(dedup_by_key.values())
-    log.info("Selected %d doc extraction rows across %d call(s) for evaluation", len(selected), len(seen))
+    unique_calls = len({r.get("agent_call_id") for r in selected})
+    log.info(
+        "Selected %d doc extraction rows across %d call(s) for evaluation (upper_bound=%s)",
+        len(selected), unique_calls, upper_bound or "none",
+    )
     return selected
 
 
