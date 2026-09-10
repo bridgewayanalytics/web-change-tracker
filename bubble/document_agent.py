@@ -417,7 +417,7 @@ def extract_document_data(
         org_tree = get_org_tree()
 
         lines = [
-            f"Document title: {document_name}",
+            f"Document link label: {document_name}",
             f"URL: {document_url}",
         ]
         if _pgvector_enabled():
