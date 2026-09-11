@@ -22,14 +22,5 @@ jobs:
           role-to-assume: arn:aws:iam::815039343351:role/github-actions-web-change-tracker
           aws-region: us-east-1
 
-      - uses: hashicorp/setup-terraform@v4.0.1
-        with:
-          terraform_version: "~1.9"
-          terraform_wrapper: false
-
-      - name: Terraform init
-        run: terraform init
-        working-directory: dashboard/infra/terraform
-
       - name: Deploy
-        run: ./dashboard/scripts/deploy.sh --tag "${{ github.sha }}"
+        run: ./dashboard/scripts/deploy.sh --tag "${{ github.sha }}" --skip-terraform

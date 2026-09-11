@@ -72,6 +72,10 @@ aws "${AWS_ARGS[@]}" ecr get-login-password --region "$AWS_REGION" | \
 echo ">>> Pushing image to ECR..."
 docker tag "${ECR_REPO}:${TAG}" "${ECR_URL}:${TAG}"
 docker push "${ECR_URL}:${TAG}"
+if [[ "$TAG" != "latest" ]]; then
+  docker tag "${ECR_REPO}:${TAG}" "${ECR_URL}:latest"
+  docker push "${ECR_URL}:latest"
+fi
 echo ""
 
 # --- 3. Terraform ---
