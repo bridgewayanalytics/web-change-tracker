@@ -43,4 +43,4 @@ jobs:
         working-directory: infra/terraform
 
       - name: Deploy
-        run: AWS_PROFILE="" ./scripts/deploy.sh --tag "${{ github.sha }}"
+        run: ./scripts/deploy.sh --tag "${{ github.sha }}"
