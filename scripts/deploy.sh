@@ -28,11 +28,11 @@ done
 cd "$REPO_ROOT"
 
 echo "==> Resolving Terraform outputs (region, ECR URL)..."
-REGION=$(terraform -chdir="$TERRAFORM_DIR" output -raw region 2>/dev/null || true)
-ECR_URL=$(terraform -chdir="$TERRAFORM_DIR" output -raw ecr_repository_url 2>/dev/null || true)
+REGION=$(terraform -chdir="$TERRAFORM_DIR" output -raw region)
+ECR_URL=$(terraform -chdir="$TERRAFORM_DIR" output -raw ecr_repository_url)
 
 if [[ -z "${REGION:-}" || -z "${ECR_URL:-}" ]]; then
-  echo "ERROR: Run 'terraform apply' once in $TERRAFORM_DIR to create ECR and outputs."
+  echo "ERROR: Terraform outputs missing. Run 'terraform apply' once in $TERRAFORM_DIR to create ECR and outputs."
   exit 1
 fi
 

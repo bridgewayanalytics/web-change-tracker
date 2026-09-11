@@ -15,6 +15,10 @@ jobs:
       id-token: write
       contents: read
 
+    env:
+      TF_VAR_email_from: "Isaiah.Levy@bridgewayanalytics.com"
+      TF_VAR_email_to: "isaiah.levy@bridgewayanalytics.com,Amnon.Levy@bridgewayanalytics.com"
+
     steps:
       - uses: actions/checkout@v4
 
@@ -30,6 +34,12 @@ jobs:
 
       - name: Terraform init
         run: terraform init
+        working-directory: infra/terraform
+
+      - name: Verify Terraform outputs
+        run: |
+          echo "Region: $(terraform output -raw region)"
+          echo "ECR URL: $(terraform output -raw ecr_repository_url)"
         working-directory: infra/terraform
 
       - name: Deploy
