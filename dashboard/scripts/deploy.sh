@@ -8,7 +8,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # --- Config ---
-AWS_PROFILE="bridgeway"
+# AWS_PROFILE defaults to "bridgeway" for local use; set to "" in CI (OIDC auth)
+AWS_PROFILE="${AWS_PROFILE:-bridgeway}"
 AWS_REGION="us-east-1"
 ECR_REPO="naic-dashboard"
 ECS_CLUSTER="naic-dashboard-cluster"
@@ -34,10 +35,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-ACCOUNT_ID=$(aws --profile "$AWS_PROFILE" sts get-caller-identity --query Account --output text 2>/dev/null) || {
-  echo "ERROR: AWS SSO session expired. Run:"
-  echo "  aws sso login --profile $AWS_PROFILE"
-  echo "Then re-run this script."
+# Build optional --profile args (empty array in CI where OIDC provides credentials)
+if [[ -n "${AWS_PROFILE:-}" ]]; then
+  AWS_ARGS=(--profile "$AWS_PROFILE")
+else
+  AWS_ARGS=()
+fi
+
+ACCOUNT_ID=$(aws "${AWS_ARGS[@]}" sts get-caller-identity --query Account --output text 2>/dev/null) || {
+  echo "ERROR: AWS credentials not available."
+  [[ -n "${AWS_PROFILE:-}" ]] && echo "  Run: aws sso login --profile $AWS_PROFILE"
   exit 1
 }
 ECR_URL="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
@@ -60,7 +67,7 @@ fi
 
 # --- 2. Push to ECR ---
 echo ">>> Logging into ECR..."
-aws --profile "$AWS_PROFILE" ecr get-login-password --region "$AWS_REGION" | \
+aws "${AWS_ARGS[@]}" ecr get-login-password --region "$AWS_REGION" | \
   docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
 echo ">>> Pushing image to ECR..."
@@ -72,8 +79,7 @@ echo ""
 if [[ "$SKIP_TERRAFORM" == "false" ]]; then
   echo ">>> Running Terraform..."
   cd "$ROOT_DIR/infra/terraform"
-  AWS_PROFILE="$AWS_PROFILE" terraform init -input=false -upgrade=false > /dev/null
-  AWS_PROFILE="$AWS_PROFILE" terraform apply -input=false -auto-approve
+  terraform apply -input=false -auto-approve
   echo ""
 else
   echo ">>> Skipping Terraform (--skip-terraform)"
@@ -81,7 +87,7 @@ fi
 
 # --- 4. Force new ECS deployment ---
 echo ">>> Forcing new ECS deployment..."
-aws --profile "$AWS_PROFILE" ecs update-service \
+aws "${AWS_ARGS[@]}" ecs update-service \
   --cluster "$ECS_CLUSTER" \
   --service "$ECS_SERVICE" \
   --force-new-deployment \
@@ -89,20 +95,20 @@ aws --profile "$AWS_PROFILE" ecs update-service \
 
 # --- 5. Wait for healthy ---
 echo ">>> Waiting for new task to become healthy..."
-TG_ARN=$(aws --profile "$AWS_PROFILE" elbv2 describe-target-groups \
+TG_ARN=$(aws "${AWS_ARGS[@]}" elbv2 describe-target-groups \
   --names naic-dashboard-tg \
   --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || echo "")
 
 MAX_WAIT=180
 WAITED=0
 while [[ $WAITED -lt $MAX_WAIT ]]; do
-  RUNNING=$(aws --profile "$AWS_PROFILE" ecs describe-services \
+  RUNNING=$(aws "${AWS_ARGS[@]}" ecs describe-services \
     --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
     --query 'services[0].runningCount' --output text 2>/dev/null || echo "0")
 
   HEALTH="unknown"
   if [[ -n "$TG_ARN" ]]; then
-    HEALTH=$(aws --profile "$AWS_PROFILE" elbv2 describe-target-health \
+    HEALTH=$(aws "${AWS_ARGS[@]}" elbv2 describe-target-health \
       --target-group-arn "$TG_ARN" \
       --query 'TargetHealthDescriptions[0].TargetHealth.State' --output text 2>/dev/null || echo "unknown")
   fi
@@ -120,11 +126,11 @@ done
 if [[ $WAITED -ge $MAX_WAIT ]]; then
   echo ""
   echo "WARNING: Timed out waiting for healthy task. Check ECS console."
-  echo "  aws --profile $AWS_PROFILE ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE"
+  echo "  aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE"
   exit 1
 fi
 
 # --- Done ---
-ALB_URL=$(cd "$ROOT_DIR/infra/terraform" && AWS_PROFILE="$AWS_PROFILE" terraform output -raw alb_url 2>/dev/null || echo "N/A")
+ALB_URL=$(cd "$ROOT_DIR/infra/terraform" && terraform output -raw alb_url 2>/dev/null || echo "N/A")
 echo "=== Deploy complete ==="
 echo "Dashboard: $ALB_URL"

@@ -1,15 +1,14 @@
-name: Deploy Pipeline
+name: Deploy Dashboard
 
 on:
   push:
     branches: [main]
     paths:
-      - '**'
-      - '!dashboard/**'
+      - 'dashboard/**'
 
 jobs:
   deploy:
-    name: Build & Deploy
+    name: Build & Deploy Dashboard
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -30,7 +29,7 @@ jobs:
 
       - name: Terraform init
         run: terraform init
-        working-directory: infra/terraform
+        working-directory: dashboard/infra/terraform
 
       - name: Deploy
-        run: AWS_PROFILE="" ./scripts/deploy.sh --tag "${{ github.sha }}"
+        run: AWS_PROFILE="" ./dashboard/scripts/deploy.sh --tag "${{ github.sha }}"
