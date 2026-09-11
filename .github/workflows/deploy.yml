@@ -20,14 +20,14 @@ jobs:
       TF_VAR_email_to: "isaiah.levy@bridgewayanalytics.com,Amnon.Levy@bridgewayanalytics.com"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6.2.4
         with:
           role-to-assume: arn:aws:iam::815039343351:role/github-actions-web-change-tracker
           aws-region: us-east-1
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4.0.1
         with:
           terraform_version: "~1.9"
           terraform_wrapper: false
