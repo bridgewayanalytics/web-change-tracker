@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Always-visible scrollbars on table containers */
+.table-scroll::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+.table-scroll::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+.table-scroll::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border-radius: 5px;
+}
+.table-scroll::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+/* Hide horizontal scrollbar on the table container (use top scrollbar only),
+   but keep the vertical scrollbar always visible (classic, non-overlay mode). */
+.hide-bottom-scrollbar {
+  scrollbar-width: thin;
+}
+.hide-bottom-scrollbar::-webkit-scrollbar {
+  height: 0;   /* hide horizontal */
+  width: 10px; /* always show vertical */
+}
+.hide-bottom-scrollbar::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+.hide-bottom-scrollbar::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border-radius: 5px;
+}
+.hide-bottom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
