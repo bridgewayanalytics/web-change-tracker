@@ -9,7 +9,6 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # --- Config ---
 # Local: set AWS_PROFILE=bridgeway (or your profile). CI: leave AWS_PROFILE unset (OIDC credentials via env vars).
-AWS_PROFILE="${AWS_PROFILE-bridgeway}"
 AWS_REGION="us-east-1"
 ECR_REPO="naic-dashboard"
 ECS_CLUSTER="naic-dashboard-cluster"
