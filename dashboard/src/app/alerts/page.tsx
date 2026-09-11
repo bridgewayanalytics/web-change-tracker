@@ -33,9 +33,8 @@ function AlertsPageContent() {
   const [pages, setPages] = useState<PageOption[]>([]);
   const [alertTypes, setAlertTypes] = useState<string[]>([]);
   const [schemaVersion] = useState(0);
-  const [showNotRelevant, setShowNotRelevant] = useState(false);
+  const [qaFilter, setQaFilter] = useState<"" | "__qa__" | "__qa_imperfect__">("");
 
-  // Load page options
   useEffect(() => {
     fetch("/api/pages")
       .then((r) => r.json())
@@ -57,16 +56,11 @@ function AlertsPageContent() {
     [targetId, alertType, startDate, endDate, q, router]
   );
 
-  const clearFilters = useCallback(() => {
-    setShowNotRelevant(false);
-    router.replace("/alerts", { scroll: false });
-  }, [router]);
-
   const fetchData = useCallback(() => {
     setLoading(true);
     const params = new URLSearchParams();
     if (targetId) params.set("targetId", targetId);
-    if (alertType && alertType !== "__qa__" && alertType !== "__qa_imperfect__") params.set("alertType", alertType);
+    if (alertType) params.set("alertType", alertType);
     if (startDate) params.set("startDate", startDate);
     if (endDate) params.set("endDate", endDate);
     if (q) params.set("q", q);
@@ -89,18 +83,15 @@ function AlertsPageContent() {
     fetchData();
   }, [fetchData]);
 
-  const allRows = data?.rows ?? [];
-  const rows = showNotRelevant
-    ? allRows
-    : allRows.filter((r) => !String(r.alert_type ?? "").toLowerCase().includes("not relevant"));
+  const rows = data?.rows ?? [];
 
   return (
     <main className="min-h-screen px-4 py-6 w-full">
       {/* Filter Bar */}
-      <div className="space-y-1 mb-6">
+      <div className="mb-6">
         <div className="flex flex-wrap items-end gap-4">
           {/* Page */}
-          <div className="flex-[2] min-w-[180px] max-w-[320px]">
+          <div className="flex-1 min-w-[160px] max-w-[280px]">
             <label className={labelClass}>Page</label>
             <select
               value={targetId}
@@ -117,7 +108,7 @@ function AlertsPageContent() {
           </div>
 
           {/* Alert Type */}
-          <div className="flex-1 min-w-[180px] max-w-[300px]">
+          <div className="flex-1 min-w-[150px] max-w-[240px]">
             <label className={labelClass}>Alert Type</label>
             <select
               value={alertType}
@@ -125,9 +116,6 @@ function AlertsPageContent() {
               className={inputClass}
             >
               <option value="">All types</option>
-              <option value="__qa__">Has QA Score</option>
-              <option value="__qa_imperfect__">Imperfect QA</option>
-              {alertTypes.length > 0 && <option disabled>──────────</option>}
               {alertTypes.map((t) => (
                 <option key={t} value={t}>
                   {t}
@@ -137,7 +125,7 @@ function AlertsPageContent() {
           </div>
 
           {/* Start Date */}
-          <div className="w-[150px] shrink-0">
+          <div className="w-[140px] shrink-0">
             <label className={labelClass}>From</label>
             <input
               type="date"
@@ -148,7 +136,7 @@ function AlertsPageContent() {
           </div>
 
           {/* End Date */}
-          <div className="w-[150px] shrink-0">
+          <div className="w-[140px] shrink-0">
             <label className={labelClass}>To</label>
             <input
               type="date"
@@ -156,6 +144,20 @@ function AlertsPageContent() {
               onChange={(e) => updateUrl({ endDate: e.target.value })}
               className={inputClass}
             />
+          </div>
+
+          {/* QA Filter */}
+          <div className="flex-1 min-w-[150px] max-w-[220px]">
+            <label className={labelClass}>QA</label>
+            <select
+              value={qaFilter}
+              onChange={(e) => setQaFilter(e.target.value as "" | "__qa__" | "__qa_imperfect__")}
+              className={inputClass}
+            >
+              <option value="">All rows</option>
+              <option value="__qa__">Has QA score</option>
+              <option value="__qa_imperfect__">Imperfect QA only</option>
+            </select>
           </div>
 
           {/* Search */}
@@ -168,45 +170,6 @@ function AlertsPageContent() {
               placeholder="Search title, description, alert ID..."
               className={inputClass}
             />
-          </div>
-
-          {/* Refresh */}
-          <div className="shrink-0">
-            <label className={labelClass}>&nbsp;</label>
-            <button
-              type="button"
-              onClick={fetchData}
-              disabled={loading}
-              className="h-[34px] rounded bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Apply Filters
-            </button>
-          </div>
-
-          {/* Clear */}
-          <div className="shrink-0">
-            <label className={labelClass}>&nbsp;</label>
-            <button
-              type="button"
-              onClick={clearFilters}
-              className="h-[34px] rounded border border-gray-300 px-4 text-sm font-medium text-gray-700 hover:bg-gray-50"
-            >
-              Clear Filters
-            </button>
-          </div>
-
-          {/* Show not relevant */}
-          <div className="shrink-0">
-            <label className={labelClass}>&nbsp;</label>
-            <label className="flex items-center gap-2 h-[34px] cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={showNotRelevant}
-                onChange={(e) => setShowNotRelevant(e.target.checked)}
-                className="h-4 w-4 rounded border-gray-300 text-blue-600 accent-blue-600"
-              />
-              <span className="text-sm text-gray-600 whitespace-nowrap">Show not relevant</span>
-            </label>
           </div>
         </div>
       </div>
@@ -223,19 +186,21 @@ function AlertsPageContent() {
       )}
 
       {!loading && data && !data.error && rows.length === 0 && (
-        <p className="text-gray-600">
-          {allRows.length > 0 ? 'No relevant alerts found. Check "Show not relevant" to see all.' : "No alerts found."}
-        </p>
+        <p className="text-gray-600">No alerts found.</p>
       )}
 
       {rows.length > 0 && (
         <>
           <p className="text-sm text-gray-500 mb-2">
-            {rows.length !== allRows.length
-              ? `${rows.length} of ${allRows.length} alert${allRows.length !== 1 ? "s" : ""}`
-              : `${allRows.length} alert${allRows.length !== 1 ? "s" : ""}`}
+            {rows.length} alert{rows.length !== 1 ? "s" : ""}
           </p>
-          <AlertsTable rows={rows} onAccepted={fetchData} schemaVersion={schemaVersion} hasQaScoreFilter={alertType === "__qa__"} hasImperfectQaFilter={alertType === "__qa_imperfect__"} />
+          <AlertsTable
+            rows={rows}
+            onAccepted={fetchData}
+            schemaVersion={schemaVersion}
+            hasQaScoreFilter={qaFilter === "__qa__"}
+            hasImperfectQaFilter={qaFilter === "__qa_imperfect__"}
+          />
         </>
       )}
     </main>

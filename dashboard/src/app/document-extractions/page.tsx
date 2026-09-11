@@ -44,8 +44,7 @@ function PageContent() {
   // Client-side filters
   const [filterOrg, setFilterOrg] = useState("");
   const [filterDocType, setFilterDocType] = useState("");
-  const [hasQaScoreFilter, setHasQaScoreFilter] = useState(false);
-  const [hasImperfectQaFilter, setHasImperfectQaFilter] = useState(false);
+  const [qaFilter, setQaFilter] = useState<"" | "__qa__" | "__qa_imperfect__">("");
 
   useEffect(() => {
     fetch("/api/pages")
@@ -67,14 +66,6 @@ function PageContent() {
     },
     [targetId, startDate, endDate, q, router]
   );
-
-  const clearFilters = useCallback(() => {
-    setFilterOrg("");
-    setFilterDocType("");
-    setHasQaScoreFilter(false);
-    setHasImperfectQaFilter(false);
-    router.replace("/document-extractions", { scroll: false });
-  }, [router]);
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -125,15 +116,13 @@ function PageContent() {
     return r;
   }, [allRows, filterOrg, filterDocType]);
 
-  const activeFilterCount = [filterOrg, filterDocType, hasQaScoreFilter, hasImperfectQaFilter].filter(Boolean).length;
-
   return (
     <main className="min-h-screen px-4 py-6 w-full">
       {/* Filter Bar */}
-      <div className="space-y-2 mb-6">
+      <div className="mb-6">
         <div className="flex flex-wrap items-end gap-4">
           {/* Page */}
-          <div className="flex-[2] min-w-[180px] max-w-[280px]">
+          <div className="flex-1 min-w-[160px] max-w-[280px]">
             <label className={labelClass}>Page</label>
             <select
               value={targetId}
@@ -150,7 +139,7 @@ function PageContent() {
           </div>
 
           {/* Organization */}
-          <div className="flex-[2] min-w-[160px] max-w-[260px]">
+          <div className="flex-1 min-w-[150px] max-w-[240px]">
             <label className={labelClass}>Organization</label>
             <select
               value={filterOrg}
@@ -165,7 +154,7 @@ function PageContent() {
           </div>
 
           {/* Document Type */}
-          <div className="flex-[2] min-w-[160px] max-w-[220px]">
+          <div className="flex-1 min-w-[150px] max-w-[220px]">
             <label className={labelClass}>Document Type</label>
             <select
               value={filterDocType}
@@ -201,8 +190,22 @@ function PageContent() {
             />
           </div>
 
+          {/* QA Filter */}
+          <div className="flex-1 min-w-[150px] max-w-[220px]">
+            <label className={labelClass}>QA</label>
+            <select
+              value={qaFilter}
+              onChange={(e) => setQaFilter(e.target.value as "" | "__qa__" | "__qa_imperfect__")}
+              className={inputClass}
+            >
+              <option value="">All rows</option>
+              <option value="__qa__">Has QA score</option>
+              <option value="__qa_imperfect__">Imperfect QA only</option>
+            </select>
+          </div>
+
           {/* Search */}
-          <div className="flex-[2] min-w-[160px] max-w-[280px]">
+          <div className="flex-[2] min-w-[180px] max-w-[320px]">
             <label className={labelClass}>Search</label>
             <input
               type="text"
@@ -212,66 +215,6 @@ function PageContent() {
               className={inputClass}
             />
           </div>
-
-          {/* Apply Filters */}
-          <div className="shrink-0">
-            <label className={labelClass}>&nbsp;</label>
-            <button
-              type="button"
-              onClick={fetchData}
-              disabled={loading}
-              className="h-[34px] rounded bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Apply Filters
-            </button>
-          </div>
-
-          {/* Clear Filters */}
-          <div className="shrink-0">
-            <label className={labelClass}>&nbsp;</label>
-            <button
-              type="button"
-              onClick={clearFilters}
-              className="h-[34px] rounded border border-gray-300 px-4 text-sm font-medium text-gray-700 hover:bg-gray-50"
-            >
-              Clear{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
-            </button>
-          </div>
-        </div>
-
-        {/* QA Filter Toggles */}
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-500 mr-1">QA:</span>
-          <button
-            type="button"
-            onClick={() => {
-              const next = !hasQaScoreFilter;
-              setHasQaScoreFilter(next);
-              if (next) setHasImperfectQaFilter(false);
-            }}
-            className={`h-[26px] rounded px-3 text-xs font-medium border transition-colors ${
-              hasQaScoreFilter
-                ? "bg-violet-600 text-white border-violet-600"
-                : "bg-white text-gray-600 border-gray-300 hover:bg-violet-50 hover:border-violet-300"
-            }`}
-          >
-            Has QA Score
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const next = !hasImperfectQaFilter;
-              setHasImperfectQaFilter(next);
-              if (next) setHasQaScoreFilter(false);
-            }}
-            className={`h-[26px] rounded px-3 text-xs font-medium border transition-colors ${
-              hasImperfectQaFilter
-                ? "bg-amber-500 text-white border-amber-500"
-                : "bg-white text-gray-600 border-gray-300 hover:bg-amber-50 hover:border-amber-300"
-            }`}
-          >
-            Imperfect QA Only
-          </button>
         </div>
       </div>
 
@@ -299,8 +242,8 @@ function PageContent() {
             rows={rows}
             onAccepted={fetchData}
             schemaVersion={schemaVersion}
-            hasQaScoreFilter={hasQaScoreFilter}
-            hasImperfectQaFilter={hasImperfectQaFilter}
+            hasQaScoreFilter={qaFilter === "__qa__"}
+            hasImperfectQaFilter={qaFilter === "__qa_imperfect__"}
           />
         </>
       )}
