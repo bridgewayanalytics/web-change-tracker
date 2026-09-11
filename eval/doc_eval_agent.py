@@ -343,6 +343,15 @@ def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None
     first = rows[0]
     document_url = str(first.get("library_item_url") or "")
     pdf_text = _fetch_pdf_text(document_url) if document_url and document_url != "N/A" else None
+    if not pdf_text and document_url and document_url != "N/A":
+        # NAIC CDN returns transient 403s under rapid requests — retry once after a delay.
+        # Only retry if arm_if_ready() also finds no cached namespace, to avoid unnecessary waits.
+        from bubble.doc_extraction_ingest import arm_if_ready
+        if not arm_if_ready(document_url):
+            import time as _time
+            log.info("doc_eval_agent: PDF fetch failed and no cached namespace — retrying in 10s for %s", document_url[:80])
+            _time.sleep(10)
+            pdf_text = _fetch_pdf_text(document_url)
     log.info(
         "doc_eval_agent: PDF for vectorization agent_call_id=%s url=%s — %s",
         first.get("agent_call_id", "unknown"),
