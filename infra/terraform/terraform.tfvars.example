@@ -1,0 +1,40 @@
+# Copy to terraform.tfvars and fill in values
+
+aws_region   = "us-east-1"
+environment  = "prod"
+
+# S3 bucket with bubble_reports/latest.json (from scraper)
+bubble_artifact_bucket = "your-bubble-artifact-bucket"
+
+# ECR: omit to use the repo created by this module
+# ecr_repository_url  = "123456789012.dkr.ecr.us-east-1.amazonaws.com/naic-dashboard"
+ecr_image_tag = "latest"
+
+# SSM parameters for Bubble API (create before apply)
+ssm_bubble_api_url_param = "/naic-dashboard/prod/bubble_api_url"
+ssm_bubble_api_key_param = "/naic-dashboard/prod/bubble_api_key"
+
+# Use SSM for Bubble credentials (recommended for prod)
+use_ssm_for_bubble_credentials = true
+
+# Dev: pass Bubble API directly (set use_ssm_for_bubble_credentials = false)
+# bubble_api_url = "https://your-app.bubbleapps.io/live/api/1.1"
+# bubble_api_key = "your-api-key"
+
+# Optional: S3 report keys
+# bubble_report_latest_key        = "bubble_reports/latest.json"
+# bubble_report_recent_runs_prefix = "bubble_reports/runs/"
+# bubble_report_recent_runs_limit  = 5   # Enable recent runs (adds S3 ListBucket)
+
+# Auth0 (get from Auth0 Dashboard → Application settings)
+auth0_secret          = "use-openssl-rand-hex-32-to-generate"
+auth0_base_url        = "https://admin.bridgewayanalytics.com"
+auth0_issuer_base_url = "https://auth.bridgewayanalytics.com"
+auth0_client_id       = "your-auth0-client-id"
+auth0_client_secret   = "your-auth0-client-secret"
+auth0_audience        = "https://admin.bridgewayanalytics.com/api"
+
+# VPC (assume provided)
+vpc_id             = "vpc-xxxxxxxx"
+public_subnet_ids  = ["subnet-xxx", "subnet-yyy"]
+private_subnet_ids = ["subnet-aaa", "subnet-bbb"]
