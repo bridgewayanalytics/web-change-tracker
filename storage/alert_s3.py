@@ -234,6 +234,9 @@ def _build_doc_extraction_rows(
         from storage.field_normalizer import get_doc_norm_map, normalize_row_keys
         from storage.doc_schema import DOC_PIPELINE_FIELDS
         row = normalize_row_keys(row, get_doc_norm_map(), DOC_PIPELINE_FIELDS)
+        # Always stamp with the canonical pipeline run timestamp.
+        # The agent-stamped value uses wall-clock time which drifts on reruns/backfills.
+        row["data_extraction_date_time"] = run_timestamp_iso
 
         rows.append(row)
 
