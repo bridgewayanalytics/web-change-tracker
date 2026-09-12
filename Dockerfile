@@ -3,7 +3,7 @@
 # https://playwright.dev/python/docs/docker
 
 ARG PLAYWRIGHT_VERSION=v1.60.0-noble
-FROM mcr.microsoft.com/playwright/python:${PLAYWRIGHT_VERSION}
+FROM --platform=linux/arm64 mcr.microsoft.com/playwright/python:${PLAYWRIGHT_VERSION}
 
 WORKDIR /app
 
