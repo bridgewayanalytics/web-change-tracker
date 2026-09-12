@@ -113,6 +113,9 @@ function _extractOfficialTitle(val: unknown): string {
 function getEvalForRow(row: DocExtractionRow, evalResults: Record<string, DocEvalResult>): DocEvalResult | undefined {
   const callId = String(row.agent_call_id ?? "");
   if (!callId) return undefined;
+  // Use the stamped eval_row_key first — backend writes this directly onto the row
+  const directKey = String((row as Record<string, unknown>).eval_row_key ?? "");
+  if (directKey && evalResults[directKey]) return evalResults[directKey];
   // Mirror backend make_doc_eval_row_key: std_id → title → official_title → number → bare id
   const stdId = _extractStdId(row.agenda_item_standardized_id ?? row.agenda_items_standardized_id);
   if (stdId && !_NA.has(stdId.toLowerCase())) {
