@@ -22,7 +22,7 @@ jobs:
           role-to-assume: arn:aws:iam::815039343351:role/github-actions-web-change-tracker
           aws-region: us-east-1
 
-      - name: Set up QEMU (for ARM64 cross-build)
+      - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
