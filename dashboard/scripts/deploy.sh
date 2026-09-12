@@ -56,9 +56,9 @@ echo ""
 
 # --- 1. Docker build ---
 if [[ "$SKIP_BUILD" == "false" ]]; then
-  echo ">>> Building Docker image (linux/arm64)..."
+  echo ">>> Building Docker image..."
   cd "$ROOT_DIR"
-  docker buildx build --platform linux/arm64 --load -t "${ECR_REPO}:${TAG}" .
+  docker build -t "${ECR_REPO}:${TAG}" .
   echo ""
 else
   echo ">>> Skipping Docker build (--skip-build)"

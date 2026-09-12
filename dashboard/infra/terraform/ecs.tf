@@ -37,10 +37,9 @@ resource "aws_ecs_task_definition" "main" {
   cpu                      = "512"
   memory                   = "1024"
 
-  # ARM64 so images build natively on Apple Silicon (no slow x86 emulation)
   runtime_platform {
     operating_system_family = "LINUX"
-    cpu_architecture        = "ARM64"
+    cpu_architecture        = "X86_64"
   }
 
   execution_role_arn = aws_iam_role.ecs_execution.arn
