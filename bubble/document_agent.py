@@ -356,6 +356,23 @@ def _stamp_web_page_url(out: dict, alert_context: dict | None) -> None:
         out["web_page_url"] = source_url
 
 
+_NA_URL_VALUES = {"", "N/A", "N/A.", "-", "NONE", "UNKNOWN"}
+
+
+def _stamp_document_url(out: dict, document_url: str | None) -> None:
+    """Stamp document_url_web_tracking_agent from the known document_url when agent outputs N/A.
+    The document URL is passed explicitly to extract_document_data(); the agent should always
+    reproduce it verbatim but occasionally outputs N/A.
+    """
+    if not out or not document_url or not document_url.strip():
+        return
+    if "document_url_web_tracking_agent" not in out:
+        return
+    current = str(out["document_url_web_tracking_agent"] or "").strip().upper()
+    if current in _NA_URL_VALUES:
+        out["document_url_web_tracking_agent"] = document_url.strip()
+
+
 def _item_has_real_name(item: dict) -> bool:
     name = (
         item.get("preliminary_title")
@@ -485,6 +502,7 @@ def extract_document_data(
             for row in rows:
                 _stamp_extraction_datetime(row, original_datetime=original_datetime)
                 _stamp_web_page_url(row, alert_context)
+                _stamp_document_url(row, document_url)
             log.info("document_agent: extracted %d row(s) for: %s", len(rows), document_name[:60])
             return rows
 
@@ -516,6 +534,7 @@ def extract_document_data(
         for row in rows:
             _stamp_extraction_datetime(row)
             _stamp_web_page_url(row, alert_context)
+            _stamp_document_url(row, document_url)
         log.info("document_agent: extracted %d row(s) for: %s", len(rows), document_name[:60])
         return rows
 
