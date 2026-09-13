@@ -236,7 +236,9 @@ def _build_doc_extraction_rows(
         row = normalize_row_keys(row, get_doc_norm_map(), DOC_PIPELINE_FIELDS)
         # Always stamp with the canonical pipeline run timestamp.
         # The agent-stamped value uses wall-clock time which drifts on reruns/backfills.
-        row["data_extraction_date_time"] = run_timestamp_iso
+        # Use data_extraction_datetime (no extra underscore) to match the DynamoDB column registry ID.
+        row["data_extraction_datetime"] = run_timestamp_iso
+        row.pop("data_extraction_date_time", None)
 
         rows.append(row)
 
