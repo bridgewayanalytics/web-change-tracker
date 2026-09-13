@@ -189,10 +189,19 @@ def _make_eval_run_id() -> str:
     return f"doc-eval-{int(time.time())}"
 
 
+# Maximum agenda-item rows per QA agent call.  With reasoning_effort=low the
+# first-pass agent runs out of budget on large meeting packets (13+ items) and
+# the formatter fills in fake "No QA evaluation provided" / Incorrect scores for
+# the unevaluated rows.  Batching keeps each call tractable.
+_MAX_ROWS_PER_EVAL_CALL = 5
+
+
 def _group_by_call(rows: list[dict]) -> list[list[dict]]:
     """Group rows by (agent_call_id, library_item_url) so each document gets its own QA call.
     Rows from the same agent_call_id but different documents (different library_item_url) are
     evaluated separately — each group fetches the right PDF for its document.
+    Groups larger than _MAX_ROWS_PER_EVAL_CALL are split into sequential batches so the
+    first-pass agent never receives more items than it can evaluate in one pass.
     """
     groups: dict[tuple, list[dict]] = {}
     for row in rows:
@@ -200,7 +209,15 @@ def _group_by_call(rows: list[dict]) -> list[list[dict]]:
         url = row.get("library_item_url") or ""
         key = (cid, url)
         groups.setdefault(key, []).append(row)
-    return list(groups.values())
+
+    result: list[list[dict]] = []
+    for group in groups.values():
+        if len(group) <= _MAX_ROWS_PER_EVAL_CALL:
+            result.append(group)
+        else:
+            for i in range(0, len(group), _MAX_ROWS_PER_EVAL_CALL):
+                result.append(group[i:i + _MAX_ROWS_PER_EVAL_CALL])
+    return result
 
 
 def run(

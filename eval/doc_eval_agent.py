@@ -448,12 +448,40 @@ def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None
         return [{"error": str(e)}]
 
 
+_PLACEHOLDER_REASONING = "No QA evaluation was provided for this row."
+
+
+def _is_placeholder_scores(scores: dict) -> bool:
+    """True when the formatter filled in placeholder Incorrect scores for a row the agent never evaluated.
+    Detected by all scored fields having the sentinel reasoning string."""
+    if not scores:
+        return False
+    scored = [v for v in scores.values() if isinstance(v, dict) and "score" in v]
+    return bool(scored) and all(v.get("reasoning") == _PLACEHOLDER_REASONING for v in scored)
+
+
 def _flatten_scores(raw: dict, rows: list[dict], eval_row_keys: list[str]) -> list[dict]:
-    """Convert the agent's {eval_row_key: {field_scores}} response into per-row result dicts."""
+    """Convert the agent's {eval_row_key: {field_scores}} response into per-row result dicts.
+
+    Rows where the formatter produced placeholder "No QA evaluation" scores (because the
+    first-pass agent truncated before reaching them) are returned with empty eval_scores so
+    they are not stored as false 0/16 results.
+    """
     results = []
     for key, row in zip(eval_row_keys, rows):
         scores = raw.get(key, {})
-        overall_summary = scores.pop("overall_summary", None) if isinstance(scores, dict) else None
+        if isinstance(scores, dict):
+            overall_summary = scores.pop("overall_summary", None)
+        else:
+            scores = {}
+            overall_summary = None
+        if _is_placeholder_scores(scores):
+            log.warning(
+                "doc_eval_agent: row %s not evaluated by agent (formatter placeholder) — skipping storage",
+                key,
+            )
+            scores = {}
+            overall_summary = None
         results.append({
             "eval_row_key": key,
             "eval_scores": scores,

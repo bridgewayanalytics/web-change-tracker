@@ -152,12 +152,17 @@ def store_doc_eval_results(eval_rows: list[dict], eval_run_id: str) -> None:
         if removed:
             log.info("doc_result_store: removed %d stale entry/entries before upsert", removed)
 
+        stored = 0
         for row in eval_rows:
+            if not row.get("eval_scores"):
+                log.debug("doc_result_store: skipping row %s — empty eval_scores (agent truncated)", _row_key(row))
+                continue
             key = _row_key(row)
             if key:
                 existing[key] = row
+                stored += 1
         _write(client, bucket, existing, eval_run_id)
-        log.info("Upserted %d doc eval rows into %s", len(eval_rows), _RESULTS_KEY)
+        log.info("Upserted %d/%d doc eval rows into %s (skipped %d empty)", stored, len(eval_rows), _RESULTS_KEY, len(eval_rows) - stored)
     except Exception as e:
         log.error("Failed to write doc_eval_results_table.jsonl: %s", e)
 
