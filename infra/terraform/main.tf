@@ -329,7 +329,7 @@ resource "aws_ecs_task_definition" "app" {
   memory                   = var.memory
 
   runtime_platform {
-    cpu_architecture        = "ARM64"
+    cpu_architecture        = "X86_64"
     operating_system_family = "LINUX"
   }
 
