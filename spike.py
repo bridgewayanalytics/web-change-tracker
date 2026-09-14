@@ -2411,12 +2411,21 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
         config_hash=config_hash,
     )
 
-    # Build doc extraction rerun rows
+    # Build doc extraction rerun rows — use the original pipeline run_timestamp so
+    # data_extraction_datetime stays anchored to the original run, not the rerun
+    # wall-clock time. meta["run_timestamp"] is the int Unix timestamp written by
+    # store_page_change(); fall back to rerun_timestamp if unavailable.
     from bubble.document_agent import get_config_hash as get_doc_config_hash
     doc_config_hash = get_doc_config_hash()
+    _meta_ts = meta.get("run_timestamp")
+    _orig_run_ts_iso = (
+        datetime.fromtimestamp(int(_meta_ts), tz=timezone.utc).isoformat()
+        if isinstance(_meta_ts, (int, float)) and _meta_ts
+        else rerun_timestamp
+    )
     doc_rerun_rows = _build_doc_extraction_rows(
         doc_extractions,
-        rerun_run_id, rerun_timestamp, rerun_target_id, meta.get("url") or "",
+        rerun_run_id, _orig_run_ts_iso, rerun_target_id, meta.get("url") or "",
         agent_call_id=agent_call_id,
         config_hash=doc_config_hash,
     )
