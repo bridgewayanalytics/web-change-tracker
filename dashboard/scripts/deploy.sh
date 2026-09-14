@@ -13,6 +13,8 @@ AWS_REGION="us-east-1"
 ECR_REPO="naic-dashboard"
 ECS_CLUSTER="naic-dashboard-cluster"
 ECS_SERVICE="naic-dashboard-service"
+# ECS task definition runs X86_64 Fargate; always build linux/amd64 regardless of the local machine arch.
+ECS_TASK_FAMILY="naic-dashboard"
 TAG="latest"
 SKIP_BUILD=false
 SKIP_TERRAFORM=false
@@ -56,9 +58,9 @@ echo ""
 
 # --- 1. Docker build ---
 if [[ "$SKIP_BUILD" == "false" ]]; then
-  echo ">>> Building Docker image..."
+  echo ">>> Building Docker image (linux/amd64)..."
   cd "$ROOT_DIR"
-  docker build -t "${ECR_REPO}:${TAG}" .
+  docker buildx build --platform linux/amd64 -t "${ECR_REPO}:${TAG}" --load .
   echo ""
 else
   echo ">>> Skipping Docker build (--skip-build)"
@@ -89,10 +91,16 @@ else
 fi
 
 # --- 4. Force new ECS deployment ---
-echo ">>> Forcing new ECS deployment..."
+# Always specify the current task definition so a pending Terraform state doesn't revert the arch.
+echo ">>> Resolving current task definition..."
+CURRENT_TASK_DEF=$(aws "${AWS_ARGS[@]}" ecs describe-task-definition \
+  --task-definition "$ECS_TASK_FAMILY" \
+  --query 'taskDefinition.taskDefinitionArn' --output text 2>/dev/null || echo "")
+echo ">>> Forcing new ECS deployment (task def: $CURRENT_TASK_DEF)..."
 aws "${AWS_ARGS[@]}" ecs update-service \
   --cluster "$ECS_CLUSTER" \
   --service "$ECS_SERVICE" \
+  --task-definition "$CURRENT_TASK_DEF" \
   --force-new-deployment \
   --query 'service.status' --output text
 
