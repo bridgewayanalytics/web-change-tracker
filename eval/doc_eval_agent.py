@@ -294,6 +294,17 @@ async def _run_with_pgvector(
         gathered = result.final_output or ""
     finally:
         await close_pg_pool()
+        # Close and reset the reranker's httpx client so its connections don't
+        # persist across asyncio.run() calls. Each asyncio.run() creates a new event
+        # loop; httpx connections bound to the old loop cause native heap corruption
+        # (realloc: invalid old size / exit code 139) when reused on the next call.
+        from bubble.pgvector import reranker as _reranker_mod
+        if _reranker_mod._rerank_client is not None:
+            try:
+                await _reranker_mod._rerank_client.close()
+            except Exception:
+                pass
+            _reranker_mod._rerank_client = None
 
     if not gathered:
         return {"error": "Agent returned empty output"}
