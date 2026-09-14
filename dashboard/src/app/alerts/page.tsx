@@ -191,9 +191,6 @@ function AlertsPageContent() {
 
       {rows.length > 0 && (
         <>
-          <p className="text-sm text-gray-500 mb-2">
-            {rows.length} alert{rows.length !== 1 ? "s" : ""}
-          </p>
           <AlertsTable
             rows={rows}
             onAccepted={fetchData}

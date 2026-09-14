@@ -1318,12 +1318,15 @@ export function DocExtractionsTable({ rows, onAccepted, schemaVersion = 0, hasQa
         />
       </div>
 
-      {/* Pagination controls — above the table so they're always visible */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between mb-2 px-1">
-          <span className="text-xs text-gray-500">
-            {displayedRows.length} of {rows.length} rows · Page {page + 1} / {totalPages}
-          </span>
+      {/* Row count + pagination — always visible */}
+      <div className="flex items-center justify-between mb-2 px-1">
+        <span className="text-xs text-gray-500">
+          {displayedRows.length < rows.length
+            ? `${displayedRows.length} of ${rows.length} rows`
+            : `${rows.length} row${rows.length !== 1 ? "s" : ""}`}
+          {totalPages > 1 ? ` · Page ${page + 1} / ${totalPages}` : ""}
+        </span>
+        {totalPages > 1 && (
           <div className="flex gap-2">
             <button
               onClick={() => setPage((p) => Math.max(0, p - 1))}
@@ -1340,8 +1343,8 @@ export function DocExtractionsTable({ rows, onAccepted, schemaVersion = 0, hasQa
               Next →
             </button>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="rounded border border-gray-300">
         {/* Top scrollbar — synced with table */}

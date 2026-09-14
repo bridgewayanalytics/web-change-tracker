@@ -1423,22 +1423,29 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
 
   return (
     <>
-      {/* Pagination controls — above the table so they're always visible */}
-      {totalPages > 1 && (
-        <div className="flex items-center gap-3 mb-2 text-sm text-gray-600">
-          <span>{displayRows.length} of {rows.length} rows · Page {page + 1} / {totalPages}</span>
-          <button
-            className="px-2 py-0.5 rounded border border-gray-300 disabled:opacity-40"
-            onClick={() => setPage((p) => Math.max(0, p - 1))}
-            disabled={page === 0}
-          >← Prev</button>
-          <button
-            className="px-2 py-0.5 rounded border border-gray-300 disabled:opacity-40"
-            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-            disabled={page >= totalPages - 1}
-          >Next →</button>
-        </div>
-      )}
+      {/* Row count + pagination — always visible */}
+      <div className="flex items-center gap-3 mb-2 text-sm text-gray-600">
+        <span>
+          {displayRows.length < rows.length
+            ? `${displayRows.length} of ${rows.length} rows`
+            : `${rows.length} row${rows.length !== 1 ? "s" : ""}`}
+          {totalPages > 1 ? ` · Page ${page + 1} / ${totalPages}` : ""}
+        </span>
+        {totalPages > 1 && (
+          <>
+            <button
+              className="px-2 py-0.5 rounded border border-gray-300 disabled:opacity-40"
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0}
+            >← Prev</button>
+            <button
+              className="px-2 py-0.5 rounded border border-gray-300 disabled:opacity-40"
+              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+              disabled={page >= totalPages - 1}
+            >Next →</button>
+          </>
+        )}
+      </div>
       <div className="rounded border border-gray-300">
         {/* Top scrollbar — synced with table */}
         <div ref={topRef} className="overflow-x-scroll table-scroll sticky top-0 z-30 bg-white border-b border-gray-200" onScroll={() => { if (topRef.current && tableRef.current) tableRef.current.scrollLeft = topRef.current.scrollLeft; }}>

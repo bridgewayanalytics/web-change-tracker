@@ -22,7 +22,16 @@ const inputClass =
 function getOrgValue(row: DocExtractionRow): string[] {
   const val = row.organization_or_publisher ?? row.organization;
   if (!val) return [];
-  if (Array.isArray(val)) return val.map(String).filter(Boolean);
+  if (Array.isArray(val)) {
+    return val.map((item) => {
+      if (typeof item === "string") return item;
+      if (item && typeof item === "object") {
+        const obj = item as Record<string, unknown>;
+        return String(obj.name ?? obj.title ?? obj.value ?? "").trim();
+      }
+      return String(item).trim();
+    }).filter((s) => s && s !== "N/A");
+  }
   const s = String(val).trim();
   return s && s !== "N/A" ? [s] : [];
 }
@@ -235,9 +244,6 @@ function PageContent() {
 
       {allRows.length > 0 && (
         <>
-          <p className="text-sm text-gray-500 mb-2">
-            {rows.length}{rows.length !== allRows.length ? ` of ${allRows.length}` : ""} row{allRows.length !== 1 ? "s" : ""}
-          </p>
           <DocExtractionsTable
             rows={rows}
             onAccepted={fetchData}
