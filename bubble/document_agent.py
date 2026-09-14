@@ -500,6 +500,7 @@ def extract_document_data(
             out["doc_agent_context_key"] = f"alerts/contexts/document/{doc_call_id}.txt"
             rows = _unwrap_agenda_items(out)
             for row in rows:
+                row["doc_extraction_id"] = doc_call_id
                 _stamp_extraction_datetime(row, original_datetime=original_datetime)
                 _stamp_web_page_url(row, alert_context)
                 _stamp_document_url(row, document_url)
@@ -532,6 +533,7 @@ def extract_document_data(
         out["doc_agent_context_key"] = f"alerts/contexts/document/{doc_call_id}.txt"
         rows = _unwrap_agenda_items(out)
         for row in rows:
+            row["doc_extraction_id"] = doc_call_id
             _stamp_extraction_datetime(row)
             _stamp_web_page_url(row, alert_context)
             _stamp_document_url(row, document_url)

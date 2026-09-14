@@ -157,11 +157,11 @@ def _extract_official_title(val: object) -> str:
 def make_doc_eval_row_key(row: dict) -> str:
     """Stable per-row eval key: call_id | url_filename | discriminator.
 
-    The URL filename is included to prevent collision when the same agent_call_id
-    produces rows for multiple documents that happen to share a std_id.
+    Uses doc_extraction_id (unique per extract_document_data call) when available,
+    falling back to agent_call_id for old rows that predate that field.
     Discriminator priority: std_id → agenda title → official title → number → bare.
     Handles both list-of-dicts (post-normalization) and plain string (old rows)."""
-    call_id = row.get("agent_call_id", "unknown")
+    call_id = row.get("doc_extraction_id") or row.get("agent_call_id", "unknown")
 
     lib_url = (row.get("library_item_url") or "").strip()
     url_slug = lib_url.rstrip("/").split("/")[-1].split("?")[0] if lib_url and lib_url.upper() not in _NA_VALUES else ""

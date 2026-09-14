@@ -140,7 +140,10 @@ def _load_doc_rows(agent_call_ids: list[str] | None, limit: int = _DEFAULT_LIMIT
     else:
         log.info("No synced alerts found; evaluating all eligible rows")
 
-    # --- Already-QA'd agent_call_ids ---
+    # --- Already-QA'd rows ---
+    # Track by doc_extraction_id (unique per doc, new rows) or agent_call_id (old rows).
+    # Old eval results that predate doc_extraction_id are tracked by agent_call_id so that
+    # old multi-doc calls (same agent_call_id, different docs) still get skipped correctly.
     already_evald: set[str] = set()
     try:
         eval_resp = client.get_object(Bucket=bucket, Key=_RESULTS_KEY)
@@ -149,9 +152,9 @@ def _load_doc_rows(agent_call_ids: list[str] | None, limit: int = _DEFAULT_LIMIT
                 continue
             try:
                 r = json.loads(line)
-                cid = r.get("agent_call_id", "")
-                if cid:
-                    already_evald.add(cid)
+                evald_id = r.get("doc_extraction_id") or r.get("agent_call_id") or ""
+                if evald_id:
+                    already_evald.add(evald_id)
             except json.JSONDecodeError:
                 continue
     except Exception as e:
@@ -159,12 +162,16 @@ def _load_doc_rows(agent_call_ids: list[str] | None, limit: int = _DEFAULT_LIMIT
 
     # --- Filter eligible rows ---
     from eval.doc_eval_agent import make_doc_eval_row_key
+
+    def _row_eval_id(r: dict) -> str:
+        return r.get("doc_extraction_id") or r.get("agent_call_id") or ""
+
     eligible = [
         r for r in all_rows
         if r.get("extraction_source") != "transcript"
         and r.get("library_item_url", "").strip().lower() not in ("", "n/a")
-        and r.get("agent_call_id")
-        and r.get("agent_call_id") not in already_evald
+        and _row_eval_id(r)
+        and _row_eval_id(r) not in already_evald
         and (upper_bound is None or r.get("run_timestamp", "") <= upper_bound)
     ]
 
@@ -177,10 +184,10 @@ def _load_doc_rows(agent_call_ids: list[str] | None, limit: int = _DEFAULT_LIMIT
             dedup_by_key[rk] = row
 
     selected = list(dedup_by_key.values())
-    unique_calls = len({r.get("agent_call_id") for r in selected})
+    unique_doc_ids = len({_row_eval_id(r) for r in selected})
     log.info(
-        "Selected %d doc extraction rows across %d call(s) for evaluation (upper_bound=%s)",
-        len(selected), unique_calls, upper_bound or "none",
+        "Selected %d doc extraction rows across %d doc extraction call(s) for evaluation (upper_bound=%s)",
+        len(selected), unique_doc_ids, upper_bound or "none",
     )
     return selected
 
@@ -197,17 +204,22 @@ _MAX_ROWS_PER_EVAL_CALL = 5
 
 
 def _group_by_call(rows: list[dict]) -> list[list[dict]]:
-    """Group rows by (agent_call_id, library_item_url) so each document gets its own QA call.
-    Rows from the same agent_call_id but different documents (different library_item_url) are
-    evaluated separately — each group fetches the right PDF for its document.
-    Groups larger than _MAX_ROWS_PER_EVAL_CALL are split into sequential batches so the
-    first-pass agent never receives more items than it can evaluate in one pass.
+    """Group rows so each unique document extraction gets its own QA call.
+
+    New rows (with doc_extraction_id) group by that ID — one unique ID per
+    extract_document_data() call, shared across agenda items of the same doc.
+    Old rows (no doc_extraction_id) fall back to (agent_call_id, library_item_url).
+    Groups larger than _MAX_ROWS_PER_EVAL_CALL are split into sequential batches.
     """
     groups: dict[tuple, list[dict]] = {}
     for row in rows:
-        cid = row.get("agent_call_id", "unknown")
-        url = row.get("library_item_url") or ""
-        key = (cid, url)
+        eid = row.get("doc_extraction_id") or ""
+        if eid:
+            key = (eid, "")
+        else:
+            cid = row.get("agent_call_id", "unknown")
+            url = row.get("library_item_url") or ""
+            key = (cid, url)
         groups.setdefault(key, []).append(row)
 
     result: list[list[dict]] = []
@@ -257,6 +269,7 @@ def run(
 
     eval_rows = []
     for i, group in enumerate(groups, 1):
+        doc_eid = group[0].get("doc_extraction_id") or group[0].get("agent_call_id", "unknown")
         call_id = group[0].get("agent_call_id", "unknown")
         lib_url = group[0].get("library_item_url", "") or ""
 
@@ -264,15 +277,15 @@ def run(
         # and storing scores based on title/URL alone produces misleading results.
         if lib_url and not lib_url.lower().split("?")[0].endswith(".pdf"):
             log.info(
-                "[%d/%d] Skipping agent_call_id=%s — non-PDF URL (%s)",
-                i, len(groups), call_id, lib_url.split("/")[-1],
+                "[%d/%d] Skipping doc_extraction_id=%s — non-PDF URL (%s)",
+                i, len(groups), doc_eid[-8:], lib_url.split("/")[-1],
             )
             continue
 
         alert_row = alert_lookup.get((call_id, lib_url)) or alert_lookup.get((call_id, ""))
         log.info(
-            "[%d/%d] Evaluating agent_call_id=%s rows=%d document=%s alert_found=%s",
-            i, len(groups), call_id, len(group),
+            "[%d/%d] Evaluating doc_extraction_id=%s rows=%d document=%s alert_found=%s",
+            i, len(groups), doc_eid[-8:], len(group),
             group[0].get("document_title") or lib_url,
             alert_row is not None,
         )
