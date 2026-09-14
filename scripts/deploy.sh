@@ -47,7 +47,7 @@ echo "    Lambda zip: infra/lambda/bubble_sync.zip ($(du -sh "$REPO_ROOT/infra/l
 
 echo "==> Building Docker image (tag=$IMAGE_TAG)..."
 echo "    (Image must include spike.py with --bubble-enrich, --bubble-report, --emit-bubble-json support.)"
-docker build -t "${ECR_URL}:${IMAGE_TAG}" .
+docker buildx build --platform linux/amd64 --load -t "${ECR_URL}:${IMAGE_TAG}" .
 
 echo "==> Logging in to ECR..."
 aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$ECR_URL"
