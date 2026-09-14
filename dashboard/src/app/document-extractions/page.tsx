@@ -19,21 +19,25 @@ const labelClass = "block text-xs text-gray-500 mb-1";
 const inputClass =
   "w-full rounded border border-gray-300 px-3 py-1.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed h-[34px]";
 
-function getOrgValue(row: DocExtractionRow): string[] {
-  const val = row.organization_or_publisher ?? row.organization;
-  if (!val) return [];
-  if (Array.isArray(val)) {
-    return val.map((item) => {
-      if (typeof item === "string") return item;
-      if (item && typeof item === "object") {
-        const obj = item as Record<string, unknown>;
-        return String(obj.name ?? obj.title ?? obj.value ?? "").trim();
-      }
-      return String(item).trim();
-    }).filter((s) => s && s !== "N/A");
+/** Extract org name string(s) from a row — handles all field naming variations and value shapes. */
+function extractOrgName(val: unknown): string {
+  if (!val) return "";
+  if (typeof val === "string") return val.trim();
+  if (typeof val === "object") {
+    const obj = val as Record<string, unknown>;
+    // {name, status} shape used by organization_author
+    const s = String(obj.name ?? obj.title ?? obj.value ?? "").trim();
+    return s;
   }
-  const s = String(val).trim();
-  return s && s !== "N/A" ? [s] : [];
+  return String(val).trim();
+}
+
+function getOrgValue(row: DocExtractionRow): string[] {
+  // organization_author is the current field name; organization_or_publisher is legacy
+  const val = row.organization_author ?? row.organization_or_publisher ?? row.organization;
+  if (!val) return [];
+  const items = Array.isArray(val) ? val : [val];
+  return items.map(extractOrgName).filter((s) => s && s !== "N/A");
 }
 
 function PageContent() {
