@@ -27,6 +27,17 @@ done
 
 cd "$REPO_ROOT"
 
+# Abort if there are uncommitted changes — Docker build uses the working directory,
+# so uncommitted changes would be baked into the image and lost on the next deploy.
+if ! git -C "$REPO_ROOT" diff --quiet HEAD; then
+  echo "ERROR: Uncommitted changes detected. Commit or stash them before deploying."
+  echo ""
+  git -C "$REPO_ROOT" status --short
+  echo ""
+  echo "Run: git add -A && git commit -m 'your message'"
+  exit 1
+fi
+
 echo "==> Resolving Terraform outputs (region, ECR URL)..."
 REGION=$(terraform -chdir="$TERRAFORM_DIR" output -raw region)
 ECR_URL=$(terraform -chdir="$TERRAFORM_DIR" output -raw ecr_repository_url)
