@@ -1723,13 +1723,20 @@ def _run_pipeline_agents(change_events: list[dict], run_id: str = "") -> None:
                 lib_url = agent_output.get("library_item_url") or ""
                 lib_file = agent_output.get("library_items_file_name") or ""
                 if lib_name and lib_name.strip().upper() not in ("N/A", "N/A.", "-", ""):
-                    # Split semicolon-separated URLs into separate items — one extraction call per document
+                    # Split semicolon-separated URLs/titles/filenames — one extraction call per document
                     url_parts = [u.strip() for u in lib_url.split(";") if u.strip()] if lib_url else [""]
                     file_parts = [f.strip() for f in lib_file.split(";") if f.strip()] if lib_file else [""]
+                    # Only split the title when there are multiple URLs — avoids splitting
+                    # titles that legitimately contain semicolons (single-document case).
+                    title_parts = [t.strip() for t in lib_name.split(";") if t.strip()] if len(url_parts) > 1 else [lib_name]
                     if len(url_parts) > 1:
                         log.warning("library_item_url has %d semicolon-separated URLs — splitting into separate extraction calls", len(url_parts))
                     library_items = [
-                        {"preliminary_title": lib_name, "url": url_parts[i] if i < len(url_parts) else "", "file_name": file_parts[i] if i < len(file_parts) else ""}
+                        {
+                            "preliminary_title": title_parts[i] if i < len(title_parts) else lib_name,
+                            "url": url_parts[i] if i < len(url_parts) else "",
+                            "file_name": file_parts[i] if i < len(file_parts) else "",
+                        }
                         for i in range(max(1, len(url_parts)))
                     ]
 

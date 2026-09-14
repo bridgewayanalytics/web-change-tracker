@@ -80,12 +80,17 @@ def _stamp_eval_row_keys(client, bucket: str, eval_rows: list[dict]) -> None:
     try:
         from eval.doc_eval_agent import make_doc_eval_row_key
         # Map computed_key → eval_row_key for every row we just evaluated.
-        # They are identical today but diverge if key logic ever changes again.
         key_map: dict[str, str] = {}
+        # Fallback: (agent_call_id, discriminator) → eval_row_key for old 2-part keys
+        # that predate the url_filename segment (call_id|discriminator vs call_id|filename|discriminator).
+        alt_key_map: dict[tuple[str, str], str] = {}
         for r in eval_rows:
             erk = r.get("eval_row_key")
             if erk:
-                key_map[erk] = erk  # self-reference: computed == stored
+                key_map[erk] = erk
+                parts = erk.split("|")
+                if len(parts) >= 2:
+                    alt_key_map[(parts[0], parts[-1])] = erk
 
         body = client.get_object(Bucket=bucket, Key=_EXTRACTIONS_KEY)["Body"].read().decode("utf-8")
         lines = [l for l in body.split("\n") if l.strip()]
@@ -95,8 +100,14 @@ def _stamp_eval_row_keys(client, bucket: str, eval_rows: list[dict]) -> None:
             try:
                 row = json.loads(line)
                 computed = make_doc_eval_row_key(row)
-                if computed in key_map and row.get("eval_row_key") != key_map[computed]:
-                    row["eval_row_key"] = key_map[computed]
+                stored_erk = row.get("eval_row_key")
+                target_erk = key_map.get(computed)
+                if target_erk is None:
+                    # Fallback: match by (call_id, last discriminator segment) for old-format keys
+                    c_parts = computed.split("|")
+                    target_erk = alt_key_map.get((c_parts[0], c_parts[-1])) if len(c_parts) >= 2 else None
+                if target_erk and stored_erk != target_erk:
+                    row["eval_row_key"] = target_erk
                     updated_count += 1
             except (json.JSONDecodeError, Exception):
                 pass
