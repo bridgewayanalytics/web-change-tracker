@@ -56,27 +56,29 @@ echo "ECR:       $ECR_URL:$TAG"
 echo "Cluster:   $ECS_CLUSTER"
 echo ""
 
-# --- 1. Docker build ---
-if [[ "$SKIP_BUILD" == "false" ]]; then
-  echo ">>> Building Docker image (linux/amd64)..."
-  cd "$ROOT_DIR"
-  docker buildx build --platform linux/amd64 -t "${ECR_REPO}:${TAG}" --load .
-  echo ""
-else
-  echo ">>> Skipping Docker build (--skip-build)"
-fi
-
-# --- 2. Push to ECR ---
+# --- 1+2. Build and push to ECR (linux/amd64) ---
 echo ">>> Logging into ECR..."
 aws "${AWS_ARGS[@]}" ecr get-login-password --region "$AWS_REGION" | \
   docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
-echo ">>> Pushing image to ECR..."
-docker tag "${ECR_REPO}:${TAG}" "${ECR_URL}:${TAG}"
-docker push "${ECR_URL}:${TAG}"
-if [[ "$TAG" != "latest" ]]; then
-  docker tag "${ECR_REPO}:${TAG}" "${ECR_URL}:latest"
-  docker push "${ECR_URL}:latest"
+if [[ "$SKIP_BUILD" == "false" ]]; then
+  echo ">>> Building and pushing Docker image (linux/amd64)..."
+  cd "$ROOT_DIR"
+  # Build directly into ECR with --push (no local load) so platform is guaranteed.
+  # QEMU handles cross-compilation when running on ARM64; native on AMD64 CI runners.
+  if [[ "$TAG" != "latest" ]]; then
+    docker buildx build --platform linux/amd64 --push \
+      -t "${ECR_URL}:${TAG}" \
+      -t "${ECR_URL}:latest" \
+      .
+  else
+    docker buildx build --platform linux/amd64 --push \
+      -t "${ECR_URL}:latest" \
+      .
+  fi
+  echo ""
+else
+  echo ">>> Skipping Docker build (--skip-build)"
 fi
 echo ""
 
