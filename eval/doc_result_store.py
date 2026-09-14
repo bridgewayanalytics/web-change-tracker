@@ -161,6 +161,13 @@ def store_doc_eval_results(eval_rows: list[dict], eval_run_id: str) -> None:
             if key:
                 existing[key] = row
                 stored += 1
+
+        if stored == 0:
+            log.warning(
+                "doc_result_store: no rows with valid eval_scores — skipping S3 write to prevent data loss "
+                "(%d row(s) had empty scores; existing S3 file is unchanged)", len(eval_rows)
+            )
+            return
         _write(client, bucket, existing, eval_run_id)
         log.info("Upserted %d/%d doc eval rows into %s (skipped %d empty)", stored, len(eval_rows), _RESULTS_KEY, len(eval_rows) - stored)
     except Exception as e:
