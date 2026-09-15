@@ -1,5 +1,5 @@
 "use client";
-// v2026-09-14
+// v2026-09-15
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertsTable, type AlertRow } from "./AlertsTable";
