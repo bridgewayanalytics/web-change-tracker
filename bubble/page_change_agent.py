@@ -435,6 +435,16 @@ async def _run_with_pgvector(
             except Exception:
                 pass
             _reranker_mod._rerank_client = None
+        try:
+            from agents.models import openai_provider as _op_mod
+            if _op_mod._http_client is not None:
+                try:
+                    await _op_mod._http_client.aclose()
+                except Exception:
+                    pass
+                _op_mod._http_client = None
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
