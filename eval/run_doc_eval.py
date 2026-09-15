@@ -143,9 +143,9 @@ def _load_doc_rows(agent_call_ids: list[str] | None, limit: int = _DEFAULT_LIMIT
         log.info("No synced alerts found; evaluating all eligible rows")
 
     # --- Already-QA'd rows ---
-    # Track by doc_extraction_id (unique per doc, new rows) or agent_call_id (old rows).
-    # Old eval results that predate doc_extraction_id are tracked by agent_call_id so that
-    # old multi-doc calls (same agent_call_id, different docs) still get skipped correctly.
+    # Index BOTH doc_extraction_id and agent_call_id from each result row so that
+    # old results (keyed by agent_call_id before doc_extraction_id was introduced)
+    # correctly prevent re-evaluation of rows that now carry a doc_extraction_id.
     already_evald: set[str] = set()
     try:
         eval_resp = client.get_object(Bucket=bucket, Key=_RESULTS_KEY)
@@ -154,13 +154,16 @@ def _load_doc_rows(agent_call_ids: list[str] | None, limit: int = _DEFAULT_LIMIT
                 continue
             try:
                 r = json.loads(line)
-                evald_id = r.get("doc_extraction_id") or r.get("agent_call_id") or ""
-                if evald_id:
-                    already_evald.add(evald_id)
+                for key in ("doc_extraction_id", "agent_call_id"):
+                    val = r.get(key) or ""
+                    if val:
+                        already_evald.add(val)
             except json.JSONDecodeError:
                 continue
     except Exception as e:
         log.warning("Could not load doc_eval_results for dedup: %s", e)
+
+    log.info("Already-evaluated IDs loaded: %d", len(already_evald))
 
     # --- Filter eligible rows ---
     from eval.doc_eval_agent import make_doc_eval_row_key
@@ -176,11 +179,18 @@ def _load_doc_rows(agent_call_ids: list[str] | None, limit: int = _DEFAULT_LIMIT
         # All others: need a real library_item_url
         return r.get("library_item_url", "").strip().lower() not in ("", "n/a")
 
+    def _already_evald(r: dict) -> bool:
+        """Check both doc_extraction_id and agent_call_id so old results (stored
+        under agent_call_id) protect rows that now also carry doc_extraction_id."""
+        eid = r.get("doc_extraction_id") or ""
+        cid = r.get("agent_call_id") or ""
+        return bool((eid and eid in already_evald) or (cid and cid in already_evald))
+
     eligible = [
         r for r in all_rows
         if _is_eligible(r)
         and _row_eval_id(r)
-        and _row_eval_id(r) not in already_evald
+        and not _already_evald(r)
         and (upper_bound is None or r.get("run_timestamp", "") <= upper_bound)
     ]
 
