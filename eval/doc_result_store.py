@@ -144,25 +144,6 @@ def store_doc_eval_results(eval_rows: list[dict], eval_run_id: str) -> None:
     try:
         existing = _load_existing(client, bucket)
 
-        # Before inserting new results, remove ALL existing entries for the same
-        # (agent_call_id, library_item_url) pairs — regardless of key format.
-        # This prevents stale entries under old key formats from persisting alongside
-        # new ones and causing the dashboard to display the wrong result.
-        being_replaced = {
-            (r.get("agent_call_id", ""), r.get("library_item_url") or "")
-            for r in eval_rows
-        }
-        removed = sum(
-            1 for v in existing.values()
-            if (v.get("agent_call_id", ""), v.get("library_item_url") or "") in being_replaced
-        )
-        existing = {
-            k: v for k, v in existing.items()
-            if (v.get("agent_call_id", ""), v.get("library_item_url") or "") not in being_replaced
-        }
-        if removed:
-            log.info("doc_result_store: removed %d stale entry/entries before upsert", removed)
-
         stored = 0
         for row in eval_rows:
             if not row.get("eval_scores"):
