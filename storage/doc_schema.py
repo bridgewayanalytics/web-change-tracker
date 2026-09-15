@@ -18,6 +18,7 @@ DOC_PIPELINE_FIELDS: frozenset[str] = frozenset({
     "target_id",
     "source_url",
     "agent_call_id",
+    "doc_extraction_id",           # pipeline UUID per extract_document_data() call; NOT the schema field
     "library_item_title",
     "library_item_url",
     "library_item_file_name",
