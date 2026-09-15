@@ -13,7 +13,7 @@ AWS_REGION="us-east-1"
 ECR_REPO="naic-dashboard"
 ECS_CLUSTER="naic-dashboard-cluster"
 ECS_SERVICE="naic-dashboard-service"
-# ECS task definition runs X86_64 Fargate; always build linux/amd64 regardless of the local machine arch.
+# ECS task definition runs ARM64 Fargate (matches Apple Silicon local builds).
 ECS_TASK_FAMILY="naic-dashboard"
 TAG="latest"
 SKIP_BUILD=false
@@ -62,17 +62,18 @@ aws "${AWS_ARGS[@]}" ecr get-login-password --region "$AWS_REGION" | \
   docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
 if [[ "$SKIP_BUILD" == "false" ]]; then
-  echo ">>> Building and pushing Docker image (linux/amd64)..."
+  echo ">>> Building and pushing Docker image (linux/arm64)..."
   cd "$ROOT_DIR"
-  # Build directly into ECR with --push (no local load) so platform is guaranteed.
-  # QEMU handles cross-compilation when running on ARM64; native on AMD64 CI runners.
+  # Always build linux/arm64 to match the ECS ARM64 task definition.
+  # Native on Apple Silicon; QEMU cross-compiles on AMD64 CI runners.
+  # --push sends directly to ECR, avoiding local-daemon cache layer confusion.
   if [[ "$TAG" != "latest" ]]; then
-    docker buildx build --platform linux/amd64 --push \
+    docker buildx build --platform linux/arm64 --push \
       -t "${ECR_URL}:${TAG}" \
       -t "${ECR_URL}:latest" \
       .
   else
-    docker buildx build --platform linux/amd64 --push \
+    docker buildx build --platform linux/arm64 --push \
       -t "${ECR_URL}:latest" \
       .
   fi
@@ -93,16 +94,10 @@ else
 fi
 
 # --- 4. Force new ECS deployment ---
-# Always specify the current task definition so a pending Terraform state doesn't revert the arch.
-echo ">>> Resolving current task definition..."
-CURRENT_TASK_DEF=$(aws "${AWS_ARGS[@]}" ecs describe-task-definition \
-  --task-definition "$ECS_TASK_FAMILY" \
-  --query 'taskDefinition.taskDefinitionArn' --output text 2>/dev/null || echo "")
-echo ">>> Forcing new ECS deployment (task def: $CURRENT_TASK_DEF)..."
+echo ">>> Forcing new ECS deployment..."
 aws "${AWS_ARGS[@]}" ecs update-service \
   --cluster "$ECS_CLUSTER" \
   --service "$ECS_SERVICE" \
-  --task-definition "$CURRENT_TASK_DEF" \
   --force-new-deployment \
   --query 'service.status' --output text
 
