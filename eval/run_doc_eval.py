@@ -346,22 +346,32 @@ def run(
             }, f)
             tmp_path = f.name
 
-        try:
-            proc = subprocess.run(
-                [sys.executable, "-m", "eval.run_doc_eval", "--group-file", tmp_path],
-                timeout=600,
-            )
-            if proc.returncode != 0:
-                log.error("[%d/%d] Group failed (subprocess exit %d)", i, len(groups), proc.returncode)
-            else:
-                log.info("[%d/%d] Group complete", i, len(groups))
-        except subprocess.TimeoutExpired:
-            log.error("[%d/%d] Group timed out after 600s", i, len(groups))
-        finally:
+        _MAX_SUBPROCESS_RETRIES = 2
+        for attempt in range(_MAX_SUBPROCESS_RETRIES + 1):
             try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
+                proc = subprocess.run(
+                    [sys.executable, "-m", "eval.run_doc_eval", "--group-file", tmp_path],
+                    timeout=600,
+                )
+                if proc.returncode == 0:
+                    log.info("[%d/%d] Group complete", i, len(groups))
+                    break
+                # Negative return code = killed by signal (SIGABRT, SIGSEGV, etc.)
+                # Heap corruption from C extensions is non-deterministic; retry in a fresh process.
+                if proc.returncode < 0 and attempt < _MAX_SUBPROCESS_RETRIES:
+                    log.warning(
+                        "[%d/%d] Group crashed (signal %d) — retrying (attempt %d/%d)",
+                        i, len(groups), -proc.returncode, attempt + 1, _MAX_SUBPROCESS_RETRIES,
+                    )
+                    continue
+                log.error("[%d/%d] Group failed (subprocess exit %d)", i, len(groups), proc.returncode)
+            except subprocess.TimeoutExpired:
+                log.error("[%d/%d] Group timed out after 600s", i, len(groups))
+                break
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
 
     log.info("Doc eval run %s complete", eval_run_id)
     return []
