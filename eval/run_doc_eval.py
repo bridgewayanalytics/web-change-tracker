@@ -116,31 +116,10 @@ def _load_doc_rows(agent_call_ids: list[str] | None, limit: int = _DEFAULT_LIMIT
         log.info("Selected %d row(s) by agent_call_id (after dedup)", len(result))
         return result
 
-    # Bulk path: evaluate all eligible rows up to the upper bound (most recently
-    # synced-to-Bubble alert), skipping rows already QA'd and transcript rows.
-
-    # --- Upper bound: run_timestamp of the most recently synced alert ---
-    upper_bound: str | None = None
-    try:
-        alerts_resp = client.get_object(Bucket=bucket, Key=_ALERTS_KEY)
-        for line in alerts_resp["Body"].read().decode("utf-8").split("\n"):
-            if not line.strip():
-                continue
-            try:
-                a = json.loads(line)
-                if a.get("bubble_sync_status") == "synced":
-                    ts = a.get("run_timestamp", "")
-                    if ts and (upper_bound is None or ts > upper_bound):
-                        upper_bound = ts
-            except json.JSONDecodeError:
-                continue
-    except Exception as e:
-        log.warning("Could not load alerts_table.jsonl for upper bound: %s", e)
-
-    if upper_bound:
-        log.info("Bulk doc eval upper bound (latest bubble sync): %s", upper_bound)
-    else:
-        log.info("No synced alerts found; evaluating all eligible rows")
+    # Bulk path: evaluate all eligible rows, skipping rows already QA'd and
+    # those with no real document URL.
+    # Doc eval scores against source document content via pgvector — no Bubble
+    # editorial ground truth is required, so there is no upper_bound filter.
 
     # --- Already-QA'd rows ---
     # Index BOTH doc_extraction_id and agent_call_id from each result row so that
@@ -191,7 +170,6 @@ def _load_doc_rows(agent_call_ids: list[str] | None, limit: int = _DEFAULT_LIMIT
         if _is_eligible(r)
         and _row_eval_id(r)
         and not _already_evald(r)
-        and (upper_bound is None or r.get("run_timestamp", "") <= upper_bound)
     ]
 
     # Deduplicate by (library_item_url or transcript_s3_key, eval_row_key) keeping most recent row per key
@@ -206,8 +184,8 @@ def _load_doc_rows(agent_call_ids: list[str] | None, limit: int = _DEFAULT_LIMIT
     selected = list(dedup_by_key.values())
     unique_doc_ids = len({_row_eval_id(r) for r in selected})
     log.info(
-        "Selected %d doc extraction rows across %d doc extraction call(s) for evaluation (upper_bound=%s)",
-        len(selected), unique_doc_ids, upper_bound or "none",
+        "Selected %d doc extraction rows across %d doc extraction call(s) for evaluation",
+        len(selected), unique_doc_ids,
     )
     return selected
 
