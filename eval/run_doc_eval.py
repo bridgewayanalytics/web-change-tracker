@@ -246,7 +246,7 @@ def run(
     library_item_url: str | None = None,
     dry_run: bool = False,
 ) -> list[dict]:
-    from eval.doc_eval_agent import evaluate_doc_extraction_call, make_doc_eval_row_key
+    from eval.doc_eval_agent import make_doc_eval_row_key
     from eval.doc_result_store import store_doc_eval_results
 
     eval_run_id = _make_eval_run_id()
@@ -275,47 +275,84 @@ def run(
             }, indent=2))
         return rows
 
-    eval_rows = []
-    for i, group in enumerate(groups, 1):
-        doc_eid = group[0].get("doc_extraction_id") or group[0].get("agent_call_id", "unknown")
-        call_id = group[0].get("agent_call_id", "unknown")
-        lib_url = group[0].get("library_item_url", "") or ""
+    import asyncio
 
-        # Skip URLs we can't fetch text from (web pages, unsupported types).
-        # PDF and docx are supported; empty lib_url = transcript row (uses transcript_s3_key).
-        if lib_url:
-            url_lower = lib_url.lower().split("?")[0].split(";")[0]
-            is_supported = url_lower.endswith(".pdf") or any(
-                url_lower.endswith(ext) for ext in (".docx", ".doc")
-            )
-            if not is_supported:
-                log.info(
-                    "[%d/%d] Skipping doc_extraction_id=%s — unsupported URL type (%s)",
-                    i, len(groups), doc_eid[-8:], lib_url.split("/")[-1],
-                )
-                continue
+    async def _run_all_groups_async() -> list[dict]:
+        from eval.doc_eval_agent import evaluate_doc_extraction_call_async
+        from bubble.pgvector.client import init_pg_pool, close_pg_pool
+        from bubble.pgvector import reranker as _reranker_mod
 
-        alert_row = alert_lookup.get((call_id, lib_url)) or alert_lookup.get((call_id, ""))
-        log.info(
-            "[%d/%d] Evaluating doc_extraction_id=%s rows=%d document=%s alert_found=%s",
-            i, len(groups), doc_eid[-8:], len(group),
-            group[0].get("document_title") or lib_url,
-            alert_row is not None,
+        # Determine if pgvector is enabled (same check as doc_eval_agent._pgvector_enabled())
+        pgvector_enabled = bool(
+            os.environ.get("PGVECTOR_ENABLED", "").strip().lower() in ("1", "true", "yes")
+            and os.environ.get("DATABASE_IP", "").strip()
         )
 
-        score_results = evaluate_doc_extraction_call(rows=group, alert_row=alert_row)
+        if pgvector_enabled:
+            await init_pg_pool()
 
-        # Merge per-row scores back into source rows
-        for row, score_result in zip(group, score_results):
-            eval_row_key = score_result.get("eval_row_key") or make_doc_eval_row_key(row)
-            eval_rows.append({
-                **row,
-                "eval_run_id": eval_run_id,
-                "eval_timestamp": eval_timestamp,
-                "eval_scores": score_result.get("eval_scores", {}),
-                "overall_summary": score_result.get("overall_summary"),
-                "eval_row_key": eval_row_key,
-            })
+        eval_rows_async: list[dict] = []
+        try:
+            for i, group in enumerate(groups, 1):
+                doc_eid = group[0].get("doc_extraction_id") or group[0].get("agent_call_id", "unknown")
+                call_id = group[0].get("agent_call_id", "unknown")
+                lib_url = group[0].get("library_item_url", "") or ""
+
+                if lib_url:
+                    url_lower = lib_url.lower().split("?")[0].split(";")[0]
+                    is_supported = url_lower.endswith(".pdf") or any(
+                        url_lower.endswith(ext) for ext in (".docx", ".doc")
+                    )
+                    if not is_supported:
+                        log.info(
+                            "[%d/%d] Skipping doc_extraction_id=%s — unsupported URL type (%s)",
+                            i, len(groups), doc_eid[-8:], lib_url.split("/")[-1],
+                        )
+                        continue
+
+                alert_row = alert_lookup.get((call_id, lib_url)) or alert_lookup.get((call_id, ""))
+                log.info(
+                    "[%d/%d] Evaluating doc_extraction_id=%s rows=%d document=%s alert_found=%s",
+                    i, len(groups), doc_eid[-8:], len(group),
+                    group[0].get("document_title") or lib_url,
+                    alert_row is not None,
+                )
+
+                score_results = await evaluate_doc_extraction_call_async(rows=group, alert_row=alert_row)
+
+                for row, score_result in zip(group, score_results):
+                    eval_row_key = score_result.get("eval_row_key") or make_doc_eval_row_key(row)
+                    eval_rows_async.append({
+                        **row,
+                        "eval_run_id": eval_run_id,
+                        "eval_timestamp": eval_timestamp,
+                        "eval_scores": score_result.get("eval_scores", {}),
+                        "overall_summary": score_result.get("overall_summary"),
+                        "eval_row_key": eval_row_key,
+                    })
+        finally:
+            if pgvector_enabled:
+                await close_pg_pool()
+                if _reranker_mod._rerank_client is not None:
+                    try:
+                        await _reranker_mod._rerank_client.close()
+                    except Exception:
+                        pass
+                    _reranker_mod._rerank_client = None
+                try:
+                    from agents.models import openai_provider as _op_mod
+                    if _op_mod._http_client is not None:
+                        try:
+                            await _op_mod._http_client.aclose()
+                        except Exception:
+                            pass
+                        _op_mod._http_client = None
+                except Exception:
+                    pass
+
+        return eval_rows_async
+
+    eval_rows = asyncio.run(_run_all_groups_async())
 
     store_doc_eval_results(eval_rows, eval_run_id)
     log.info("Doc eval run %s complete — %d rows evaluated", eval_run_id, len(eval_rows))

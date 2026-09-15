@@ -319,7 +319,7 @@ def _build_user_message(
     return "\n".join(parts)
 
 
-async def _run_with_pgvector(
+async def _run_agent_async(
     system_prompt: str,
     user_content: str,
     model: str,
@@ -328,52 +328,28 @@ async def _run_with_pgvector(
     eval_row_keys: list[str],
     field_names: list[str] | None = None,
 ) -> dict:
+    """Run the agents SDK inside an ALREADY-running event loop (no pool management here)."""
     from agents import Agent, Runner, ModelSettings
     from agents.model_settings import Reasoning
-    from bubble.pgvector.client import init_pg_pool, close_pg_pool
     from bubble.pgvector.search_tool import (
         set_pgvector_namespaces,
         search_knowledge_base,
         list_available_documents,
     )
 
-    await init_pg_pool()
-    try:
-        set_pgvector_namespaces(namespaces)
-        agent = Agent(
-            name=_CHAT_ID,
-            instructions=system_prompt,
-            tools=[search_knowledge_base, list_available_documents],
-            model=model,
-            model_settings=ModelSettings(
-                reasoning=Reasoning(effort=reasoning_effort),
-                verbosity=reasoning_effort,
-            ),
-        )
-        result = await Runner.run(agent, input=user_content)
-        gathered = result.final_output or ""
-    finally:
-        await close_pg_pool()
-        # Reset all persistent httpx clients after each asyncio.run() call.
-        # Each asyncio.run() creates a new event loop; any httpx client bound to
-        # the old loop causes native heap corruption (exit code 139) on the next call.
-        from bubble.pgvector import reranker as _reranker_mod
-        if _reranker_mod._rerank_client is not None:
-            try:
-                await _reranker_mod._rerank_client.close()
-            except Exception:
-                pass
-            _reranker_mod._rerank_client = None
-        try:
-            from agents.models import openai_provider as _op_mod
-            if _op_mod._http_client is not None:
-                try:
-                    await _op_mod._http_client.aclose()
-                except Exception:
-                    pass
-                _op_mod._http_client = None
-        except Exception:
-            pass
+    set_pgvector_namespaces(namespaces)
+    agent = Agent(
+        name=_CHAT_ID,
+        instructions=system_prompt,
+        tools=[search_knowledge_base, list_available_documents],
+        model=model,
+        model_settings=ModelSettings(
+            reasoning=Reasoning(effort=reasoning_effort),
+            verbosity=reasoning_effort,
+        ),
+    )
+    result = await Runner.run(agent, input=user_content)
+    gathered = result.final_output or ""
 
     if not gathered:
         return {"error": "Agent returned empty output"}
@@ -403,28 +379,16 @@ async def _run_with_pgvector(
     return chat_json(messages, model=model, reasoning_effort=reasoning_effort)
 
 
-def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None) -> list[dict]:
-    """
-    Run the doc extraction QA agent on all agenda item rows from one extraction call.
-
-    All rows share the same agent_call_id and library_item_url (same document).
-    Returns a list of per-row result dicts, each including eval_scores and overall_summary.
-    On failure returns [{"error": "<message>"}].
-    """
-    if not rows:
-        return []
-
+def _prepare_eval_args(rows: list[dict], alert_row: dict | None = None) -> dict:
+    """Synchronous prep for one evaluation group. Returns all args needed by the agent call."""
     system_prompt = _get_system_prompt()
     model = _get_model()
     reasoning_effort = _get_reasoning_effort()
 
-    # Fetch document text for vectorization only — never injected into the prompt.
-    # The agent accesses document content exclusively via pgvector search tools.
     first = rows[0]
     is_transcript = first.get("extraction_source") == "transcript"
 
     if is_transcript:
-        # Transcripts: keyed by transcript_s3_key in pgvector (same key used during original extraction)
         document_url = str(first.get("transcript_s3_key") or "")
         doc_text = _fetch_transcript_from_s3(document_url) if document_url else None
         if not doc_text and document_url:
@@ -432,12 +396,9 @@ def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None
             if not arm_if_ready(document_url):
                 log.info("doc_eval_agent: transcript S3 fetch failed and not in pgvector for %s", document_url)
     else:
-        # PDFs and docx files
         document_url = str(first.get("library_item_url") or "")
         doc_text = _fetch_document_text(document_url) if document_url and document_url != "N/A" else None
         if not doc_text and document_url and document_url != "N/A":
-            # NAIC CDN returns transient 403s under rapid requests — retry once after a delay.
-            # Only retry if arm_if_ready() also finds no cached namespace, to avoid unnecessary waits.
             from bubble.doc_extraction_ingest import arm_if_ready
             if not arm_if_ready(document_url):
                 import time as _time
@@ -452,7 +413,6 @@ def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None
         f"{len(doc_text)} chars fetched" if doc_text else "FAILED — will use cached namespace if available",
     )
 
-    # Fetch before/after HTML from S3 using the first row's run metadata
     before_html, after_html = "", ""
     run_id = str(first.get("run_id") or "")
     target_id = str(first.get("target_id") or "")
@@ -469,9 +429,7 @@ def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None
         except Exception as e:
             log.debug("doc_eval_agent: could not fetch page HTML: %s", e)
 
-    # Build stable per-row keys for the agent to reference
     eval_row_keys = [make_doc_eval_row_key(row) for row in rows]
-
     user_message = _build_user_message(
         rows, eval_row_keys,
         alert_row=alert_row, before_html=before_html, after_html=after_html,
@@ -479,8 +437,6 @@ def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None
 
     agent_call_id = first.get("agent_call_id", "unknown")
 
-    # Collect the actual field names from the rows (excluding pipeline metadata).
-    # Passed to the formatter so scores are keyed by field ID, not display labels.
     seen_fields: set[str] = set()
     field_names: list[str] = []
     for row in rows:
@@ -489,6 +445,7 @@ def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None
                 field_names.append(k)
                 seen_fields.add(k)
 
+    namespaces: list[str] | None = None
     if _pgvector_enabled():
         namespaces = list(_get_pgvector_namespaces())
         if document_url and document_url.strip() and document_url != "N/A":
@@ -499,14 +456,37 @@ def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None
                 namespaces.append(doc_namespace)
                 log.info("doc_eval_agent: armed document namespace %s", doc_namespace)
 
+    return {
+        "system_prompt": system_prompt,
+        "model": model,
+        "reasoning_effort": reasoning_effort,
+        "user_message": user_message,
+        "agent_call_id": agent_call_id,
+        "eval_row_keys": eval_row_keys,
+        "field_names": field_names,
+        "namespaces": namespaces,
+        "doc_text": doc_text,
+    }
+
+
+async def _run_group_async(rows: list[dict], prepared: dict) -> list[dict]:
+    """Run one evaluation group inside an already-running event loop (no pool management)."""
+    system_prompt = prepared["system_prompt"]
+    model = prepared["model"]
+    reasoning_effort = prepared["reasoning_effort"]
+    user_message = prepared["user_message"]
+    agent_call_id = prepared["agent_call_id"]
+    eval_row_keys = prepared["eval_row_keys"]
+    field_names = prepared["field_names"]
+    namespaces = prepared["namespaces"]
+
+    if namespaces is not None:
         log.info(
             "doc_eval_agent: running with pgvector (model=%s namespaces=%s) agent_call_id=%s rows=%d",
             model, namespaces, agent_call_id, len(rows),
         )
         try:
-            raw = asyncio.run(
-                _run_with_pgvector(system_prompt, user_message, model, reasoning_effort, namespaces, eval_row_keys, field_names)
-            )
+            raw = await _run_agent_async(system_prompt, user_message, model, reasoning_effort, namespaces, eval_row_keys, field_names)
             if not isinstance(raw, dict):
                 return [{"error": "Agent returned non-dict response"}]
             return _flatten_scores(raw, rows, eval_row_keys)
@@ -515,9 +495,10 @@ def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None
             return [{"error": str(e)}]
 
     from bubble.openai_client import chat_json
+    doc_text = prepared.get("doc_text")
     log.info(
         "doc_eval_agent: running via direct API (model=%s, pdf=%s) agent_call_id=%s rows=%d",
-        model, "yes" if pdf_text else "no", agent_call_id, len(rows),
+        model, "yes" if doc_text else "no", agent_call_id, len(rows),
     )
     keys_str = ", ".join(f'"{k}"' for k in eval_row_keys)
     field_names_str = ", ".join(f'"{k}"' for k in field_names)
@@ -540,6 +521,62 @@ def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None
     except Exception as e:
         log.error("Doc eval agent failed agent_call_id=%s: %s", agent_call_id, e)
         return [{"error": str(e)}]
+
+
+def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None) -> list[dict]:
+    """
+    Run the doc extraction QA agent on one extraction call group.
+
+    Single-call entry point (used by dashboard reruns). Opens and closes the pgvector
+    pool within this call. For bulk evaluation, use the batch path in run_doc_eval.py
+    which calls asyncio.run() once for the entire batch to avoid repeated event-loop
+    creation/destruction causing native heap corruption (exit 139).
+    """
+    if not rows:
+        return []
+    prepared = _prepare_eval_args(rows, alert_row)
+
+    async def _single():
+        from bubble.pgvector.client import init_pg_pool, close_pg_pool
+        if prepared["namespaces"] is not None:
+            await init_pg_pool()
+        try:
+            return await _run_group_async(rows, prepared)
+        finally:
+            if prepared["namespaces"] is not None:
+                await close_pg_pool()
+                from bubble.pgvector import reranker as _reranker_mod
+                if _reranker_mod._rerank_client is not None:
+                    try:
+                        await _reranker_mod._rerank_client.close()
+                    except Exception:
+                        pass
+                    _reranker_mod._rerank_client = None
+                try:
+                    from agents.models import openai_provider as _op_mod
+                    if _op_mod._http_client is not None:
+                        try:
+                            await _op_mod._http_client.aclose()
+                        except Exception:
+                            pass
+                        _op_mod._http_client = None
+                except Exception:
+                    pass
+
+    try:
+        return asyncio.run(_single())
+    except Exception as e:
+        agent_call_id = rows[0].get("agent_call_id", "unknown")
+        log.error("Doc eval agent failed agent_call_id=%s: %s", agent_call_id, e)
+        return [{"error": str(e)}]
+
+
+async def evaluate_doc_extraction_call_async(rows: list[dict], alert_row: dict | None = None) -> list[dict]:
+    """Async variant — caller must manage pgvector pool lifetime (for batch eval)."""
+    if not rows:
+        return []
+    prepared = _prepare_eval_args(rows, alert_row)
+    return await _run_group_async(rows, prepared)
 
 
 _PLACEHOLDER_REASONING = "No QA evaluation was provided for this row."
