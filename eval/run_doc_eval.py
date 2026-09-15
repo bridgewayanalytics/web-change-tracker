@@ -288,6 +288,35 @@ def run(
             and os.environ.get("DATABASE_IP", "").strip()
         )
 
+        async def _recycle_connections() -> None:
+            """Close and reset all native connection objects between groups.
+
+            Reusing asyncpg connections and httpx connection pools across agent
+            calls accumulates C-level state that causes heap corruption (realloc:
+            invalid old size / exit 139). Recycling between groups — while staying
+            in the same event loop — avoids this without the overhead of
+            recreating the entire event loop.
+            """
+            if pgvector_enabled:
+                await close_pg_pool()
+                await init_pg_pool()
+            if _reranker_mod._rerank_client is not None:
+                try:
+                    await _reranker_mod._rerank_client.close()
+                except Exception:
+                    pass
+                _reranker_mod._rerank_client = None
+            try:
+                from agents.models import openai_provider as _op_mod
+                if _op_mod._http_client is not None:
+                    try:
+                        await _op_mod._http_client.aclose()
+                    except Exception:
+                        pass
+                    _op_mod._http_client = None
+            except Exception:
+                pass
+
         if pgvector_enabled:
             await init_pg_pool()
 
@@ -318,7 +347,14 @@ def run(
                     alert_row is not None,
                 )
 
-                score_results = await evaluate_doc_extraction_call_async(rows=group, alert_row=alert_row)
+                try:
+                    score_results = await evaluate_doc_extraction_call_async(rows=group, alert_row=alert_row)
+                except Exception as e:
+                    log.error("[%d/%d] Group failed, continuing: %s", i, len(groups), e)
+                    score_results = [{"error": str(e)}] * len(group)
+                finally:
+                    # Recycle native connections after every group call.
+                    await _recycle_connections()
 
                 for row, score_result in zip(group, score_results):
                     eval_row_key = score_result.get("eval_row_key") or make_doc_eval_row_key(row)
@@ -333,22 +369,22 @@ def run(
         finally:
             if pgvector_enabled:
                 await close_pg_pool()
-                if _reranker_mod._rerank_client is not None:
-                    try:
-                        await _reranker_mod._rerank_client.close()
-                    except Exception:
-                        pass
-                    _reranker_mod._rerank_client = None
+            if _reranker_mod._rerank_client is not None:
                 try:
-                    from agents.models import openai_provider as _op_mod
-                    if _op_mod._http_client is not None:
-                        try:
-                            await _op_mod._http_client.aclose()
-                        except Exception:
-                            pass
-                        _op_mod._http_client = None
+                    await _reranker_mod._rerank_client.close()
                 except Exception:
                     pass
+                _reranker_mod._rerank_client = None
+            try:
+                from agents.models import openai_provider as _op_mod
+                if _op_mod._http_client is not None:
+                    try:
+                        await _op_mod._http_client.aclose()
+                    except Exception:
+                        pass
+                    _op_mod._http_client = None
+            except Exception:
+                pass
 
         return eval_rows_async
 
