@@ -47,8 +47,10 @@ def _load_existing(client, bucket: str) -> dict[str, dict]:
     """Return existing eval results as {eval_row_key: row}."""
     try:
         body = client.get_object(Bucket=bucket, Key=_RESULTS_KEY)["Body"].read().decode("utf-8")
-    except Exception:
+    except client.exceptions.NoSuchKey:
         return {}
+    except Exception:
+        raise  # don't swallow S3 errors — caller must not write if we can't read
     existing: dict[str, dict] = {}
     for line in body.split("\n"):
         line = line.strip()

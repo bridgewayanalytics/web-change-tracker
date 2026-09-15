@@ -38,8 +38,10 @@ def _row_key(row: dict) -> str:
 def _load_existing(client, bucket: str) -> dict[str, dict]:
     try:
         body = client.get_object(Bucket=bucket, Key=_RESULTS_KEY)["Body"].read().decode("utf-8")
-    except Exception:
+    except client.exceptions.NoSuchKey:
         return {}
+    except Exception:
+        raise  # don't swallow S3 errors — caller must not write if we can't read
     existing: dict[str, dict] = {}
     for line in body.split("\n"):
         line = line.strip()
@@ -109,9 +111,9 @@ def _stamp_eval_row_keys(client, bucket: str, eval_rows: list[dict]) -> None:
                 if target_erk and stored_erk != target_erk:
                     row["eval_row_key"] = target_erk
                     updated_count += 1
+                new_lines.append(json.dumps(row, default=str))
             except (json.JSONDecodeError, Exception):
-                pass
-            new_lines.append(json.dumps(row, default=str))
+                new_lines.append(line)  # preserve original line verbatim on any error
 
         if updated_count:
             client.put_object(
