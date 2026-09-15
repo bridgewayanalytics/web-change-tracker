@@ -85,6 +85,13 @@ def _pgvector_enabled() -> bool:
     )
 
 
+_NAIC_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Referer": "https://content.naic.org/",
+    "Accept": "*/*",
+}
+
+
 def _fetch_single_pdf(url: str) -> str | None:
     """Fetch and extract text from a single PDF URL. Returns None on any failure."""
     url = url.strip()
@@ -93,11 +100,7 @@ def _fetch_single_pdf(url: str) -> str | None:
         return None
     try:
         import requests
-        resp = requests.get(url, timeout=30, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Referer": "https://content.naic.org/",
-                "Accept": "application/pdf,*/*",
-            })
+        resp = requests.get(url, timeout=30, headers=_NAIC_HEADERS)
         resp.raise_for_status()
         from scrape.pdf_meeting_meta import _extract_plain_text
         text = _extract_plain_text(resp.content)
@@ -110,18 +113,71 @@ def _fetch_single_pdf(url: str) -> str | None:
     return None
 
 
-def _fetch_pdf_text(url: str) -> str | None:
-    """Fetch PDF text — mirrors document_agent._fetch_pdf_text exactly.
-    Tries each semicolon-separated URL in order; returns first successful result.
-    Does NOT concatenate — one QA call covers exactly one document."""
+def _fetch_docx_text(url: str) -> str | None:
+    """Fetch and extract text from a .docx URL. Returns None on any failure."""
+    url = url.strip()
+    if not url or not any(url.lower().split("?")[0].endswith(ext) for ext in (".docx", ".doc")):
+        return None
+    try:
+        import requests
+        from io import BytesIO
+        resp = requests.get(url, timeout=30, headers=_NAIC_HEADERS)
+        resp.raise_for_status()
+        from docx import Document
+        doc = Document(BytesIO(resp.content))
+        text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+        if text.strip():
+            log.info("doc_eval_agent: fetched docx text (%d chars) from %s", len(text), url[:80])
+            return text.strip()
+        log.warning("doc_eval_agent: docx fetched but extracted no text from %s", url[:80])
+    except Exception as e:
+        log.warning("doc_eval_agent: could not fetch docx from %s: %s", url[:80], e)
+    return None
+
+
+def _fetch_transcript_from_s3(transcript_s3_key: str) -> str | None:
+    """Download transcript text from the artifacts S3 bucket."""
+    if not transcript_s3_key:
+        return None
+    try:
+        import boto3
+        bucket = (
+            os.environ.get("CHANGELOG_BUCKET", "").strip()
+            or os.environ.get("BUBBLE_ARTIFACT_BUCKET", "").strip()
+            or "web-change-tracker-prod-artifacts-815039343351"
+        )
+        s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+        resp = s3.get_object(Bucket=bucket, Key=transcript_s3_key)
+        text = resp["Body"].read().decode("utf-8")
+        log.info("doc_eval_agent: fetched transcript (%d chars) from %s", len(text), transcript_s3_key)
+        return text.strip() or None
+    except Exception as e:
+        log.warning("doc_eval_agent: could not fetch transcript from S3 %s: %s", transcript_s3_key, e)
+    return None
+
+
+def _fetch_document_text(url: str) -> str | None:
+    """Fetch document text for any supported type: PDF or docx.
+    Tries each semicolon-separated URL in order; returns first successful result."""
     if not url:
         return None
     candidates = [u.strip() for u in url.split(";") if u.strip()]
     for candidate in candidates:
-        text = _fetch_single_pdf(candidate)
+        lower = candidate.lower().split("?")[0]
+        if lower.endswith(".pdf"):
+            text = _fetch_single_pdf(candidate)
+        elif any(lower.endswith(ext) for ext in (".docx", ".doc")):
+            text = _fetch_docx_text(candidate)
+        else:
+            continue
         if text:
             return text
     return None
+
+
+def _fetch_pdf_text(url: str) -> str | None:
+    """Fetch PDF text — kept for call-site compatibility. Use _fetch_document_text for new code."""
+    return _fetch_document_text(url)
 
 
 _ALERT_INCLUDE_KEYS = {"organization", "alert_type", "event_title", "event_start_date_time", "source_url"}
@@ -201,11 +257,15 @@ def _build_user_message(
 ) -> str:
     """
     Build the QA agent prompt for one or more agenda item rows from the same extraction call.
-    PDF content is accessed exclusively via pgvector search — never injected directly into the prompt.
+    Document content is accessed exclusively via pgvector search — never injected directly into the prompt.
     """
     first = rows[0]
     document_name = str(first.get("library_item_title") or first.get("document_title") or "N/A")
-    document_url = str(first.get("library_item_url") or "N/A")
+    is_transcript = first.get("extraction_source") == "transcript"
+    if is_transcript:
+        document_url = f"transcript:{first.get('transcript_s3_key', 'N/A')}"
+    else:
+        document_url = str(first.get("library_item_url") or "N/A")
 
     parts = [
         "## Source Document",
@@ -349,25 +409,38 @@ def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None
     model = _get_model()
     reasoning_effort = _get_reasoning_effort()
 
-    # Fetch PDF text for vectorization only — never injected into the prompt.
+    # Fetch document text for vectorization only — never injected into the prompt.
     # The agent accesses document content exclusively via pgvector search tools.
     first = rows[0]
-    document_url = str(first.get("library_item_url") or "")
-    pdf_text = _fetch_pdf_text(document_url) if document_url and document_url != "N/A" else None
-    if not pdf_text and document_url and document_url != "N/A":
-        # NAIC CDN returns transient 403s under rapid requests — retry once after a delay.
-        # Only retry if arm_if_ready() also finds no cached namespace, to avoid unnecessary waits.
-        from bubble.doc_extraction_ingest import arm_if_ready
-        if not arm_if_ready(document_url):
-            import time as _time
-            log.info("doc_eval_agent: PDF fetch failed and no cached namespace — retrying in 10s for %s", document_url[:80])
-            _time.sleep(10)
-            pdf_text = _fetch_pdf_text(document_url)
+    is_transcript = first.get("extraction_source") == "transcript"
+
+    if is_transcript:
+        # Transcripts: keyed by transcript_s3_key in pgvector (same key used during original extraction)
+        document_url = str(first.get("transcript_s3_key") or "")
+        doc_text = _fetch_transcript_from_s3(document_url) if document_url else None
+        if not doc_text and document_url:
+            from bubble.doc_extraction_ingest import arm_if_ready
+            if not arm_if_ready(document_url):
+                log.info("doc_eval_agent: transcript S3 fetch failed and not in pgvector for %s", document_url)
+    else:
+        # PDFs and docx files
+        document_url = str(first.get("library_item_url") or "")
+        doc_text = _fetch_document_text(document_url) if document_url and document_url != "N/A" else None
+        if not doc_text and document_url and document_url != "N/A":
+            # NAIC CDN returns transient 403s under rapid requests — retry once after a delay.
+            # Only retry if arm_if_ready() also finds no cached namespace, to avoid unnecessary waits.
+            from bubble.doc_extraction_ingest import arm_if_ready
+            if not arm_if_ready(document_url):
+                import time as _time
+                log.info("doc_eval_agent: document fetch failed and no cached namespace — retrying in 10s for %s", document_url[:80])
+                _time.sleep(10)
+                doc_text = _fetch_document_text(document_url)
+
     log.info(
-        "doc_eval_agent: PDF for vectorization agent_call_id=%s url=%s — %s",
+        "doc_eval_agent: document for vectorization agent_call_id=%s url=%s — %s",
         first.get("agent_call_id", "unknown"),
-        document_url[:80],
-        f"{len(pdf_text)} chars fetched" if pdf_text else "FAILED — will use cached namespace if available",
+        document_url[:80] if document_url else "(transcript S3)",
+        f"{len(doc_text)} chars fetched" if doc_text else "FAILED — will use cached namespace if available",
     )
 
     # Fetch before/after HTML from S3 using the first row's run metadata
@@ -411,7 +484,8 @@ def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None
         namespaces = list(_get_pgvector_namespaces())
         if document_url and document_url.strip() and document_url != "N/A":
             from bubble.doc_extraction_ingest import ingest_and_arm
-            doc_namespace = ingest_and_arm(document_url, pdf_text, str(first.get("library_item_title") or ""))
+            doc_label = str(first.get("library_item_title") or document_url.split("/")[-1])
+            doc_namespace = ingest_and_arm(document_url, doc_text, doc_label)
             if doc_namespace:
                 namespaces.append(doc_namespace)
                 log.info("doc_eval_agent: armed document namespace %s", doc_namespace)

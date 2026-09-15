@@ -273,14 +273,19 @@ def run(
         call_id = group[0].get("agent_call_id", "unknown")
         lib_url = group[0].get("library_item_url", "") or ""
 
-        # Skip non-PDF documents — the QA agent cannot evaluate without PDF text,
-        # and storing scores based on title/URL alone produces misleading results.
-        if lib_url and not lib_url.lower().split("?")[0].endswith(".pdf"):
-            log.info(
-                "[%d/%d] Skipping doc_extraction_id=%s — non-PDF URL (%s)",
-                i, len(groups), doc_eid[-8:], lib_url.split("/")[-1],
+        # Skip URLs we can't fetch text from (web pages, unsupported types).
+        # PDF and docx are supported; empty lib_url = transcript row (uses transcript_s3_key).
+        if lib_url:
+            url_lower = lib_url.lower().split("?")[0].split(";")[0]
+            is_supported = url_lower.endswith(".pdf") or any(
+                url_lower.endswith(ext) for ext in (".docx", ".doc")
             )
-            continue
+            if not is_supported:
+                log.info(
+                    "[%d/%d] Skipping doc_extraction_id=%s — unsupported URL type (%s)",
+                    i, len(groups), doc_eid[-8:], lib_url.split("/")[-1],
+                )
+                continue
 
         alert_row = alert_lookup.get((call_id, lib_url)) or alert_lookup.get((call_id, ""))
         log.info(
