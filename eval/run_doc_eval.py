@@ -388,6 +388,16 @@ def run(
 
         return eval_rows_async
 
+    # Disable agents SDK tracing to prevent the BatchTraceProcessor background
+    # thread's sync httpx.Client from accumulating state across calls, which
+    # causes glibc heap corruption (double free / realloc invalid old size) and
+    # SIGSEGV (exit 139) on long bulk eval runs.
+    try:
+        from agents import set_tracing_disabled
+        set_tracing_disabled(True)
+    except Exception:
+        pass
+
     eval_rows = asyncio.run(_run_all_groups_async())
 
     store_doc_eval_results(eval_rows, eval_run_id)
