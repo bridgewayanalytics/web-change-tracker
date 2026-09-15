@@ -41,6 +41,9 @@ htmlcov/
 infra/terraform/.terraform/
 infra/terraform/terraform.tfstate*
 infra/terraform/tfplan
+dashboard/infra/terraform/.terraform/
+dashboard/infra/terraform/terraform.tfstate*
+dashboard/infra/terraform/tfplan
 
 # Misc
 *.log
