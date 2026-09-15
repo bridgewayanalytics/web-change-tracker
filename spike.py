@@ -1720,7 +1720,8 @@ def _run_pipeline_agents(change_events: list[dict], run_id: str = "") -> None:
                     lib_name = raw_title.get("library_item_title") or raw_title.get("title") or ""
                 else:
                     lib_name = str(raw_title)
-                lib_url = agent_output.get("library_item_url") or ""
+                _raw_lib_url = str(agent_output.get("library_item_url") or "").strip()
+                lib_url = "" if _raw_lib_url.upper() in ("N/A", "N/A.", "-", "NONE", "") else _raw_lib_url
                 lib_file = agent_output.get("library_items_file_name") or ""
                 if lib_name and lib_name.strip().upper() not in ("N/A", "N/A.", "-", ""):
                     # Split semicolon-separated URLs/titles/filenames — one extraction call per document
@@ -1748,6 +1749,9 @@ def _run_pipeline_agents(change_events: list[dict], run_id: str = "") -> None:
                     name = str(raw)
                 url = item.get("url") or ""
                 if not name or name.strip().upper() in ("N/A", "N/A.", "-", ""):
+                    continue
+                if not url:
+                    log.warning("document_agent: skipping '%s' — no document URL (agent output N/A)", name[:80])
                     continue
                 doc_result_list = _extract_doc(
                     name, url,
@@ -2174,7 +2178,7 @@ def _run_simulate_change(
     log.info("Report written to %s", REPORT_FILE)
 
 
-def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alerts", rerun_library_item_url: str = "") -> None:
+def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alerts", rerun_library_item_url: str = "", rerun_transcript_s3_key: str = "") -> None:
     """
     Re-evaluate a single stored alert using the current DynamoDB agent config.
 
@@ -2339,7 +2343,81 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
 
     # Run document agent on library items if applicable (only in "docs" or "both" mode)
     doc_extractions: list[dict] = []
-    if rerun_mode in ("docs", "both"):
+    if rerun_transcript_s3_key and rerun_mode in ("docs", "both"):
+        # Transcript rerun path — re-run doc agent on the stored transcript text.
+        # No before/after HTML needed; content comes directly from the S3 transcript file.
+        from bubble.document_agent import extract_document_data
+
+        # Find original extraction rows for this transcript to get document name + agent_call_id
+        orig_tx_rows: list[dict] = []
+        try:
+            _doc_jsonl = s3.get_object(Bucket=bucket, Key="alerts/document_extractions_table.jsonl")["Body"].read().decode("utf-8")
+            for _line in _doc_jsonl.splitlines():
+                _line = _line.strip()
+                if not _line:
+                    continue
+                try:
+                    _row = json.loads(_line)
+                    if (
+                        _row.get("run_id") == rerun_run_id
+                        and _row.get("target_id") == rerun_target_id
+                        and _row.get("transcript_s3_key") == rerun_transcript_s3_key
+                    ):
+                        orig_tx_rows.append(_row)
+                except Exception:
+                    pass
+        except Exception as _e:
+            log.error("rerun transcript: could not load original extraction rows: %s", _e)
+            raise SystemExit(1)
+
+        if not orig_tx_rows:
+            log.error("rerun transcript: no original rows found for transcript=%s run=%s target=%s",
+                      rerun_transcript_s3_key, rerun_run_id, rerun_target_id)
+            raise SystemExit(1)
+
+        doc_name = str(orig_tx_rows[0].get("library_item_title") or orig_tx_rows[0].get("document_title") or "Meeting Transcript")
+
+        # Find the alert context from alerts_table.jsonl
+        alert_context: dict | None = None
+        try:
+            _alerts_jsonl = s3.get_object(Bucket=bucket, Key="alerts/alerts_table.jsonl")["Body"].read().decode("utf-8")
+            for _line in _alerts_jsonl.splitlines():
+                _line = _line.strip()
+                if not _line:
+                    continue
+                try:
+                    _row = json.loads(_line)
+                    if _row.get("transcript_s3_key") == rerun_transcript_s3_key:
+                        alert_context = _row
+                        break
+                except Exception:
+                    pass
+        except Exception as _e:
+            log.warning("rerun transcript: could not load alert context: %s", _e)
+
+        # Download transcript text
+        try:
+            transcript_text = s3.get_object(Bucket=bucket, Key=rerun_transcript_s3_key)["Body"].read().decode("utf-8")
+        except Exception as _e:
+            log.error("rerun transcript: failed to download %s: %s", rerun_transcript_s3_key, _e)
+            raise SystemExit(1)
+
+        doc_result_list = extract_document_data(
+            doc_name, document_url=rerun_transcript_s3_key,
+            pdf_text=transcript_text, alert_context=alert_context,
+        )
+        item = {
+            "preliminary_title": doc_name,
+            "url": "",
+            "file_name": rerun_transcript_s3_key.split("/")[-1],
+        }
+        for doc_result in doc_result_list:
+            doc_result["extraction_source"] = "transcript"
+            doc_result["transcript_s3_key"] = rerun_transcript_s3_key
+            doc_extractions.append({"item": item, "extraction": doc_result})
+        log.info("rerun transcript: extracted %d row(s) for: %s", len(doc_result_list), doc_name[:60])
+
+    elif rerun_mode in ("docs", "both"):
         from bubble.document_agent import should_run_for_alert, extract_document_data
 
         # Load original doc extraction rows now so we can preserve data_extraction_datetime.
@@ -2374,7 +2452,8 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
                     lib_name = raw_title.get("library_item_title") or raw_title.get("title") or ""
                 else:
                     lib_name = str(raw_title)
-                lib_url = agent_output.get("library_item_url") or ""
+                _raw_lib_url = str(agent_output.get("library_item_url") or "").strip()
+                lib_url = "" if _raw_lib_url.upper() in ("N/A", "N/A.", "-", "NONE", "") else _raw_lib_url
                 lib_file = agent_output.get("library_items_file_name") or ""
                 # Only add if there's a meaningful title (not N/A)
                 if lib_name and lib_name.strip().upper() not in ("N/A", "N/A.", "-", ""):
@@ -2389,6 +2468,9 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
                     name = str(raw)
                 url = item.get("url") or ""
                 if not name or name.strip().upper() in ("N/A", "N/A.", "-", ""):
+                    continue
+                if not url:
+                    log.warning("rerun document_agent: skipping '%s' — no document URL (agent output N/A)", name[:80])
                     continue
                 # Per-document scoping: skip items that don't match the target URL
                 if rerun_library_item_url and url != rerun_library_item_url:
@@ -2489,8 +2571,9 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
             try:
                 row = json.loads(line)
                 if row.get("run_id") == rerun_run_id and row.get("target_id") == rerun_target_id:
-                    # Per-document scoping: only include the target document
-                    if rerun_library_item_url and row.get("library_item_url") != rerun_library_item_url:
+                    if rerun_transcript_s3_key and row.get("transcript_s3_key") != rerun_transcript_s3_key:
+                        continue
+                    elif rerun_library_item_url and row.get("library_item_url") != rerun_library_item_url:
                         continue
                     doc_original_rows.append(row)
             except Exception:
@@ -2993,7 +3076,8 @@ def main() -> None:
     if rerun_run_id and rerun_target_id:
         rerun_mode = os.environ.get("RERUN_MODE", "alerts").strip()
         rerun_library_item_url = os.environ.get("RERUN_LIBRARY_ITEM_URL", "").strip()
-        _run_rerun(rerun_run_id, rerun_target_id, rerun_mode=rerun_mode, rerun_library_item_url=rerun_library_item_url)
+        rerun_transcript_s3_key = os.environ.get("RERUN_TRANSCRIPT_S3_KEY", "").strip()
+        _run_rerun(rerun_run_id, rerun_target_id, rerun_mode=rerun_mode, rerun_library_item_url=rerun_library_item_url, rerun_transcript_s3_key=rerun_transcript_s3_key)
         return
 
     # Manual chunk mode: chunk a manually uploaded transcript and mark it pending for ingest.

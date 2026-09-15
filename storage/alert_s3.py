@@ -194,6 +194,14 @@ def _build_table_rows(
     return rows
 
 
+_NA_URL_STRINGS = {"N/A", "N/A.", "-", "NONE"}
+
+
+def _normalize_item_url(raw: str | None) -> str:
+    u = (raw or "").strip()
+    return "" if u.upper() in _NA_URL_STRINGS else u
+
+
 def _build_doc_extraction_rows(
     doc_extractions: list[dict],
     run_id: str,
@@ -223,7 +231,7 @@ def _build_doc_extraction_rows(
             "source_url": source_url,
             "agent_call_id": agent_call_id,
             "library_item_title": item.get("preliminary_title") or item.get("title") or "",
-            "library_item_url": item.get("url") or "",
+            "library_item_url": _normalize_item_url(item.get("url")),
             "library_item_file_name": item.get("file_name") or "",
         }
         if config_hash:
