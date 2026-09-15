@@ -166,19 +166,27 @@ def _load_doc_rows(agent_call_ids: list[str] | None, limit: int = _DEFAULT_LIMIT
     def _row_eval_id(r: dict) -> str:
         return r.get("doc_extraction_id") or r.get("agent_call_id") or ""
 
+    def _is_eligible(r: dict) -> bool:
+        src = r.get("extraction_source")
+        if src == "transcript":
+            # Transcripts: need a transcript_s3_key to fetch content from S3
+            return bool(r.get("transcript_s3_key", "").strip())
+        # All others: need a real library_item_url
+        return r.get("library_item_url", "").strip().lower() not in ("", "n/a")
+
     eligible = [
         r for r in all_rows
-        if r.get("extraction_source") != "transcript"
-        and r.get("library_item_url", "").strip().lower() not in ("", "n/a")
+        if _is_eligible(r)
         and _row_eval_id(r)
         and _row_eval_id(r) not in already_evald
         and (upper_bound is None or r.get("run_timestamp", "") <= upper_bound)
     ]
 
-    # Deduplicate by (library_item_url, eval_row_key) keeping most recent row per key
+    # Deduplicate by (library_item_url or transcript_s3_key, eval_row_key) keeping most recent row per key
     dedup_by_key: dict[tuple, dict] = {}
     for row in eligible:
-        rk = (row.get("library_item_url", ""), make_doc_eval_row_key(row))
+        url_key = row.get("library_item_url") or row.get("transcript_s3_key") or ""
+        rk = (url_key, make_doc_eval_row_key(row))
         existing = dedup_by_key.get(rk)
         if existing is None or (row.get("run_timestamp", "") > existing.get("run_timestamp", "")):
             dedup_by_key[rk] = row
