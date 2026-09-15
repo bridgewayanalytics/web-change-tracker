@@ -428,6 +428,13 @@ async def _run_with_pgvector(
         return result.final_output or ""
     finally:
         await close_pg_pool()
+        from bubble.pgvector import reranker as _reranker_mod
+        if _reranker_mod._rerank_client is not None:
+            try:
+                await _reranker_mod._rerank_client.close()
+            except Exception:
+                pass
+            _reranker_mod._rerank_client = None
 
 
 # ---------------------------------------------------------------------------
