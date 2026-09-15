@@ -16,6 +16,8 @@ import argparse
 import json
 import logging
 import os
+import sys
+import tempfile
 import time
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -240,14 +242,54 @@ def _group_by_call(rows: list[dict]) -> list[list[dict]]:
     return result
 
 
+def _run_group_file(path: str) -> None:
+    """Subprocess entrypoint: evaluate a single pre-serialized group and store results.
+
+    Each group runs in its own fresh Python process to avoid glibc heap corruption
+    (exit 139 / SIGSEGV) caused by C extension state accumulation across sequential
+    asyncio.run() calls within a single long-lived process.
+    """
+    with open(path) as f:
+        data = json.load(f)
+
+    rows = data["rows"]
+    alert_row = data.get("alert_row")
+    eval_run_id = data["eval_run_id"]
+    eval_timestamp = data["eval_timestamp"]
+
+    from eval.doc_eval_agent import evaluate_doc_extraction_call, make_doc_eval_row_key
+    from eval.doc_result_store import store_doc_eval_results
+
+    try:
+        score_results = evaluate_doc_extraction_call(rows, alert_row)
+    except Exception as e:
+        log.error("Group eval failed: %s", e)
+        score_results = [{"error": str(e)}] * len(rows)
+
+    eval_rows = []
+    for row, score_result in zip(rows, score_results):
+        eval_row_key = score_result.get("eval_row_key") or make_doc_eval_row_key(row)
+        eval_rows.append({
+            **row,
+            "eval_run_id": eval_run_id,
+            "eval_timestamp": eval_timestamp,
+            "eval_scores": score_result.get("eval_scores", {}),
+            "overall_summary": score_result.get("overall_summary"),
+            "eval_row_key": eval_row_key,
+        })
+
+    store_doc_eval_results(eval_rows, eval_run_id)
+
+
 def run(
     limit: int = _DEFAULT_LIMIT,
     agent_call_ids: list[str] | None = None,
     library_item_url: str | None = None,
     dry_run: bool = False,
 ) -> list[dict]:
+    import subprocess
+
     from eval.doc_eval_agent import make_doc_eval_row_key
-    from eval.doc_result_store import store_doc_eval_results
 
     eval_run_id = _make_eval_run_id()
     eval_timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -275,134 +317,62 @@ def run(
             }, indent=2))
         return rows
 
-    import asyncio
+    for i, group in enumerate(groups, 1):
+        doc_eid = group[0].get("doc_extraction_id") or group[0].get("agent_call_id", "unknown")
+        call_id = group[0].get("agent_call_id", "unknown")
+        lib_url = group[0].get("library_item_url", "") or ""
 
-    async def _run_all_groups_async() -> list[dict]:
-        from eval.doc_eval_agent import evaluate_doc_extraction_call_async
-        from bubble.pgvector.client import init_pg_pool, close_pg_pool
-        from bubble.pgvector import reranker as _reranker_mod
+        if lib_url:
+            url_lower = lib_url.lower().split("?")[0].split(";")[0]
+            is_supported = url_lower.endswith(".pdf") or any(
+                url_lower.endswith(ext) for ext in (".docx", ".doc")
+            )
+            if not is_supported:
+                log.info(
+                    "[%d/%d] Skipping doc_extraction_id=%s — unsupported URL type (%s)",
+                    i, len(groups), doc_eid[-8:], lib_url.split("/")[-1],
+                )
+                continue
 
-        # Determine if pgvector is enabled (same check as doc_eval_agent._pgvector_enabled())
-        pgvector_enabled = bool(
-            os.environ.get("PGVECTOR_ENABLED", "").strip().lower() in ("1", "true", "yes")
-            and os.environ.get("DATABASE_IP", "").strip()
+        alert_row = alert_lookup.get((call_id, lib_url)) or alert_lookup.get((call_id, ""))
+        log.info(
+            "[%d/%d] Evaluating doc_extraction_id=%s rows=%d document=%s alert_found=%s",
+            i, len(groups), doc_eid[-8:], len(group),
+            group[0].get("document_title") or lib_url,
+            alert_row is not None,
         )
 
-        async def _recycle_connections() -> None:
-            """Close and reset all native connection objects between groups.
+        # Each group runs in a fresh subprocess to prevent C extension heap
+        # corruption (glibc double free / realloc invalid old size / exit 139)
+        # that accumulates across sequential asyncio.run() calls in one process.
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump({
+                "rows": group,
+                "alert_row": alert_row,
+                "eval_run_id": eval_run_id,
+                "eval_timestamp": eval_timestamp,
+            }, f)
+            tmp_path = f.name
 
-            Reusing asyncpg connections and httpx connection pools across agent
-            calls accumulates C-level state that causes heap corruption (realloc:
-            invalid old size / exit 139). Recycling between groups — while staying
-            in the same event loop — avoids this without the overhead of
-            recreating the entire event loop.
-            """
-            if pgvector_enabled:
-                await close_pg_pool()
-                await init_pg_pool()
-            if _reranker_mod._rerank_client is not None:
-                try:
-                    await _reranker_mod._rerank_client.close()
-                except Exception:
-                    pass
-                _reranker_mod._rerank_client = None
-            try:
-                from agents.models import openai_provider as _op_mod
-                if _op_mod._http_client is not None:
-                    try:
-                        await _op_mod._http_client.aclose()
-                    except Exception:
-                        pass
-                    _op_mod._http_client = None
-            except Exception:
-                pass
-
-        if pgvector_enabled:
-            await init_pg_pool()
-
-        eval_rows_async: list[dict] = []
         try:
-            for i, group in enumerate(groups, 1):
-                doc_eid = group[0].get("doc_extraction_id") or group[0].get("agent_call_id", "unknown")
-                call_id = group[0].get("agent_call_id", "unknown")
-                lib_url = group[0].get("library_item_url", "") or ""
-
-                if lib_url:
-                    url_lower = lib_url.lower().split("?")[0].split(";")[0]
-                    is_supported = url_lower.endswith(".pdf") or any(
-                        url_lower.endswith(ext) for ext in (".docx", ".doc")
-                    )
-                    if not is_supported:
-                        log.info(
-                            "[%d/%d] Skipping doc_extraction_id=%s — unsupported URL type (%s)",
-                            i, len(groups), doc_eid[-8:], lib_url.split("/")[-1],
-                        )
-                        continue
-
-                alert_row = alert_lookup.get((call_id, lib_url)) or alert_lookup.get((call_id, ""))
-                log.info(
-                    "[%d/%d] Evaluating doc_extraction_id=%s rows=%d document=%s alert_found=%s",
-                    i, len(groups), doc_eid[-8:], len(group),
-                    group[0].get("document_title") or lib_url,
-                    alert_row is not None,
-                )
-
-                try:
-                    score_results = await evaluate_doc_extraction_call_async(rows=group, alert_row=alert_row)
-                except Exception as e:
-                    log.error("[%d/%d] Group failed, continuing: %s", i, len(groups), e)
-                    score_results = [{"error": str(e)}] * len(group)
-                finally:
-                    # Recycle native connections after every group call.
-                    await _recycle_connections()
-
-                for row, score_result in zip(group, score_results):
-                    eval_row_key = score_result.get("eval_row_key") or make_doc_eval_row_key(row)
-                    eval_rows_async.append({
-                        **row,
-                        "eval_run_id": eval_run_id,
-                        "eval_timestamp": eval_timestamp,
-                        "eval_scores": score_result.get("eval_scores", {}),
-                        "overall_summary": score_result.get("overall_summary"),
-                        "eval_row_key": eval_row_key,
-                    })
+            proc = subprocess.run(
+                [sys.executable, "-m", "eval.run_doc_eval", "--group-file", tmp_path],
+                timeout=600,
+            )
+            if proc.returncode != 0:
+                log.error("[%d/%d] Group failed (subprocess exit %d)", i, len(groups), proc.returncode)
+            else:
+                log.info("[%d/%d] Group complete", i, len(groups))
+        except subprocess.TimeoutExpired:
+            log.error("[%d/%d] Group timed out after 600s", i, len(groups))
         finally:
-            if pgvector_enabled:
-                await close_pg_pool()
-            if _reranker_mod._rerank_client is not None:
-                try:
-                    await _reranker_mod._rerank_client.close()
-                except Exception:
-                    pass
-                _reranker_mod._rerank_client = None
             try:
-                from agents.models import openai_provider as _op_mod
-                if _op_mod._http_client is not None:
-                    try:
-                        await _op_mod._http_client.aclose()
-                    except Exception:
-                        pass
-                    _op_mod._http_client = None
+                os.unlink(tmp_path)
             except Exception:
                 pass
 
-        return eval_rows_async
-
-    # Disable agents SDK tracing to prevent the BatchTraceProcessor background
-    # thread's sync httpx.Client from accumulating state across calls, which
-    # causes glibc heap corruption (double free / realloc invalid old size) and
-    # SIGSEGV (exit 139) on long bulk eval runs.
-    try:
-        from agents import set_tracing_disabled
-        set_tracing_disabled(True)
-    except Exception:
-        pass
-
-    eval_rows = asyncio.run(_run_all_groups_async())
-
-    store_doc_eval_results(eval_rows, eval_run_id)
-    log.info("Doc eval run %s complete — %d rows evaluated", eval_run_id, len(eval_rows))
-    return eval_rows
+    log.info("Doc eval run %s complete", eval_run_id)
+    return []
 
 
 def _load_secrets() -> None:
@@ -423,7 +393,15 @@ def main():
     parser.add_argument("--agent-call-ids", type=str, default=None)
     parser.add_argument("--library-item-url", type=str, default=None)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--group-file", type=str, default=None,
+                        help="Internal: path to a JSON file containing a pre-serialized group. "
+                             "Run by subprocess; do not use directly.")
     args = parser.parse_args()
+
+    if args.group_file:
+        # Subprocess path: evaluate exactly one pre-serialized group
+        _run_group_file(args.group_file)
+        return
 
     call_ids = None
     if args.agent_call_ids:
