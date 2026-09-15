@@ -171,6 +171,13 @@ _MONTH_NAMES = {
     "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
 }
 
+# Module-level embedding client — reused across calls so the underlying
+# httpx.AsyncClient is never garbage-collected mid-operation.  Creating a new
+# AsyncOpenAI on every _embed() call and abandoning it leaves the httpx
+# session for Python GC, whose __del__ teardown races with asyncpg's
+# concurrent SSL operations and causes heap corruption (exit 139 / SIGSEGV).
+_embed_client: "AsyncOpenAI | None" = None  # type: ignore[name-defined]
+
 
 def _parse_date_from_query(query: str) -> Optional[str]:
     m = _DATE_IN_QUERY_PATTERN.search(query)
@@ -225,12 +232,14 @@ def _rerank_by_date(results: list[dict[str, Any]], target_date: str) -> list[dic
 
 
 async def _embed(text: str) -> Optional[list[float]]:
+    global _embed_client
     from openai import AsyncOpenAI
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return None
-    client = AsyncOpenAI(api_key=api_key)
-    resp = await client.embeddings.create(model=_EMBEDDING_MODEL, input=[text])
+    if _embed_client is None:
+        _embed_client = AsyncOpenAI(api_key=api_key)
+    resp = await _embed_client.embeddings.create(model=_EMBEDDING_MODEL, input=[text])
     return resp.data[0].embedding
 
 
