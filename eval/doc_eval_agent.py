@@ -220,7 +220,15 @@ def make_doc_eval_row_key(row: dict) -> str:
     call_id = row.get("doc_extraction_id") or row.get("agent_call_id", "unknown")
 
     lib_url = (row.get("library_item_url") or "").strip()
-    url_slug = lib_url.rstrip("/").split("/")[-1].split("?")[0] if lib_url and lib_url.upper() not in _NA_VALUES else ""
+    # When library_item_url is compound, use the per-row specific URL for a stable slug
+    # so rows about different documents within the same extraction call get distinct keys.
+    specific_url = (row.get("document_url_web_tracking_agent") or "").strip()
+    url_for_slug = (
+        specific_url
+        if (";" in lib_url and specific_url and specific_url.upper() not in _NA_VALUES)
+        else lib_url
+    )
+    url_slug = url_for_slug.rstrip("/").split("/")[-1].split("?")[0] if url_for_slug and url_for_slug.upper() not in _NA_VALUES else ""
 
     def _k(*parts: str) -> str:
         segments = [call_id] + [p for p in parts if p]
@@ -390,26 +398,35 @@ def _prepare_eval_args(rows: list[dict], alert_row: dict | None = None) -> dict:
 
     if is_transcript:
         document_url = str(first.get("transcript_s3_key") or "")
-        doc_text = _fetch_transcript_from_s3(document_url) if document_url else None
-        if not doc_text and document_url:
+        vectorization_url = document_url
+        doc_text = _fetch_transcript_from_s3(vectorization_url) if vectorization_url else None
+        if not doc_text and vectorization_url:
             from bubble.doc_extraction_ingest import arm_if_ready
-            if not arm_if_ready(document_url):
-                log.info("doc_eval_agent: transcript S3 fetch failed and not in pgvector for %s", document_url)
+            if not arm_if_ready(vectorization_url):
+                log.info("doc_eval_agent: transcript S3 fetch failed and not in pgvector for %s", vectorization_url)
     else:
         document_url = str(first.get("library_item_url") or "")
-        doc_text = _fetch_document_text(document_url) if document_url and document_url != "N/A" else None
-        if not doc_text and document_url and document_url != "N/A":
+        # When library_item_url is compound, use the per-row specific URL for vectorization
+        # to avoid scoring this row against a different document's content.
+        _specific = str(first.get("document_url_web_tracking_agent") or "").strip()
+        vectorization_url = (
+            _specific
+            if (";" in document_url and _specific and _specific.upper() not in {"N/A", ""})
+            else document_url
+        )
+        doc_text = _fetch_document_text(vectorization_url) if vectorization_url and vectorization_url != "N/A" else None
+        if not doc_text and vectorization_url and vectorization_url != "N/A":
             from bubble.doc_extraction_ingest import arm_if_ready
-            if not arm_if_ready(document_url):
+            if not arm_if_ready(vectorization_url):
                 import time as _time
-                log.info("doc_eval_agent: document fetch failed and no cached namespace — retrying in 10s for %s", document_url[:80])
+                log.info("doc_eval_agent: document fetch failed and no cached namespace — retrying in 10s for %s", vectorization_url[:80])
                 _time.sleep(10)
-                doc_text = _fetch_document_text(document_url)
+                doc_text = _fetch_document_text(vectorization_url)
 
     log.info(
         "doc_eval_agent: document for vectorization agent_call_id=%s url=%s — %s",
         first.get("agent_call_id", "unknown"),
-        document_url[:80] if document_url else "(transcript S3)",
+        vectorization_url[:80] if vectorization_url else "(no URL)",
         f"{len(doc_text)} chars fetched" if doc_text else "FAILED — will use cached namespace if available",
     )
 
@@ -448,10 +465,10 @@ def _prepare_eval_args(rows: list[dict], alert_row: dict | None = None) -> dict:
     namespaces: list[str] | None = None
     if _pgvector_enabled():
         namespaces = list(_get_pgvector_namespaces())
-        if document_url and document_url.strip() and document_url != "N/A":
+        if vectorization_url and vectorization_url.strip() and vectorization_url != "N/A":
             from bubble.doc_extraction_ingest import ingest_and_arm
-            doc_label = str(first.get("library_item_title") or document_url.split("/")[-1])
-            doc_namespace = ingest_and_arm(document_url, doc_text, doc_label)
+            doc_label = str(first.get("library_item_title") or vectorization_url.split("/")[-1])
+            doc_namespace = ingest_and_arm(vectorization_url, doc_text, doc_label)
             if doc_namespace:
                 namespaces.append(doc_namespace)
                 log.info("doc_eval_agent: armed document namespace %s", doc_namespace)

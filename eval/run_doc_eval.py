@@ -204,8 +204,9 @@ _MAX_ROWS_PER_EVAL_CALL = 5
 def _group_by_call(rows: list[dict]) -> list[list[dict]]:
     """Group rows so each unique document extraction gets its own QA call.
 
-    New rows (with doc_extraction_id) group by that ID — one unique ID per
-    extract_document_data() call, shared across agenda items of the same doc.
+    New rows (with doc_extraction_id) group by (doc_extraction_id, document_url_web_tracking_agent)
+    so rows about different documents within the same extraction call each get a separate eval
+    (prevents the compound library_item_url cross-document vectorization bug).
     Old rows (no doc_extraction_id) fall back to (agent_call_id, library_item_url).
     Groups larger than _MAX_ROWS_PER_EVAL_CALL are split into sequential batches.
     """
@@ -213,7 +214,10 @@ def _group_by_call(rows: list[dict]) -> list[list[dict]]:
     for row in rows:
         eid = row.get("doc_extraction_id") or ""
         if eid:
-            key = (eid, "")
+            # Sub-split by specific document URL when present so rows about different
+            # documents within the same doc_extraction_id each get their own eval call.
+            specific_url = row.get("document_url_web_tracking_agent") or ""
+            key = (eid, specific_url)
         else:
             cid = row.get("agent_call_id", "unknown")
             url = row.get("library_item_url") or ""
