@@ -1631,6 +1631,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--bubble-enrich", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--bubble-report", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--emit-bubble-json", action="store_true", help=argparse.SUPPRESS)
+    # Internal: subprocess entrypoint for rerun document extraction (avoids glibc heap corruption)
+    p.add_argument("--rerun-doc-subprocess-file", type=str, default=None, help=argparse.SUPPRESS)
     args = p.parse_args()
     if args.dump_html_snapshot and not args.target_id:
         p.error("--dump-html-snapshot requires --target-id")
@@ -2178,6 +2180,102 @@ def _run_simulate_change(
     log.info("Report written to %s", REPORT_FILE)
 
 
+def _run_rerun_doc_subprocess_file(path: str) -> None:
+    """Subprocess entrypoint: run one extract_document_data() call and write results to a JSON file.
+
+    Called via --rerun-doc-subprocess-file.  Each invocation is a fresh process so asyncio
+    cleanup (OpenSSL teardown) can't corrupt the parent's heap.
+    """
+    with open(path) as f:
+        data = json.load(f)
+    output_path = data["output_path"]
+
+    try:
+        from bubble.ssm_loader import load_openai_env_from_ssm, load_db_env_from_ssm
+        load_openai_env_from_ssm()
+        load_db_env_from_ssm()
+    except Exception as _e:
+        log.debug("SSM loader: %s", _e)
+
+    from bubble.document_agent import extract_document_data
+    try:
+        results = extract_document_data(
+            data["name"],
+            document_url=data.get("url") or "",
+            pdf_text=data.get("pdf_text"),
+            alert_context=data.get("alert_context"),
+            before_html=data.get("before_html"),
+            after_html=data.get("after_html"),
+            original_datetime=data.get("original_datetime"),
+        )
+    except Exception as _e:
+        log.error("rerun doc subprocess: extract_document_data failed: %s", _e)
+        results = []
+
+    with open(output_path, "w") as f:
+        json.dump(results, f, default=str)
+
+
+def _extract_doc_in_subprocess(
+    name: str,
+    url: str = "",
+    pdf_text: str | None = None,
+    alert_context: dict | None = None,
+    before_html: str | None = None,
+    after_html: str | None = None,
+    original_datetime: str | None = None,
+) -> list[dict]:
+    """Run extract_document_data() in a fresh subprocess to prevent glibc heap corruption.
+
+    Sequential asyncio.run() calls in the same long-lived process accumulate C extension
+    state (OpenSSL / httpx) that causes double-free / SIGSEGV on event-loop close.
+    A fresh subprocess avoids this entirely.
+    """
+    import subprocess
+    import sys as _sys
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix="_rerun_doc_in.json", delete=False) as f:
+        output_path = f.name.replace("_in.json", "_out.json")
+        json.dump({
+            "name": name,
+            "url": url,
+            "pdf_text": pdf_text,
+            "alert_context": alert_context,
+            "before_html": before_html,
+            "after_html": after_html,
+            "original_datetime": original_datetime,
+            "output_path": output_path,
+        }, f, default=str)
+        input_path = f.name
+
+    try:
+        proc = subprocess.run(
+            [_sys.executable, "spike.py", "--rerun-doc-subprocess-file", input_path],
+            timeout=300,
+        )
+        if proc.returncode != 0:
+            log.error("rerun doc subprocess exit %d for: %s", proc.returncode, name[:60])
+            return []
+        if not os.path.exists(output_path):
+            log.error("rerun doc subprocess: no output file for: %s", name[:60])
+            return []
+        with open(output_path) as f:
+            return json.load(f)
+    except subprocess.TimeoutExpired:
+        log.error("rerun doc subprocess timed out for: %s", name[:60])
+        return []
+    except Exception as _e:
+        log.error("rerun doc subprocess error for %s: %s", name[:60], _e)
+        return []
+    finally:
+        for p in [input_path, output_path]:
+            try:
+                os.unlink(p)
+            except Exception:
+                pass
+
+
 def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alerts", rerun_library_item_url: str = "", rerun_transcript_s3_key: str = "") -> None:
     """
     Re-evaluate a single stored alert using the current DynamoDB agent config.
@@ -2346,7 +2444,6 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
     if rerun_transcript_s3_key and rerun_mode in ("docs", "both"):
         # Transcript rerun path — re-run doc agent on the stored transcript text.
         # No before/after HTML needed; content comes directly from the S3 transcript file.
-        from bubble.document_agent import extract_document_data
 
         # Find original extraction rows for this transcript to get document name + agent_call_id
         orig_tx_rows: list[dict] = []
@@ -2402,8 +2499,8 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
             log.error("rerun transcript: failed to download %s: %s", rerun_transcript_s3_key, _e)
             raise SystemExit(1)
 
-        doc_result_list = extract_document_data(
-            doc_name, document_url=rerun_transcript_s3_key,
+        doc_result_list = _extract_doc_in_subprocess(
+            doc_name, url=rerun_transcript_s3_key,
             pdf_text=transcript_text, alert_context=alert_context,
         )
         item = {
@@ -2418,7 +2515,7 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
         log.info("rerun transcript: extracted %d row(s) for: %s", len(doc_result_list), doc_name[:60])
 
     elif rerun_mode in ("docs", "both"):
-        from bubble.document_agent import should_run_for_alert, extract_document_data
+        from bubble.document_agent import should_run_for_alert
 
         # Load original doc extraction rows now so we can preserve data_extraction_datetime.
         # The original datetime is always kept — only the first run defines it.
@@ -2477,8 +2574,8 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
                     log.info("rerun: skipping document (URL mismatch): %s", name[:60])
                     continue
                 log.info("rerun: document agent: %s", name[:60])
-                doc_result_list = extract_document_data(
-                    name, url,
+                doc_result_list = _extract_doc_in_subprocess(
+                    name, url=url,
                     alert_context=agent_output,
                     before_html=before_html,
                     after_html=after_html,
@@ -3046,6 +3143,11 @@ def _run_manual_doc(agent_call_id: str) -> None:
 
 def main() -> None:
     args = parse_args()
+
+    # Subprocess entrypoint for rerun document extraction — handle before RunSpec/SSM loading.
+    if args.rerun_doc_subprocess_file:
+        _run_rerun_doc_subprocess_file(args.rerun_doc_subprocess_file)
+        return
 
     from config.run_spec import (
         compute_run_spec,
