@@ -2249,12 +2249,23 @@ def _extract_doc_in_subprocess(
         }, f, default=str)
         input_path = f.name
 
+    _MAX_RETRIES = 2
     try:
-        proc = subprocess.run(
-            [_sys.executable, "spike.py", "--rerun-doc-subprocess-file", input_path],
-            timeout=300,
-        )
-        if proc.returncode != 0:
+        for attempt in range(_MAX_RETRIES + 1):
+            proc = subprocess.run(
+                [_sys.executable, "spike.py", "--rerun-doc-subprocess-file", input_path],
+                timeout=300,
+            )
+            if proc.returncode == 0:
+                break
+            # Negative return code = killed by signal (SIGABRT=-6, SIGSEGV=-11).
+            # Heap corruption from C extensions is non-deterministic; retry in a fresh process.
+            if proc.returncode < 0 and attempt < _MAX_RETRIES:
+                log.warning(
+                    "rerun doc subprocess signal %d for: %s — retrying (%d/%d)",
+                    -proc.returncode, name[:60], attempt + 1, _MAX_RETRIES,
+                )
+                continue
             log.error("rerun doc subprocess exit %d for: %s", proc.returncode, name[:60])
             return []
         if not os.path.exists(output_path):
