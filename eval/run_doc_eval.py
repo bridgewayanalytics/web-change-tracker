@@ -208,13 +208,6 @@ def _make_eval_run_id() -> str:
     return f"doc-eval-{int(time.time())}"
 
 
-# Maximum agenda-item rows per QA agent call.  With reasoning_effort=low the
-# first-pass agent runs out of budget on large meeting packets (13+ items) and
-# the formatter fills in fake "No QA evaluation provided" / Incorrect scores for
-# the unevaluated rows.  Batching keeps each call tractable.
-_MAX_ROWS_PER_EVAL_CALL = 5
-
-
 def _group_by_call(rows: list[dict]) -> list[list[dict]]:
     """Group rows so each unique document extraction gets its own QA call.
 
@@ -222,7 +215,8 @@ def _group_by_call(rows: list[dict]) -> list[list[dict]]:
     so rows about different documents within the same extraction call each get a separate eval
     (prevents the compound library_item_url cross-document vectorization bug).
     Old rows (no doc_extraction_id) fall back to (agent_call_id, library_item_url).
-    Groups larger than _MAX_ROWS_PER_EVAL_CALL are split into sequential batches.
+    All agenda-item rows from the same document are always evaluated together so the agent
+    has full cross-row context (agenda numbering, topic coverage, etc.).
     """
     groups: dict[tuple, list[dict]] = {}
     for row in rows:
@@ -238,14 +232,7 @@ def _group_by_call(rows: list[dict]) -> list[list[dict]]:
             key = (cid, url)
         groups.setdefault(key, []).append(row)
 
-    result: list[list[dict]] = []
-    for group in groups.values():
-        if len(group) <= _MAX_ROWS_PER_EVAL_CALL:
-            result.append(group)
-        else:
-            for i in range(0, len(group), _MAX_ROWS_PER_EVAL_CALL):
-                result.append(group[i:i + _MAX_ROWS_PER_EVAL_CALL])
-    return result
+    return list(groups.values())
 
 
 def _run_group_file(path: str) -> None:
