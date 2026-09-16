@@ -11,11 +11,15 @@ import json
 import logging
 import os
 
+from botocore.exceptions import ClientError
+
 log = logging.getLogger(__name__)
 
 _DEFAULT_BUCKET = "web-change-tracker-prod-artifacts-815039343351"
 _RESULTS_KEY = "alerts/doc_eval_results_table.jsonl"
 _EXTRACTIONS_KEY = "alerts/document_extractions_table.jsonl"
+
+_STAMP_MAX_RETRIES = 4
 
 
 def _get_bucket() -> str:
@@ -35,26 +39,61 @@ def _row_key(row: dict) -> str:
     return row.get("eval_row_key") or row.get("agent_call_id") or ""
 
 
-def _load_existing(client, bucket: str) -> dict[str, dict]:
+def _load_existing_with_etag(client, bucket: str, key: str) -> tuple[dict[str, dict], str]:
+    """Return (existing_rows_dict, etag). etag is '' when the file doesn't exist yet."""
     try:
-        body = client.get_object(Bucket=bucket, Key=_RESULTS_KEY)["Body"].read().decode("utf-8")
+        resp = client.get_object(Bucket=bucket, Key=key)
+        etag = resp.get("ETag", "")
+        body = resp["Body"].read().decode("utf-8")
     except client.exceptions.NoSuchKey:
-        return {}
+        return {}, ""
     except Exception:
         raise  # don't swallow S3 errors — caller must not write if we can't read
-    existing: dict[str, dict] = {}
+    rows: dict[str, dict] = {}
     for line in body.split("\n"):
         line = line.strip()
         if not line:
             continue
         try:
             r = json.loads(line)
-            key = _row_key(r)
-            if key:
-                existing[key] = r
+            k = _row_key(r)
+            if k:
+                rows[k] = r
         except json.JSONDecodeError:
             pass
-    return existing
+    return rows, etag
+
+
+def _load_existing(client, bucket: str) -> dict[str, dict]:
+    rows, _ = _load_existing_with_etag(client, bucket, _RESULTS_KEY)
+    return rows
+
+
+def _put_conditional(client, bucket: str, s3_key: str, body: bytes,
+                     content_type: str, etag: str, extra_meta: dict | None = None) -> bool:
+    """PUT with If-Match: etag for optimistic concurrency.
+
+    Returns True on success, False on 412 PreconditionFailed (caller retries).
+    Falls back to unconditional PUT if boto3 doesn't accept IfMatch.
+    """
+    kwargs = dict(Bucket=bucket, Key=s3_key, Body=body, ContentType=content_type)
+    if extra_meta:
+        kwargs["Metadata"] = extra_meta
+    if etag:
+        kwargs["IfMatch"] = etag
+    try:
+        client.put_object(**kwargs)
+        return True
+    except ClientError as e:
+        code = e.response["Error"]["Code"]
+        if code in ("PreconditionFailed", "ConditionalRequestConflict"):
+            return False
+        raise
+    except TypeError:
+        # boto3 version doesn't accept IfMatch — fall back to unconditional put
+        kwargs.pop("IfMatch", None)
+        client.put_object(**kwargs)
+        return True
 
 
 def _write(client, bucket: str, rows: dict[str, dict], eval_run_id: str) -> None:
@@ -76,6 +115,9 @@ def _stamp_eval_row_keys(client, bucket: str, eval_rows: list[dict]) -> None:
     Builds a lookup from computed key → stored eval_row_key using the same
     make_doc_eval_row_key function used during the eval run, then patches any
     extraction row whose stored eval_row_key differs (or is absent).
+
+    Uses ETag-based conditional PUT with retry to prevent concurrent writers
+    (e.g. another eval task or dashboard patch_jsonl_row) from clobbering stamps.
     """
     if not eval_rows:
         return
@@ -83,7 +125,7 @@ def _stamp_eval_row_keys(client, bucket: str, eval_rows: list[dict]) -> None:
         from eval.doc_eval_agent import make_doc_eval_row_key
         # Map computed_key → eval_row_key for every row we just evaluated.
         key_map: dict[str, str] = {}
-        # Fallback: (agent_call_id, discriminator) → eval_row_key for old 2-part keys
+        # Fallback: (call_id, discriminator) → eval_row_key for old 2-part keys
         # that predate the url_filename segment (call_id|discriminator vs call_id|filename|discriminator).
         alt_key_map: dict[tuple[str, str], str] = {}
         for r in eval_rows:
@@ -93,8 +135,21 @@ def _stamp_eval_row_keys(client, bucket: str, eval_rows: list[dict]) -> None:
                 parts = erk.split("|")
                 if len(parts) >= 2:
                     alt_key_map[(parts[0], parts[-1])] = erk
+    except Exception as e:
+        log.warning("doc_result_store: could not build stamp key_map: %s", e)
+        return
 
-        body = client.get_object(Bucket=bucket, Key=_EXTRACTIONS_KEY)["Body"].read().decode("utf-8")
+    for attempt in range(_STAMP_MAX_RETRIES):
+        try:
+            resp = client.get_object(Bucket=bucket, Key=_EXTRACTIONS_KEY)
+            etag = resp.get("ETag", "")
+            body = resp["Body"].read().decode("utf-8")
+        except client.exceptions.NoSuchKey:
+            return
+        except Exception as e:
+            log.warning("doc_result_store: could not read extractions for stamping: %s", e)
+            return
+
         lines = [l for l in body.split("\n") if l.strip()]
         updated_count = 0
         new_lines = []
@@ -115,16 +170,22 @@ def _stamp_eval_row_keys(client, bucket: str, eval_rows: list[dict]) -> None:
             except (json.JSONDecodeError, Exception):
                 new_lines.append(line)  # preserve original line verbatim on any error
 
-        if updated_count:
-            client.put_object(
-                Bucket=bucket,
-                Key=_EXTRACTIONS_KEY,
-                Body="\n".join(new_lines).encode("utf-8"),
-                ContentType="application/x-ndjson",
-            )
-            log.info("doc_result_store: stamped eval_row_key onto %d extraction row(s)", updated_count)
-    except Exception as e:
-        log.warning("doc_result_store: could not stamp eval_row_keys onto extractions: %s", e)
+        if not updated_count:
+            return  # nothing to write
+
+        success = _put_conditional(
+            client, bucket, _EXTRACTIONS_KEY,
+            "\n".join(new_lines).encode("utf-8"),
+            "application/x-ndjson",
+            etag,
+        )
+        if success:
+            log.info("doc_result_store: stamped eval_row_key onto %d extraction row(s) (attempt %d)", updated_count, attempt + 1)
+            return
+        # 412 — another writer changed the file between our read and write; retry from read
+        log.warning("doc_result_store: stamp conditional PUT conflict — retrying (attempt %d/%d)", attempt + 1, _STAMP_MAX_RETRIES)
+
+    log.error("doc_result_store: stamp failed after %d retries — eval_row_keys may be unstamped", _STAMP_MAX_RETRIES)
 
 
 def store_doc_eval_results(eval_rows: list[dict], eval_run_id: str) -> None:
@@ -143,29 +204,37 @@ def store_doc_eval_results(eval_rows: list[dict], eval_run_id: str) -> None:
     except Exception as e:
         log.warning("doc_result_store: score key normalization skipped: %s", e)
 
-    try:
-        existing = _load_existing(client, bucket)
+    # Count valid rows upfront to avoid a read when nothing would be written.
+    valid_rows = [r for r in eval_rows if r.get("eval_scores") and _row_key(r)]
+    if not valid_rows:
+        log.warning(
+            "doc_result_store: no rows with valid eval_scores — skipping S3 write to prevent data loss "
+            "(%d row(s) had empty scores; existing S3 file is unchanged)", len(eval_rows)
+        )
+        # Still stamp even if we have nothing to write — some rows may already have scores
+        # from a prior run and the extraction rows may need key stamps from this batch.
+        _stamp_eval_row_keys(client, bucket, eval_rows)
+        return
 
-        stored = 0
-        for row in eval_rows:
-            if not row.get("eval_scores"):
-                log.debug("doc_result_store: skipping row %s — empty eval_scores (agent truncated)", _row_key(row))
-                continue
-            key = _row_key(row)
-            if key:
-                existing[key] = row
-                stored += 1
+    # Upsert with ETag-based retry to prevent concurrent writes from losing rows.
+    for attempt in range(_STAMP_MAX_RETRIES):
+        try:
+            existing, etag = _load_existing_with_etag(client, bucket, _RESULTS_KEY)
+            for row in valid_rows:
+                existing[_row_key(row)] = row
 
-        if stored == 0:
-            log.warning(
-                "doc_result_store: no rows with valid eval_scores — skipping S3 write to prevent data loss "
-                "(%d row(s) had empty scores; existing S3 file is unchanged)", len(eval_rows)
-            )
-            return
-        _write(client, bucket, existing, eval_run_id)
-        log.info("Upserted %d/%d doc eval rows into %s (skipped %d empty)", stored, len(eval_rows), _RESULTS_KEY, len(eval_rows) - stored)
-    except Exception as e:
-        log.error("Failed to write doc_eval_results_table.jsonl: %s", e)
+            body = "\n".join(json.dumps(r, default=str) for r in existing.values()).encode("utf-8")
+            success = _put_conditional(client, bucket, _RESULTS_KEY, body,
+                                       "application/x-ndjson", etag,
+                                       {"eval_run_id": eval_run_id})
+            if success:
+                log.info("Upserted %d/%d doc eval rows into %s (skipped %d empty)",
+                         len(valid_rows), len(eval_rows), _RESULTS_KEY, len(eval_rows) - len(valid_rows))
+                break
+            log.warning("doc_result_store: eval results PUT conflict — retrying (attempt %d/%d)", attempt + 1, _STAMP_MAX_RETRIES)
+        except Exception as e:
+            log.error("Failed to write doc_eval_results_table.jsonl: %s", e)
+            break
 
     # Stamp eval_row_key directly onto source extraction rows so the dashboard
     # can do an exact field lookup instead of recomputing the key from row fields.

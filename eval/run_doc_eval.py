@@ -122,10 +122,13 @@ def _load_doc_rows(agent_call_ids: list[str] | None, limit: int = _DEFAULT_LIMIT
     # editorial ground truth is required, so there is no upper_bound filter.
 
     # --- Already-QA'd rows ---
-    # Index BOTH doc_extraction_id and agent_call_id from each result row so that
-    # old results (keyed by agent_call_id before doc_extraction_id was introduced)
-    # correctly prevent re-evaluation of rows that now carry a doc_extraction_id.
-    already_evald: set[str] = set()
+    # Key by doc_extraction_id (preferred — unique per extraction call) so that a
+    # re-extraction creating a new doc_extraction_id for the same agent_call_id is
+    # correctly treated as unevaluated and picked up by the bulk eval.
+    # For old eval results that have no doc_extraction_id, fall back to agent_call_id
+    # so old extraction rows (also without doc_extraction_id) are still protected.
+    already_evald_by_eid: set[str] = set()  # doc_extraction_id-keyed
+    already_evald_by_cid: set[str] = set()  # agent_call_id-keyed (old-row fallback)
     try:
         eval_resp = client.get_object(Bucket=bucket, Key=_RESULTS_KEY)
         for line in eval_resp["Body"].read().decode("utf-8").split("\n"):
@@ -133,16 +136,21 @@ def _load_doc_rows(agent_call_ids: list[str] | None, limit: int = _DEFAULT_LIMIT
                 continue
             try:
                 r = json.loads(line)
-                for key in ("doc_extraction_id", "agent_call_id"):
-                    val = r.get(key) or ""
-                    if val:
-                        already_evald.add(val)
+                eid = r.get("doc_extraction_id") or ""
+                cid = r.get("agent_call_id") or ""
+                if eid:
+                    already_evald_by_eid.add(eid)
+                elif cid:
+                    # Old eval result (no doc_extraction_id) — protect by agent_call_id
+                    # only when the extraction row also lacks doc_extraction_id.
+                    already_evald_by_cid.add(cid)
             except json.JSONDecodeError:
                 continue
     except Exception as e:
         log.warning("Could not load doc_eval_results for dedup: %s", e)
 
-    log.info("Already-evaluated IDs loaded: %d", len(already_evald))
+    log.info("Already-evaluated: %d by doc_extraction_id, %d by agent_call_id (legacy)",
+             len(already_evald_by_eid), len(already_evald_by_cid))
 
     # --- Filter eligible rows ---
     from eval.doc_eval_agent import make_doc_eval_row_key
@@ -159,11 +167,17 @@ def _load_doc_rows(agent_call_ids: list[str] | None, limit: int = _DEFAULT_LIMIT
         return r.get("library_item_url", "").strip().lower() not in ("", "n/a")
 
     def _already_evald(r: dict) -> bool:
-        """Check both doc_extraction_id and agent_call_id so old results (stored
-        under agent_call_id) protect rows that now also carry doc_extraction_id."""
+        """Row is already evaluated if its doc_extraction_id is in results.
+        Falls back to agent_call_id only for old rows that lack doc_extraction_id,
+        matching against old eval results that also lacked doc_extraction_id.
+        This ensures re-extracted rows (new doc_extraction_id, same agent_call_id)
+        are not skipped just because an older extraction was already evaluated."""
         eid = r.get("doc_extraction_id") or ""
+        if eid:
+            return eid in already_evald_by_eid
+        # Old extraction row (no doc_extraction_id): match by agent_call_id
         cid = r.get("agent_call_id") or ""
-        return bool((eid and eid in already_evald) or (cid and cid in already_evald))
+        return bool(cid and cid in already_evald_by_cid)
 
     eligible = [
         r for r in all_rows

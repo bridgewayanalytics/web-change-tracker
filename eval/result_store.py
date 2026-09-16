@@ -14,10 +14,14 @@ import json
 import logging
 import os
 
+from botocore.exceptions import ClientError
+
 log = logging.getLogger(__name__)
 
 _DEFAULT_BUCKET = "web-change-tracker-prod-artifacts-815039343351"
 _RESULTS_KEY = "alerts/eval_results_table.jsonl"
+
+_MAX_RETRIES = 4
 
 
 def _get_bucket() -> str:
@@ -45,10 +49,18 @@ def _row_key(row: dict) -> str:
 
 def _load_existing(client, bucket: str) -> dict[str, dict]:
     """Return existing eval results as {eval_row_key: row}."""
+    rows, _ = _load_existing_with_etag(client, bucket)
+    return rows
+
+
+def _load_existing_with_etag(client, bucket: str) -> tuple[dict[str, dict], str]:
+    """Return (existing_rows_dict, etag). etag is '' when the file doesn't exist yet."""
     try:
-        body = client.get_object(Bucket=bucket, Key=_RESULTS_KEY)["Body"].read().decode("utf-8")
+        resp = client.get_object(Bucket=bucket, Key=_RESULTS_KEY)
+        etag = resp.get("ETag", "")
+        body = resp["Body"].read().decode("utf-8")
     except client.exceptions.NoSuchKey:
-        return {}
+        return {}, ""
     except Exception:
         raise  # don't swallow S3 errors — caller must not write if we can't read
     existing: dict[str, dict] = {}
@@ -63,7 +75,33 @@ def _load_existing(client, bucket: str) -> dict[str, dict]:
                 existing[key] = r
         except json.JSONDecodeError:
             pass
-    return existing
+    return existing, etag
+
+
+def _put_conditional(client, bucket: str, body: bytes, eval_run_id: str, etag: str) -> bool:
+    """PUT with If-Match for optimistic concurrency. Returns False on 412 (caller retries)."""
+    kwargs = dict(
+        Bucket=bucket,
+        Key=_RESULTS_KEY,
+        Body=body,
+        ContentType="application/x-ndjson",
+        Metadata={"eval_run_id": eval_run_id},
+    )
+    if etag:
+        kwargs["IfMatch"] = etag
+    try:
+        client.put_object(**kwargs)
+        return True
+    except ClientError as e:
+        code = e.response["Error"]["Code"]
+        if code in ("PreconditionFailed", "ConditionalRequestConflict"):
+            return False
+        raise
+    except TypeError:
+        # boto3 version doesn't accept IfMatch — fall back to unconditional put
+        kwargs.pop("IfMatch", None)
+        client.put_object(**kwargs)
+        return True
 
 
 def _write(client, bucket: str, rows: dict[str, dict], eval_run_id: str) -> None:
@@ -83,6 +121,8 @@ def store_eval_results(eval_rows: list[dict], eval_run_id: str) -> None:
     """
     Upsert eval_rows into eval_results_table.jsonl keyed by eval_row_key.
     Re-running QA on the same row replaces the prior entry.
+    Uses ETag-based conditional PUT with retry to prevent concurrent writers
+    from clobbering each other's results.
     """
     if not eval_rows:
         return
@@ -100,16 +140,26 @@ def store_eval_results(eval_rows: list[dict], eval_run_id: str) -> None:
     except Exception as e:
         log.warning("result_store: score key normalization skipped: %s", e)
 
-    try:
-        existing = _load_existing(client, bucket)
-        for row in eval_rows:
-            key = _row_key(row)
-            if key:
-                existing[key] = row
-        _write(client, bucket, existing, eval_run_id)
-        log.info("Upserted %d eval rows into %s", len(eval_rows), _RESULTS_KEY)
-    except Exception as e:
-        log.error("Failed to write eval_results_table.jsonl: %s", e)
+    for attempt in range(_MAX_RETRIES):
+        try:
+            existing, etag = _load_existing_with_etag(client, bucket)
+            for row in eval_rows:
+                key = _row_key(row)
+                if key:
+                    existing[key] = row
+            if not existing:
+                return
+            body = "\n".join(json.dumps(r, default=str) for r in existing.values()).encode("utf-8")
+            success = _put_conditional(client, bucket, body, eval_run_id, etag)
+            if success:
+                log.info("Upserted %d eval rows into %s", len(eval_rows), _RESULTS_KEY)
+                return
+            log.warning("result_store: eval results PUT conflict — retrying (attempt %d/%d)", attempt + 1, _MAX_RETRIES)
+        except Exception as e:
+            log.error("Failed to write eval_results_table.jsonl: %s", e)
+            return
+
+    log.error("result_store: failed to write eval results after %d retries", _MAX_RETRIES)
 
 
 def delete_eval_result(agent_call_id: str) -> None:
