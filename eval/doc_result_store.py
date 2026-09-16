@@ -188,6 +188,113 @@ def _stamp_eval_row_keys(client, bucket: str, eval_rows: list[dict]) -> None:
     log.error("doc_result_store: stamp failed after %d retries — eval_row_keys may be unstamped", _STAMP_MAX_RETRIES)
 
 
+def carry_forward_eval_row_keys(agent_call_ids: list[str]) -> None:
+    """Stamp old eval_row_keys onto new extraction rows that currently have none.
+
+    Called at the start of a doc eval run — before the OpenAI agent calls — so
+    that extraction rows from an accepted rerun immediately inherit the prior
+    eval_row_key from matching rows (same agent_call_id + url_filename + discriminator).
+    This means the dashboard can show the previous QA result while the new eval runs,
+    instead of showing a blank until the new eval completes (4-6 minutes).
+
+    Matching is by (agent_call_id, url_slug, discriminator) across any doc_extraction_id —
+    so a rerun that creates new doc_extraction_id rows can still carry forward old QA.
+    """
+    if not agent_call_ids:
+        return
+
+    bucket = _get_bucket()
+    client = _s3_client()
+
+    try:
+        from eval.doc_eval_agent import make_doc_eval_row_key
+    except Exception as e:
+        log.warning("carry_forward: could not import make_doc_eval_row_key: %s", e)
+        return
+
+    # Build lookup from (agent_call_id, url_slug, discriminator) → best eval_row_key.
+    # Use the most recent eval result per key (last one wins in JSONL order).
+    fallback_map: dict[tuple[str, str, str], str] = {}
+    try:
+        resp = client.get_object(Bucket=bucket, Key=_RESULTS_KEY)
+        for line in resp["Body"].read().decode("utf-8").split("\n"):
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+                cid = r.get("agent_call_id") or ""
+                erk = r.get("eval_row_key") or ""
+                if not cid or not erk or cid not in agent_call_ids:
+                    continue
+                parts = erk.split("|")
+                if len(parts) >= 3:
+                    url_slug = parts[1]
+                    discriminator = "|".join(parts[2:])
+                    fallback_map[(cid, url_slug, discriminator)] = erk
+            except (json.JSONDecodeError, Exception):
+                continue
+    except client.exceptions.NoSuchKey:
+        return  # no eval results yet — nothing to carry forward
+    except Exception as e:
+        log.warning("carry_forward: could not load eval results: %s", e)
+        return
+
+    if not fallback_map:
+        return
+
+    # Stamp old eval_row_keys onto extraction rows that have no key yet.
+    for attempt in range(_STAMP_MAX_RETRIES):
+        try:
+            resp = client.get_object(Bucket=bucket, Key=_EXTRACTIONS_KEY)
+            etag = resp.get("ETag", "")
+            body = resp["Body"].read().decode("utf-8")
+        except client.exceptions.NoSuchKey:
+            return
+        except Exception as e:
+            log.warning("carry_forward: could not read extractions: %s", e)
+            return
+
+        lines = [l for l in body.split("\n") if l.strip()]
+        updated_count = 0
+        new_lines = []
+        for line in lines:
+            try:
+                row = json.loads(line)
+                cid = row.get("agent_call_id") or ""
+                if cid not in agent_call_ids or row.get("eval_row_key"):
+                    new_lines.append(json.dumps(row, default=str))
+                    continue
+                computed = make_doc_eval_row_key(row)
+                parts = computed.split("|")
+                if len(parts) >= 3:
+                    url_slug = parts[1]
+                    discriminator = "|".join(parts[2:])
+                    old_erk = fallback_map.get((cid, url_slug, discriminator))
+                    if old_erk:
+                        row["eval_row_key"] = old_erk
+                        updated_count += 1
+                new_lines.append(json.dumps(row, default=str))
+            except (json.JSONDecodeError, Exception):
+                new_lines.append(line)
+
+        if not updated_count:
+            return
+
+        success = _put_conditional(
+            client, bucket, _EXTRACTIONS_KEY,
+            "\n".join(new_lines).encode("utf-8"),
+            "application/x-ndjson",
+            etag,
+        )
+        if success:
+            log.info("carry_forward: stamped old eval_row_key onto %d extraction row(s) for %d agent_call_id(s)",
+                     updated_count, len(agent_call_ids))
+            return
+        log.warning("carry_forward: conditional PUT conflict — retrying (attempt %d/%d)", attempt + 1, _STAMP_MAX_RETRIES)
+
+    log.warning("carry_forward: gave up after %d retries — rows may show blank QA until eval completes", _STAMP_MAX_RETRIES)
+
+
 def store_doc_eval_results(eval_rows: list[dict], eval_run_id: str) -> None:
     if not eval_rows:
         return

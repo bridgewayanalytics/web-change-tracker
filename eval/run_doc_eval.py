@@ -311,6 +311,14 @@ def run(
     groups = _group_by_call(rows)
     log.info("Evaluating %d doc extraction row(s) across %d call(s)", len(rows), len(groups))
 
+    # Stamp old eval_row_keys onto new extraction rows immediately (before any agent
+    # calls) so the dashboard can show the previous QA result during the eval window
+    # instead of a blank. Critical for accepted reruns: new doc_extraction_id rows
+    # have no eval_row_key until eval completes (4-6 min), causing QA to disappear.
+    if agent_call_ids:
+        from eval.doc_result_store import carry_forward_eval_row_keys
+        carry_forward_eval_row_keys(agent_call_ids)
+
     if dry_run:
         for row in rows:
             print(json.dumps({
