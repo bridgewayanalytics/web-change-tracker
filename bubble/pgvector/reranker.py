@@ -81,18 +81,29 @@ async def _score_one(client: AsyncOpenAI, query: str, chunk: dict[str, Any]) -> 
     return chunk
 
 
+_RERANK_CONCURRENCY = 4  # concurrent httpx connections before heap corruption risk
+
+
 async def rerank_chunks(
     query: str,
     candidates: list[dict[str, Any]],
     top_n: int = 8,
 ) -> list[dict[str, Any]]:
-    """Score candidates in parallel and return the top_n by relevance."""
+    """Score candidates in parallel (batched) and return the top_n by relevance.
+
+    Batching limits concurrent httpx connections to _RERANK_CONCURRENCY.
+    Unbounded asyncio.gather() over many candidates causes shared OpenSSL/httpx
+    state to corrupt glibc's heap (double free), killing the process with SIGABRT.
+    """
     if not candidates:
         return candidates
     client = _get_rerank_client()
     if client is None:
         return candidates[:top_n]
-    scored = await asyncio.gather(*[_score_one(client, query, c) for c in candidates])
-    scored_list = list(scored)
-    scored_list.sort(key=lambda x: x.get("rerank_score", 0.0), reverse=True)
-    return scored_list[:top_n]
+    scored: list[dict[str, Any]] = []
+    for i in range(0, len(candidates), _RERANK_CONCURRENCY):
+        batch = candidates[i : i + _RERANK_CONCURRENCY]
+        batch_results = await asyncio.gather(*[_score_one(client, query, c) for c in batch])
+        scored.extend(batch_results)
+    scored.sort(key=lambda x: x.get("rerank_score", 0.0), reverse=True)
+    return scored[:top_n]
