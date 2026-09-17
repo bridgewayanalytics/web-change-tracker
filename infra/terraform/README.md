@@ -304,6 +304,8 @@ Exact variable names and how they are passed. All behavior is driven by **tfvars
 
 ### Environment variables injected into the task (plaintext)
 
+Active vars that the current pipeline actually reads:
+
 | Env var | Example / source | Notes |
 |---------|------------------|--------|
 | `STATE_BACKEND` | `dynamodb` | Plaintext |
@@ -312,25 +314,23 @@ Exact variable names and how they are passed. All behavior is driven by **tfvars
 | `CHANGELOG_PREFIX` | `changelog/` | Plaintext |
 | `TARGETS_SOURCE` | `s3://...-artifacts-.../targets/targets.json` | From Terraform local |
 | `TARGETS_FILE` | `/app/targets.json` | Plaintext |
-| `EMAIL_ENABLED` | `true` | Plaintext |
+| `EMAIL_ENABLED` | `false` | Plaintext |
 | `FROM_EMAIL` | From `var.email_from` | tfvars |
 | `TO_EMAILS` | From `var.email_to` | tfvars |
 | `EMAIL_SUBJECT_PREFIX` | From `var.email_subject_prefix` | tfvars |
 | `ENVIRONMENT` | `prod` | Plaintext |
 | `SES_REGION` | From `var.region` | tfvars |
 | `AWS_REGION` | From `var.region` | tfvars |
-| `OPENAI_ENABLED` | `true` | Plaintext |
+| `PAGE_CHANGE_AGENT_ENABLED` | `true` | Enables LLM agents |
+| `PGVECTOR_ENABLED` | `true` | Enables pgvector knowledge base search |
+| `DATABASE_PORT` | `5432` | pgvector DB port |
 | `OPENAI_API_KEY_SSM_PARAM` | `/web-change-tracker/prod/openai_api_key` | Param name only; app fetches value at runtime |
 | `OPENAI_MODEL_SSM_PARAM` | `/web-change-tracker/prod/openai_model` | Param name only |
 | `OPENAI_REASONING_EFFORT_SSM_PARAM` | `/web-change-tracker/prod/openai_reasoning_effort` | Param name only |
-| `OPENAI_ENRICH_ONLY_IF_CHANGED` | `true` | Plaintext |
-| `OPENAI_ENRICH_MAX_RESOURCES` | `25` | Plaintext |
-| `OPENAI_ENRICH_MAX_EVENTS` | `10` | Plaintext |
-| `PROD_OBSERVE_MODE` | `true` | RunSpec: validate bubble_enrich, refs blocked, artifacts, dry-run |
-| `AI_ENRICHMENT_ENABLED` | `true` | Enables bubble enrich path |
-| `ARTIFACT_OUTPUT_DIR` | `debug` | Debug artifacts dir |
-| `AI_REFERENCE_FIELDS_BLOCKED` | `true` | AI must not write reference fields |
-| `RUN_SPEC_VALIDATION_FAIL_FAST` | `true` | Exit on RunSpec validation failure |
+| `INGEST_API_URL` | `https://api.bridgewayanalytics.com` | Newsreel ingest API base URL |
+
+Legacy vars also present in the task definition (accepted but no effect — see "Final ECS command and env vars" section below):
+`OPENAI_ENABLED`, `AI_ENRICHMENT_ENABLED`, `PROD_OBSERVE_MODE`, `OPENAI_ENRICH_ONLY_IF_CHANGED`, `OPENAI_ENRICH_MAX_RESOURCES`, `OPENAI_ENRICH_MAX_EVENTS`, `BUBBLE_ORGANIZATION_TREE`, `BUBBLE_NAIC_GROUP_TREE`, `BUBBLE_TYPE1_TREE`, `BUBBLE_TOPIC_TREE`, `BUBBLE_ALERTS_ENABLED`, `AI_REFERENCE_FIELDS_BLOCKED`, `RUN_SPEC_VALIDATION_FAIL_FAST`, `ARTIFACT_OUTPUT_DIR`.
 
 ### Secrets (valueFrom SSM) — never logged
 
@@ -358,36 +358,66 @@ What the scheduled task actually runs and which env vars it receives.
 ```
 
 - Entrypoint runs first (fetches targets from S3 if `TARGETS_SOURCE` is set), then execs the command below.
-- **CLI flags:** `--bubble-enrich` (reference enrichment), `--bubble-report` (Bubble format in report/email), `--emit-bubble-json` (write payloads to JSON). No `--no-dry-run-bubble`, so Bubble write API is never called.
+- **CLI flags:** `--bubble-enrich`, `--bubble-report`, `--emit-bubble-json` are accepted by `spike.py` via `argparse.SUPPRESS` (silently accepted, no effect on the current pipeline). They remain in the task definition for backward compatibility and do not need to be removed.
 
-### Env vars list (all names; secrets from SSM)
+### Active env vars (current pipeline)
 
-| Name | Source / example value |
-|------|------------------------|
-| `STATE_BACKEND` | `dynamodb` |
-| `STATE_TABLE` | `{project}-{env}-state` |
-| `CHANGELOG_BUCKET` | artifacts bucket id |
-| `CHANGELOG_PREFIX` | `changelog/` |
-| `TARGETS_SOURCE` | `s3://{bucket}/targets/targets.json` |
-| `TARGETS_FILE` | `/app/targets.json` |
-| `EMAIL_ENABLED` | `true` |
-| `FROM_EMAIL` | tfvars `email_from` |
-| `TO_EMAILS` | tfvars `email_to` |
-| `EMAIL_SUBJECT_PREFIX` | tfvars `email_subject_prefix` |
-| `ENVIRONMENT` | `prod` |
-| `SES_REGION` | tfvars `region` |
-| `AWS_REGION` | tfvars `region` |
-| `OPENAI_ENABLED` | `true` |
-| `OPENAI_API_KEY_SSM_PARAM` | `/web-change-tracker/prod/openai_api_key` |
-| `OPENAI_MODEL_SSM_PARAM` | `/web-change-tracker/prod/openai_model` |
-| `OPENAI_REASONING_EFFORT_SSM_PARAM` | `/web-change-tracker/prod/openai_reasoning_effort` |
-| `OPENAI_ENRICH_ONLY_IF_CHANGED` | `true` |
-| `OPENAI_ENRICH_MAX_RESOURCES` | `25` |
-| `OPENAI_ENRICH_MAX_EVENTS` | `10` |
-| `PROD_OBSERVE_MODE` | `true` |
-| `AI_ENRICHMENT_ENABLED` | `true` |
-| `ARTIFACT_OUTPUT_DIR` | `debug` |
-| `AI_REFERENCE_FIELDS_BLOCKED` | `true` |
-| `RUN_SPEC_VALIDATION_FAIL_FAST` | `true` |
-| `BUBBLE_API_URL` | **Secrets (valueFrom SSM)** `/web-change-tracker/prod/bubble_api_url` |
-| `BUBBLE_API_KEY` | **Secrets (valueFrom SSM)** `/web-change-tracker/prod/bubble_api_key` (SecureString) |
+These env vars are actually read and acted upon by the current pipeline:
+
+| Name | Source / example value | Notes |
+|------|------------------------|-------|
+| `STATE_BACKEND` | `dynamodb` | Required for DynamoDB state |
+| `STATE_TABLE` | `{project}-{env}-state` | DynamoDB state table |
+| `CHANGELOG_BUCKET` | artifacts bucket id | S3 bucket for alerts + changelogs |
+| `CHANGELOG_PREFIX` | `changelog/` | S3 prefix |
+| `TARGETS_SOURCE` | `s3://{bucket}/targets/targets.json` | S3 URI for targets.json download |
+| `TARGETS_FILE` | `/app/targets.json` | Local path after download |
+| `EMAIL_ENABLED` | `false` | Set to `true` to send SES emails |
+| `FROM_EMAIL` | tfvars `email_from` | SES sender |
+| `TO_EMAILS` | tfvars `email_to` | SES recipients |
+| `EMAIL_SUBJECT_PREFIX` | tfvars `email_subject_prefix` | Email subject prefix |
+| `ENVIRONMENT` | `prod` | Environment tag |
+| `SES_REGION` | tfvars `region` | SES region |
+| `AWS_REGION` | tfvars `region` | AWS region |
+| `PAGE_CHANGE_AGENT_ENABLED` | `true` | Enables LLM agents (required for alert pipeline) |
+| `PGVECTOR_ENABLED` | `true` | Enables pgvector knowledge base search |
+| `DATABASE_PORT` | `5432` | pgvector DB port |
+| `BUBBLE_ARTIFACT_BUCKET` | artifacts bucket id | S3 bucket for alerts output (may alias `CHANGELOG_BUCKET`) |
+| `HTML_SNAPSHOT_BUCKET` | snapshot bucket id | S3 bucket for before/after HTML snapshots |
+| `INGEST_API_URL` | `https://api.bridgewayanalytics.com` | Newsreel ingest API base URL |
+| `OPENAI_API_KEY_SSM_PARAM` | `/web-change-tracker/prod/openai_api_key` | Param name; app fetches value at runtime via `ssm_loader.py` |
+| `OPENAI_MODEL_SSM_PARAM` | `/web-change-tracker/prod/openai_model` | Param name; fetched at runtime |
+| `OPENAI_REASONING_EFFORT_SSM_PARAM` | `/web-change-tracker/prod/openai_reasoning_effort` | Param name; fetched at runtime |
+
+**Secrets (from SSM / Secrets Manager — injected via ECS task definition `secrets` block):**
+
+| Env var | SSM parameter path | Type |
+|---------|--------------------|------|
+| `CHATKIT_INTERNAL_API_KEY` | `/web-change-tracker/prod/chatkit_internal_api_key` | SecureString |
+| `BUBBLE_API_URL` | `/web-change-tracker/prod/bubble_api_url` | String |
+| `BUBBLE_API_KEY` | `/web-change-tracker/prod/bubble_api_key` | SecureString |
+| `DATABASE_IP` | Secrets Manager | DB host |
+| `DATABASE_NAME` | Secrets Manager | DB name |
+| `DATABASE_USERNAME` | Secrets Manager | DB user |
+| `DATABASE_PASSWORD` | Secrets Manager | DB password |
+
+### Legacy env vars (present in task definition, no effect)
+
+These vars are still present in the ECS task definition and are accepted by `spike.py` via `argparse.SUPPRESS`, but have **no effect** on the current pipeline. They can be cleaned up in a future Terraform update:
+
+| Name | Former purpose |
+|------|---------------|
+| `OPENAI_ENABLED` | Previously gated the AI enrichment path (superseded by `PAGE_CHANGE_AGENT_ENABLED`) |
+| `AI_ENRICHMENT_ENABLED` | Old Bubble enrichment path toggle |
+| `PROD_OBSERVE_MODE` | Old observe mode flag |
+| `OPENAI_ENRICH_ONLY_IF_CHANGED` | Old enrichment guard |
+| `OPENAI_ENRICH_MAX_RESOURCES` | Old enrichment limit |
+| `OPENAI_ENRICH_MAX_EVENTS` | Old enrichment limit |
+| `BUBBLE_ORGANIZATION_TREE` | Old Bubble org tree name |
+| `BUBBLE_NAIC_GROUP_TREE` | Old Bubble group tree name |
+| `BUBBLE_TYPE1_TREE` | Old Bubble resource type tree name |
+| `BUBBLE_TOPIC_TREE` | Old Bubble topic tree name |
+| `BUBBLE_ALERTS_ENABLED` | Old alerts-to-Bubble toggle |
+| `AI_REFERENCE_FIELDS_BLOCKED` | Old reference field guard |
+| `RUN_SPEC_VALIDATION_FAIL_FAST` | Old RunSpec validation flag |
+| `ARTIFACT_OUTPUT_DIR` | Old debug artifact dir (now always `debug/`) |

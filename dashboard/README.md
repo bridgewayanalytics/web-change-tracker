@@ -80,6 +80,44 @@ Re-runs the relevant agent on stored snapshots using the current DynamoDB config
 
 For multi-row groups (same `run_id` + `target_id`), the rerun is group-based: all rerun rows appear together with a single Accept/Discard, and each rerun row is diff-highlighted against the closest-matching original row. Row count changes (e.g. 2 → 3 rows) are shown in the summary.
 
+### QA Evaluation
+
+Each alert row and document extraction row can be independently QA-evaluated via a rubric-based LLM agent.
+
+**Alerts QA (`/alerts`):**
+- Click **QA** button (purple) on any row → fires `POST /api/eval` → ECS task starts
+- Dashboard polls `/api/eval/[taskId]` every 5s
+- When complete, a **score badge** appears (e.g. `18/21`, color-coded green/amber/red) in the Actions cell
+- Click the badge to expand a per-field score panel below the row (score + reasoning for every field)
+- **Re-run QA** link replaces the prior result. **"Has QA Score"** option in the Alert Type dropdown filters to rows with results (client-side only).
+- Score thresholds: green ≥ 90%, amber ≥ 70%, red < 70%
+
+**Document Extractions QA (`/document-extractions`):**
+- "Run QA" / "Re-run QA" button always visible in Actions cell
+- Results appear as a violet `DocQaScoreRow` below each data row when an eval result exists
+- `getEvalForRow(row, evalResults)` resolves the key using multiple fallbacks: direct `eval_row_key`, composite keys, prefix scan for `callId|*`, then bare `callId`
+- **"Has QA Score"** (violet) and **"Imperfect QA Only"** (amber) toggle buttons in the filter bar
+
+### Ingest Gate
+
+The pipeline sets `ingest_status: "pending"` on rows eligible for the newsreel knowledge base (transcripts, documents flagged as newsreel-relevant). Dashboard users review and approve or reject each row — nothing is auto-ingested.
+
+`ingest_status` lifecycle: `null` (not eligible) → `"pending"` (ready for review) → `"approved"` (sent to knowledge base) or `"rejected"` (dismissed).
+
+Approval routes: `/api/ingest/approve-transcript` (transcripts), `/api/ingest/approve-document` (PDF/doc library items), `/api/ingest/reject`. Manual upload: `/api/ingest/upload-transcript-url` returns a presigned PUT URL for browser upload of `.txt` transcript files.
+
+### Content Gate Modal
+
+`ContentGateModal.tsx` is the unified UI for publishing content to Bubble (Eidarix). Opens from the **Actions** button on rows with `bubble_action` or `transcript_s3_key`. Sections appear in creation-dependency order:
+
+1. **Create Agenda Items** — editable titles, chronicle topic chips, × delete. Must complete before Library Item step.
+2. **Bubble Library Item** — shows existing Bubble values alongside proposed values (UPDATE), or proposed-only (CREATE). Blocked until agenda items done (when lib action present).
+3. **Bubble Event** — blocked until Library Item card done (when lib action present).
+4. **Transcript → Newsreel** — only for `alert_type === "New Meeting Transcript Available"`.
+5. **Document → Newsreel** — only when `library_item_url` is valid.
+
+Bubble steps fire `/api/bubble/sync` with an `action` param; newsreel steps call the ingest approve routes. Org pre-validation calls `GET /api/bubble/record` before confirming library item or event sync, and shows a popup listing any unresolved org names.
+
 ### HTML Snapshots
 
 Every alerts row has Before/After HTML download links — the exact stripped HTML the agent saw.
@@ -107,6 +145,25 @@ Auth0 protects all pages. Unauthenticated requests redirect to `/auth/login`. Th
 | `/api/doc-rerun/[taskId]` | GET | Polls doc rerun task + returns `{ run_id, target_id, rerun_timestamp, config_hash, original_rows, rerun_rows }`. |
 | `/api/doc-rerun/accept` | POST | Patches `document_extractions_table.jsonl` with rerun rows. Busts doc cache. |
 | `/api/doc-rerun/discard` | POST | Deletes doc rerun result from S3. |
+| `/api/alerts/patch-row` | PATCH | Patches arbitrary fields on alert rows by `agent_call_id`. Body: `{ agent_call_id, fields }`. Used by `ContentGateModal` to persist field edits and write back Bubble IDs after sync. |
+| `/api/presigned-url` | GET | Generates presigned S3 GET URL for a recording or transcript file. Query param: `key`. Redirects (302) to presigned URL (1-hour expiry). |
+| `/api/eval` | GET | Returns `{ results: Record<eval_row_key, EvalResult> }` from `alerts/eval_results_table.jsonl`. Key is `agent_call_id` for single-row runs; `agent_call_id\|library_item_url` for sibling rows. |
+| `/api/eval` | POST | Fires ECS RunTask with CMD override `["python", "-m", "eval.run_eval", "--agent-call-ids", "<id>"]`. Body: `{ agent_call_id }`. Returns `{ taskId }`. |
+| `/api/eval` | DELETE | Removes all eval results for a given `agent_call_id` from `eval_results_table.jsonl`. Body: `{ agent_call_id }`. |
+| `/api/eval/[taskId]` | GET | Polls ECS task status. Returns `{ status: "running" \| "complete" \| "failed" \| "error" }`. |
+| `/api/eval/documents` | GET | Returns `{ results: Record<eval_row_key, DocEvalResult> }` from `alerts/doc_eval_results_table.jsonl`. Key is `eval_row_key` when present, otherwise `agent_call_id`. |
+| `/api/eval/documents` | POST | Fires ECS RunTask with CMD override `["python", "-m", "eval.run_doc_eval", "--agent-call-ids", "<id>"]`. Body: `{ agent_call_id }`. Returns `{ taskId }`. |
+| `/api/eval/documents` | DELETE | Removes eval results for a given `agent_call_id` from `doc_eval_results_table.jsonl`. Body: `{ agent_call_id }`. |
+| `/api/eval/documents/[taskId]` | GET | Polls ECS task status for document eval runs. Same response shape as `/api/eval/[taskId]`. |
+| `/api/bubble/sync` | GET | Returns `bubble_action` preview for a given `agent_call_id` (query param). Used by modal before confirm. |
+| `/api/bubble/sync` | POST | Invokes the `web-change-tracker-prod-bubble-sync` Lambda synchronously (`InvocationType: RequestResponse`). Body: `{ agent_call_id, action? }`. `action` values: `"all"`, `"agenda_items"`, `"library_item"`, `"event"`. Returns `{ ok, bubble_library_item_id?, bubble_event_id?, eidarix_agenda_item_ids? }`. |
+| `/api/bubble/record` | GET | Fetches current field values from Bubble for a given `agent_call_id` and `object_type`. Returns `{ found, id, fields }`. Used by `ContentGateModal` for org pre-validation and UPDATE previews. |
+| `/api/ingest/approve-transcript` | POST | Generates presigned S3 GET URL for `transcript_s3_key`, calls the newsreel ingest API, patches alert row to `ingest_status: "approved"`. Body: `{ agent_call_id }`. |
+| `/api/ingest/approve-document` | POST | Calls doc ingest API, patches doc extraction row to `ingest_status: "approved"`. Body: `{ agent_call_id, library_item_url }`. |
+| `/api/ingest/reject` | POST | Patches row to `ingest_status: "rejected"`. Body: `{ table: "alerts"\|"docs", agent_call_id, library_item_url? }`. |
+| `/api/ingest/manual-document-url` | POST | Direct one-off URL ingest — no row created. Body: `{ url, filename }`. |
+| `/api/ingest/upload-transcript-url` | POST | Returns presigned S3 PUT URL for manual transcript upload. Body: `{ agent_call_id, filename }`. Returns `{ upload_url, s3_key }`. |
+| `/api/ingest/trigger-manual-chunk` | POST | Legacy — starts ECS task in `MANUAL_CHUNK` mode. No longer called from the dashboard. Body: `{ agent_call_id, transcript_s3_key }`. |
 
 ## Deployment
 
