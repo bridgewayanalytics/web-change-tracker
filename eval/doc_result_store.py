@@ -347,3 +347,11 @@ def store_doc_eval_results(eval_rows: list[dict], eval_run_id: str) -> None:
     # can do an exact field lookup instead of recomputing the key from row fields.
     # This means the mapping never breaks when key generation logic changes.
     _stamp_eval_row_keys(client, bucket, eval_rows)
+
+    # Regenerate the score report after every successful write so the dashboard
+    # banner stays current without waiting for the full run to complete.
+    try:
+        from eval.doc_score_reporter import generate_score_report
+        generate_score_report()
+    except Exception:
+        log.warning("doc_result_store: score report regeneration failed", exc_info=True)

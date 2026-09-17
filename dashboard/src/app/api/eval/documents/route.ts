@@ -5,6 +5,7 @@ import {
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import { ECSClient, RunTaskCommand } from "@aws-sdk/client-ecs";
+import type { DocScoreReport } from "./report/route";
 
 export const dynamic = "force-dynamic";
 
@@ -64,6 +65,63 @@ async function loadEvalMap(): Promise<Record<string, DocEvalEntry>> {
   } catch {
     return {};
   }
+}
+
+const REPORT_KEY = "alerts/doc_eval_score_report.json";
+
+async function regenerateScoreReport(remainingRows: Record<string, DocEvalEntry>): Promise<void> {
+  const CORRECT = "Correct";
+  const PARTIAL = "Partially Correct";
+  const INCORRECT = "Incorrect";
+
+  function normalize(score: string): string {
+    const s = score.trim().toLowerCase();
+    if (s.startsWith("correct")) return CORRECT;
+    if (s.includes("partial")) return PARTIAL;
+    return INCORRECT;
+  }
+
+  type Counts = { [CORRECT]: number; [PARTIAL]: number; [INCORRECT]: number };
+  const fieldCounts: Record<string, Counts> = {};
+  let totalRows = 0;
+  const overall: Counts = { [CORRECT]: 0, [PARTIAL]: 0, [INCORRECT]: 0 };
+
+  for (const row of Object.values(remainingRows)) {
+    const scores = row.eval_scores;
+    if (!scores || typeof scores !== "object" || Object.keys(scores).length === 0) continue;
+    totalRows++;
+    for (const [field, entry] of Object.entries(scores)) {
+      if (!entry || typeof entry !== "object") continue;
+      const bucket = normalize(String(entry.score ?? ""));
+      if (!fieldCounts[field]) fieldCounts[field] = { [CORRECT]: 0, [PARTIAL]: 0, [INCORRECT]: 0 };
+      fieldCounts[field][bucket as keyof Counts]++;
+      overall[bucket as keyof Counts]++;
+    }
+  }
+
+  const totalScores = overall[CORRECT] + overall[PARTIAL] + overall[INCORRECT];
+  const overallPct = totalScores > 0 ? Math.round(overall[CORRECT] / totalScores * 1000) / 10 : 0;
+
+  const byField = Object.entries(fieldCounts).map(([field, counts]) => {
+    const total = counts[CORRECT] + counts[PARTIAL] + counts[INCORRECT];
+    const pct = total > 0 ? Math.round(counts[CORRECT] / total * 1000) / 10 : 0;
+    return { field, correct: counts[CORRECT], partially_correct: counts[PARTIAL], incorrect: counts[INCORRECT], total, accuracy_pct: pct };
+  }).sort((a, b) => a.accuracy_pct - b.accuracy_pct || a.field.localeCompare(b.field));
+
+  const report: DocScoreReport = {
+    generated_at: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+    triggered_by_run: "dashboard-delete",
+    total_rows: totalRows,
+    overall: { correct: overall[CORRECT], partially_correct: overall[PARTIAL], incorrect: overall[INCORRECT], total_scores: totalScores, accuracy_pct: overallPct },
+    by_field: byField,
+  };
+
+  await getS3().send(new PutObjectCommand({
+    Bucket: BUCKET,
+    Key: REPORT_KEY,
+    Body: JSON.stringify(report, null, 2),
+    ContentType: "application/json",
+  }));
 }
 
 async function saveEvalMap(map: Record<string, DocEvalEntry>): Promise<void> {
@@ -173,6 +231,7 @@ export async function DELETE(request: NextRequest) {
     }
     for (const k of keysToDelete) delete map[k];
     await saveEvalMap(map);
+    try { await regenerateScoreReport(map); } catch { /* non-fatal */ }
     return NextResponse.json({ ok: true, deleted: true });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
