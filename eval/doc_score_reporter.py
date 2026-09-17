@@ -22,6 +22,36 @@ _SCORE_CORRECT = "Correct"
 _SCORE_PARTIALLY = "Partially Correct"
 _SCORE_INCORRECT = "Incorrect"
 
+# Fields that should never appear in the score report, regardless of what old eval
+# runs may have scored. Includes pipeline metadata, library-item identity fields
+# (sent to agent as context only), eval bookkeeping, and legacy field names that
+# have been superseded by the current schema.
+_EXCLUDE_SCORE_FIELDS = {
+    # Pipeline / eval metadata
+    "config_hash", "overall_summary", "doc_extraction_id",
+    "eval_run_id", "eval_timestamp", "eval_row_key", "eval_scores",
+    "run_id", "run_timestamp", "target_id", "source_url", "agent_call_id",
+    "last_rerun_at", "extraction_source", "ingest_status",
+    "document_url_web_tracking_agent",
+    # Library item identity (context only, not scored)
+    "library_item_title", "library_item_url", "library_item_file_name",
+    # Bubble sync fields
+    "bubble_action", "bubble_sync_status", "bubble_sync_error",
+    "bubble_event_id", "bubble_library_item_id", "eidarix_agenda_item_ids",
+    # Recording / transcript
+    "recording_s3_key", "transcript_s3_key", "transcript_chunks_s3_key",
+    "manual_transcript_s3_key",
+    # Legacy / superseded field names (old schema, very low sample counts)
+    "organization_or_publisher",
+    "agenda_items",
+    "agenda_items_official",
+    "agenda_items_official_id",
+}
+
+# Fields with fewer than this many scored rows are suppressed as statistically
+# insignificant (typically old-schema legacy fields not caught by _EXCLUDE_SCORE_FIELDS).
+_MIN_FIELD_SAMPLES = 50
+
 
 def _get_bucket() -> str:
     return (
@@ -82,6 +112,8 @@ def generate_score_report(triggered_by_run: str | None = None) -> dict:
 
         total_rows += 1
         for field, entry in scores.items():
+            if field in _EXCLUDE_SCORE_FIELDS:
+                continue
             if not isinstance(entry, dict):
                 continue
             score_val = entry.get("score", "")
@@ -96,10 +128,14 @@ def generate_score_report(triggered_by_run: str | None = None) -> dict:
     total_scores = sum(overall.values())
     overall_accuracy = round(overall[_SCORE_CORRECT] / total_scores * 100, 1) if total_scores else 0.0
 
-    # Per-field breakdown sorted by accuracy ascending (weakest first)
+    # Per-field breakdown sorted by accuracy ascending (weakest first).
+    # Fields with too few samples are suppressed (likely legacy schema rows).
     by_field = []
     for field, counts in field_counts.items():
         total = sum(counts.values())
+        if total < _MIN_FIELD_SAMPLES:
+            log.debug("doc_score_reporter: suppressing field %r — only %d samples (< %d)", field, total, _MIN_FIELD_SAMPLES)
+            continue
         acc = round(counts[_SCORE_CORRECT] / total * 100, 1) if total else 0.0
         by_field.append({
             "field": field,
