@@ -51,3 +51,53 @@ resource "aws_iam_role_policy" "github_actions_dynamodb" {
     ]
   })
 }
+
+resource "aws_iam_role_policy" "github_actions_sns_cloudwatch" {
+  name = "terraform-sns-cloudwatch"
+  role = data.aws_iam_role.github_actions.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "SNSManage"
+        Effect = "Allow"
+        Action = [
+          "sns:CreateTopic",
+          "sns:DeleteTopic",
+          "sns:GetTopicAttributes",
+          "sns:SetTopicAttributes",
+          "sns:ListTagsForResource",
+          "sns:TagResource",
+          "sns:UntagResource",
+          "sns:Subscribe",
+          "sns:Unsubscribe",
+          "sns:GetSubscriptionAttributes",
+          "sns:ListSubscriptionsByTopic",
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "CloudWatchAlarmsManage"
+        Effect = "Allow"
+        Action = [
+          "cloudwatch:PutMetricAlarm",
+          "cloudwatch:DeleteAlarms",
+          "cloudwatch:DescribeAlarms",
+          "cloudwatch:ListTagsForResource",
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "LogsMetricFilterManage"
+        Effect = "Allow"
+        Action = [
+          "logs:PutMetricFilter",
+          "logs:DeleteMetricFilter",
+          "logs:DescribeMetricFilters",
+        ]
+        Resource = "*"
+      },
+    ]
+  })
+}
