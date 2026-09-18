@@ -1,9 +1,10 @@
 # Production Dockerfile for web-change-tracker
 # Uses official Playwright Python base with Chromium pre-installed for reliable ECS runs
 # https://playwright.dev/python/docs/docker
-
-ARG PLAYWRIGHT_VERSION=v1.62.0-noble
-FROM mcr.microsoft.com/playwright/python:${PLAYWRIGHT_VERSION}
+#
+# IMPORTANT: When bumping this version, also update playwright==X.Y.Z in requirements.txt
+# to the matching version (same X.Y.Z). Dependabot opens grouped PRs that update both.
+FROM mcr.microsoft.com/playwright/python:v1.62.0-noble
 
 WORKDIR /app
 

@@ -1,0 +1,27 @@
+version: 2
+updates:
+  # Playwright Docker base image — tracks mcr.microsoft.com/playwright/python tags
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      playwright:
+        patterns:
+          - "mcr.microsoft.com/playwright/*"
+
+  # Python pip dependencies — tracks playwright==X.Y.Z in requirements.txt
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      playwright:
+        patterns:
+          - "playwright"
+    # Only open PRs for packages that are explicitly pinned (==)
+    # so unrelated transitive deps don't create noise
+    allow:
+      - dependency-name: "playwright"

@@ -56,6 +56,20 @@ cp infra/lambda/bubble_sync/handler.py "$LAMBDA_BUILD/"
 (cd "$LAMBDA_BUILD" && zip -r "$REPO_ROOT/infra/lambda/bubble_sync.zip" . -q)
 echo "    Lambda zip: infra/lambda/bubble_sync.zip ($(du -sh "$REPO_ROOT/infra/lambda/bubble_sync.zip" | cut -f1))"
 
+echo "==> Verifying Playwright version consistency..."
+_PIP_VER=$(grep '^playwright==' "$REPO_ROOT/requirements.txt" | cut -d= -f3)
+_DOCKER_VER=$(grep '^FROM mcr.microsoft.com/playwright/python:' "$REPO_ROOT/Dockerfile" | sed 's|FROM mcr.microsoft.com/playwright/python:v||' | sed 's/-noble.*//')
+if [[ -z "$_PIP_VER" || -z "$_DOCKER_VER" ]]; then
+  echo "ERROR: Could not parse Playwright version from requirements.txt or Dockerfile."
+  exit 1
+fi
+if [[ "$_PIP_VER" != "$_DOCKER_VER" ]]; then
+  echo "ERROR: Playwright version mismatch — pip==${_PIP_VER} but Docker base=v${_DOCKER_VER}-noble."
+  echo "  Update both to the same version before deploying."
+  exit 1
+fi
+echo "    Playwright version: ${_PIP_VER} (pip and Docker in sync)"
+
 echo "==> Building Docker image (tag=$IMAGE_TAG)..."
 echo "    (Image must include spike.py with --bubble-enrich, --bubble-report, --emit-bubble-json support.)"
 docker buildx build --platform linux/amd64 --load -t "${ECR_URL}:${IMAGE_TAG}" .
