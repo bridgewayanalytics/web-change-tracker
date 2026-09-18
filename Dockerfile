@@ -4,7 +4,7 @@
 #
 # IMPORTANT: When bumping this version, also update playwright==X.Y.Z in requirements.txt
 # to the matching version (same X.Y.Z). Dependabot opens grouped PRs that update both.
-FROM mcr.microsoft.com/playwright/python:v1.62.0-noble
+FROM mcr.microsoft.com/playwright/python:v1.63.0-noble
 
 WORKDIR /app
 
