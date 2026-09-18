@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { auth0 } from "@/lib/auth0";
 import { NavLinks } from "@/components/NavLinks";
+import { HealthDot } from "@/components/HealthDot";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -26,6 +28,9 @@ export default async function RootLayout({
       <body className="antialiased">
         <nav className="border-b border-gray-200 bg-white px-8 py-3 flex items-center gap-6">
           <NavLinks />
+          <Suspense fallback={<span className="inline-block w-2.5 h-2.5 rounded-full bg-gray-200" />}>
+            <HealthDot />
+          </Suspense>
           <div className="ml-auto flex items-center gap-4">
             {user && (
               <span className="text-xs text-gray-500">{user.email ?? user.name}</span>

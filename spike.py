@@ -765,13 +765,35 @@ def _fetch_with_retry(get_html: Callable[[], str], url: str) -> str:
     raise last_err  # type: ignore[misc]
 
 
-def fetch_page(url: str) -> str:
+def fetch_page(url: str, target_id: str = "") -> str:
+    import health.run_tracker as _ht
+    _key = target_id or url
+    pw_ok: "bool | None" = None
+    pw_err: "str | None" = None
+
     if USE_PLAYWRIGHT:
         try:
-            return _fetch_with_retry(lambda: fetch_with_playwright(url), url)
+            html = _fetch_with_retry(lambda: fetch_with_playwright(url), url)
+            _ht.record_fetch(url=url, target_id=_key, playwright_tried=True,
+                             playwright_ok=True, playwright_error=None,
+                             final_method="playwright", success=True)
+            return html
         except Exception as e:
+            pw_ok = False
+            pw_err = str(e)[:300]
             log.warning("Playwright failed, falling back to requests: %s", e)
-    return _fetch_with_retry(lambda: fetch_with_requests(url), url)
+
+    try:
+        html = _fetch_with_retry(lambda: fetch_with_requests(url), url)
+        _ht.record_fetch(url=url, target_id=_key, playwright_tried=USE_PLAYWRIGHT,
+                         playwright_ok=pw_ok, playwright_error=pw_err,
+                         final_method="requests", success=True)
+        return html
+    except Exception as e:
+        _ht.record_fetch(url=url, target_id=_key, playwright_tried=USE_PLAYWRIGHT,
+                         playwright_ok=pw_ok, playwright_error=pw_err,
+                         final_method="requests", success=False)
+        raise
 
 
 # Safe allowlist of consent/cookie UI selectors (exact id or class match only)
@@ -1427,7 +1449,7 @@ def process_target(
     """Process one target: fetch, extract, diff, save, print."""
     log.info("--- %s ---", label)
     log.info("Fetching %s...", url)
-    html = fetch_page(url)
+    html = fetch_page(url, target_id=target_id)
     # Archive raw HTML to S3 (non-blocking, skipped if HTML_SNAPSHOT_BUCKET not set)
     if run_id and run_timestamp:
         from storage.html_snapshot_s3 import store_html_snapshot
@@ -1482,6 +1504,11 @@ def process_target(
                 "notes": None,
             })
     change = compute_change(prev, page_hash, curr_for_diff)
+
+    import health.run_tracker as _ht
+    _ht.record_change(target_id=target_id,
+                      page_changed=bool(change.get("page_changed")),
+                      first_run=bool(change.get("first_run")))
 
     if run_id and run_timestamp and (change.get("page_changed") or change.get("first_run")):
         from storage.page_change_s3 import store_page_change
@@ -1655,6 +1682,12 @@ def _run_pipeline_agents(change_events: list[dict], run_id: str = "") -> None:
         extract_page_change,
     )
 
+    import health.run_tracker as _ht
+    _pgvector_available = (
+        os.environ.get("PGVECTOR_ENABLED", "").strip().lower() in ("1", "true", "yes")
+        and bool(os.environ.get("DATABASE_IP", "").strip())
+    )
+
     # When PAGE_CHANGE_AGENT_ENABLED, run LLM agent on each changed event and
     # merge agent-extracted by_type data into the change event before payload building.
     if PAGE_CHANGE_AGENT_ENABLED:
@@ -1675,10 +1708,21 @@ def _run_pipeline_agents(change_events: list[dict], run_id: str = "") -> None:
                 "group": ev.get("group", ""),
                 "tags": ev.get("tags", []),
             }
-            agent_alerts = extract_page_change(before_html, after_html, target_context)
+            _ev_target_id = ev.get("target_id", ev.get("url", ""))
+            try:
+                agent_alerts = extract_page_change(before_html, after_html, target_context)
+            except Exception as _agent_exc:
+                log.error("page_change_agent failed for %s (continuing): %s", _ev_target_id, _agent_exc)
+                _ht.record_agent(target_id=_ev_target_id, agent_ok=False,
+                                 pgvector_used=_pgvector_available,
+                                 real_alert_count=0, error=str(_agent_exc)[:200])
+                continue
             # Filter out "No Meaningful Change" alerts (handles both alert_type and Alert Type1 keys)
             from bubble.page_change_agent import _is_no_meaningful_change
             agent_alerts = [a for a in agent_alerts if not _is_no_meaningful_change(a)]
+            _ht.record_agent(target_id=_ev_target_id, agent_ok=True,
+                             pgvector_used=_pgvector_available,
+                             real_alert_count=len(agent_alerts))
             if agent_alerts:
                 # Store the list of alert dicts for downstream storage
                 ev["__agent_output"] = agent_alerts
@@ -1769,6 +1813,8 @@ def _run_pipeline_agents(change_events: list[dict], run_id: str = "") -> None:
                         doc_result["ingest_status"] = "pending"
         if doc_results:
             ev["__doc_extraction"] = doc_results
+        _ht.record_doc_extraction(target_id=ev.get("target_id", ev.get("url", "")),
+                                  doc_count=len(doc_results))
 
     # Match meeting alerts to audio recordings and transcribe
     try:
@@ -3220,6 +3266,9 @@ def main() -> None:
     run_id = (os.environ.get("RUN_ID") or "").strip() or f"run-{run_timestamp}"
     targets = load_targets(args.targets_file)
 
+    from health.run_tracker import RunTracker
+    tracker = RunTracker(run_id, run_timestamp, targets_total=len(targets or []))
+
     # Filter by target_id (single) or target_ids if provided
     target_ids_filter: set[str] | None = None
     if args.target_id:
@@ -3285,6 +3334,8 @@ def main() -> None:
             return ev
         except Exception as e:
             log.error("Target %s failed: %s", label, e, exc_info=False)
+            import health.run_tracker as _ht
+            _ht.record_target_error(target_id=target_id, url=url or "", error=str(e)[:200])
             ev = {"target_id": target_id, "label": label, "url": url, "error": str(e)}
             for k in ("org_id", "org_path", "group", "tags", "include_hash_changes"):
                 if k in t:
@@ -3318,10 +3369,13 @@ def main() -> None:
     log.info("Report written to %s", REPORT_FILE)
 
     # Write UI-ready alerts output: runs/<date>/<run_id>/alerts.json + per-page agent_output/doc_extractions
+    import health.run_tracker as _ht
     try:
         from storage.alert_s3 import store_run_alerts
         store_run_alerts(change_events, run_id, run_timestamp)
+        _ht.record_storage(ok=True)
     except Exception as e:
+        _ht.record_storage(ok=False, error=str(e)[:200])
         log.warning("Alert S3 write failed (non-fatal): %s", e)
 
     # "Meaningful changes" at the target level (diffs / first_run / include_hash_changes)
@@ -3348,6 +3402,8 @@ def main() -> None:
         uri = s3_append(run_timestamp, changelog_events)
         if uri:
             log.info("Change events appended to %s", uri)
+
+    tracker.finalize()
 
 
 if __name__ == "__main__":
