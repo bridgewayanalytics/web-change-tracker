@@ -36,4 +36,7 @@ ALERT_PIPELINE_FIELDS: frozenset[str] = frozenset({
     "eval_timestamp",
     "eval_scores",
     "eval_row_key",
+    # Top-level field added when eval_scores is flattened onto re-evaluated rows;
+    # it's the agent's narrative summary, not a scoreable data field.
+    "overall_summary",
 })

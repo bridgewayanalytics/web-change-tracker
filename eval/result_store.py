@@ -97,8 +97,10 @@ def _put_conditional(client, bucket: str, body: bytes, eval_run_id: str, etag: s
         if code in ("PreconditionFailed", "ConditionalRequestConflict"):
             return False
         raise
-    except TypeError:
-        # boto3 version doesn't accept IfMatch — fall back to unconditional put
+    except (TypeError, Exception) as e:
+        # ParamValidationError or TypeError: boto3 version doesn't support IfMatch
+        if "IfMatch" not in str(e) and not isinstance(e, TypeError):
+            raise
         kwargs.pop("IfMatch", None)
         client.put_object(**kwargs)
         return True

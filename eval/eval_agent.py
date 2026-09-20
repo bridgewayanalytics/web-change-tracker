@@ -19,6 +19,19 @@ from storage.alert_schema import ALERT_PIPELINE_FIELDS
 
 log = logging.getLogger(__name__)
 
+# Persistent event loop for pgvector async calls — reused across rows in the same
+# process to avoid "Event loop is closed" errors from httpx connection pool cleanup
+# that occurs when asyncio.run() creates and immediately destroys a loop per call.
+_eval_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _get_eval_loop() -> asyncio.AbstractEventLoop:
+    global _eval_loop
+    if _eval_loop is None or _eval_loop.is_closed():
+        _eval_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_eval_loop)
+    return _eval_loop
+
 _CHAT_ID = "web-extraction-qa-agent"
 
 _FALLBACK_SYSTEM_PROMPT = """\
@@ -250,7 +263,7 @@ def evaluate_row(
             model, namespaces, row.get("agent_call_id"),
         )
         try:
-            result = asyncio.run(
+            result = _get_eval_loop().run_until_complete(
                 _run_with_pgvector(system_prompt, user_message, model, reasoning_effort, namespaces, field_names)
             )
             if not isinstance(result, dict):
