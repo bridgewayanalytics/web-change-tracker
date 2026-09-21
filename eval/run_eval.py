@@ -66,9 +66,6 @@ def run(
             }, indent=2))
         return rows
 
-    from eval.eval_agent import open_eval_pool, close_eval_pool
-    open_eval_pool()
-
     # Group rows by agent_call_id so siblings are evaluated together.
     # Siblings share the same HTML — fetch once per group.
     groups: dict[str, list[dict]] = {}
@@ -128,8 +125,6 @@ def run(
                     "eval_row_key": eval_row_key,
                 }
                 eval_rows.append(eval_row)
-    finally:
-        close_eval_pool()
 
     store_eval_results(eval_rows, eval_run_id)
     log.info("Eval run %s complete — %d rows evaluated", eval_run_id, len(eval_rows))

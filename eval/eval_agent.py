@@ -19,19 +19,6 @@ from storage.alert_schema import ALERT_PIPELINE_FIELDS
 
 log = logging.getLogger(__name__)
 
-# Persistent event loop for pgvector async calls — reused across rows in the same
-# process to avoid "Event loop is closed" errors from httpx connection pool cleanup
-# that occurs when asyncio.run() creates and immediately destroys a loop per call.
-_eval_loop: asyncio.AbstractEventLoop | None = None
-
-
-def _get_eval_loop() -> asyncio.AbstractEventLoop:
-    global _eval_loop
-    if _eval_loop is None or _eval_loop.is_closed():
-        _eval_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(_eval_loop)
-    return _eval_loop
-
 _CHAT_ID = "web-extraction-qa-agent"
 
 _FALLBACK_SYSTEM_PROMPT = """\
@@ -75,24 +62,6 @@ def _get_pgvector_namespaces() -> list[str]:
     if isinstance(ns, list):
         return ns
     return _FALLBACK_PGVECTOR_NAMESPACES
-
-
-def open_eval_pool() -> None:
-    """Open the asyncpg pool once for the entire eval run (pgvector path only)."""
-    if not _pgvector_enabled():
-        return
-    from bubble.pgvector.client import init_pg_pool
-    _get_eval_loop().run_until_complete(init_pg_pool())
-
-
-def close_eval_pool() -> None:
-    """Close the asyncpg pool after the eval run completes."""
-    if not _pgvector_enabled():
-        return
-    from bubble.pgvector.client import close_pg_pool
-    loop = _get_eval_loop()
-    if not loop.is_closed():
-        loop.run_until_complete(close_pg_pool())
 
 
 def _pgvector_enabled() -> bool:
@@ -200,32 +169,38 @@ async def _run_with_pgvector(
          as needed, then writes a free-text evaluation analysis.
       2. chat_json() call — formats the free-text into structured per-field scores.
 
-    Pool lifecycle is managed externally (init once, close once at run end via
-    open_eval_pool / close_eval_pool). Do NOT open/close the pool here — repeated
-    asyncpg pool teardown on a persistent event loop causes SIGSEGV through native
-    SSL/connection cleanup racing with the new pool creation.
+    Pool lifecycle is owned here — opened at entry, closed in finally. Called via
+    asyncio.run() so every eval row gets a fresh event loop. This ensures asyncpg's
+    native SSL cleanup runs on the same loop that created the pool, preventing the
+    heap corruption (double free / SIGSEGV) that occurs when background async tasks
+    from the Agents SDK linger on a persistent loop and race with pool teardown.
     """
-    from agents import Agent, Runner, ModelSettings
-    from agents.model_settings import Reasoning
-    from bubble.pgvector.search_tool import (
-        set_pgvector_namespaces,
-        search_knowledge_base,
-        list_available_documents,
-    )
+    from bubble.pgvector.client import init_pg_pool, close_pg_pool
+    await init_pg_pool()
+    try:
+        from agents import Agent, Runner, ModelSettings
+        from agents.model_settings import Reasoning
+        from bubble.pgvector.search_tool import (
+            set_pgvector_namespaces,
+            search_knowledge_base,
+            list_available_documents,
+        )
 
-    set_pgvector_namespaces(namespaces)
-    agent = Agent(
-        name=_CHAT_ID,
-        instructions=system_prompt,
-        tools=[search_knowledge_base, list_available_documents],
-        model=model,
-        model_settings=ModelSettings(
-            reasoning=Reasoning(effort=reasoning_effort),
-            verbosity=reasoning_effort,
-        ),
-    )
-    result = await Runner.run(agent, input=user_content)
-    gathered = result.final_output or ""
+        set_pgvector_namespaces(namespaces)
+        agent = Agent(
+            name=_CHAT_ID,
+            instructions=system_prompt,
+            tools=[search_knowledge_base, list_available_documents],
+            model=model,
+            model_settings=ModelSettings(
+                reasoning=Reasoning(effort=reasoning_effort),
+                verbosity=reasoning_effort,
+            ),
+        )
+        result = await Runner.run(agent, input=user_content)
+        gathered = result.final_output or ""
+    finally:
+        await close_pg_pool()
 
     if not gathered:
         return {"error": "Agent returned empty output"}
@@ -289,7 +264,7 @@ def evaluate_row(
             model, namespaces, row.get("agent_call_id"),
         )
         try:
-            result = _get_eval_loop().run_until_complete(
+            result = asyncio.run(
                 _run_with_pgvector(system_prompt, user_message, model, reasoning_effort, namespaces, field_names)
             )
             if not isinstance(result, dict):
