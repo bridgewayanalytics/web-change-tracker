@@ -51,7 +51,10 @@ class _FetchResult:
 class _TargetHealth:
     __slots__ = ("target_id", "url", "fetch", "page_changed", "first_run",
                  "agent_called", "agent_ok", "pgvector_used",
-                 "real_alert_count", "doc_extraction_count", "error")
+                 "real_alert_count", "doc_extraction_count",
+                 "doc_attempted", "doc_failed", "doc_errors",
+                 "snapshot_stored", "snapshot_error",
+                 "error")
 
     def __init__(self, target_id: str, url: str = ""):
         self.target_id = target_id
@@ -64,6 +67,11 @@ class _TargetHealth:
         self.pgvector_used: bool | None = None
         self.real_alert_count = 0
         self.doc_extraction_count = 0
+        self.doc_attempted = 0
+        self.doc_failed = 0
+        self.doc_errors: list[str] = []
+        self.snapshot_stored: bool | None = None
+        self.snapshot_error: str | None = None
         self.error: str | None = None
 
 
@@ -81,6 +89,8 @@ class RunTracker:
         self._targets: dict[str, _TargetHealth] = {}
         self._storage_ok: bool | None = None
         self._storage_error: str | None = None
+        self._email_send_ok: bool | None = None
+        self._email_send_error: str | None = None
         _ACTIVE = self
 
     def _target(self, target_id: str, url: str = "") -> _TargetHealth:
@@ -111,6 +121,26 @@ class RunTracker:
 
     def record_doc_extraction(self, target_id: str, doc_count: int) -> None:
         self._target(target_id).doc_extraction_count += doc_count
+
+    def record_doc_extraction_attempt(self, target_id: str, name: str, ok: bool, error: "str | None" = None) -> None:
+        t = self._target(target_id)
+        t.doc_attempted += 1
+        if ok:
+            t.doc_extraction_count += 1
+        else:
+            t.doc_failed += 1
+            if error and len(t.doc_errors) < 3:
+                t.doc_errors.append(f"{name[:50]}: {error[:120]}")
+
+    def record_snapshot(self, target_id: str, ok: bool, error: "str | None" = None) -> None:
+        t = self._target(target_id)
+        t.snapshot_stored = ok
+        if error:
+            t.snapshot_error = error[:200]
+
+    def record_email_send(self, ok: bool, error: "str | None" = None) -> None:
+        self._email_send_ok = ok
+        self._email_send_error = error
 
     def record_storage(self, ok: bool, error: "str | None" = None) -> None:
         self._storage_ok = ok
@@ -184,6 +214,39 @@ class RunTracker:
                 f"Possible HTML capture or agent configuration issue."
             )
 
+        # Doc extraction failures
+        total_doc_attempted = sum(t.doc_attempted for t in targets)
+        total_doc_failed = sum(t.doc_failed for t in targets)
+        if total_doc_attempted > 0 and total_doc_failed > 0:
+            rate = total_doc_failed / total_doc_attempted
+            sample_errors = "; ".join(
+                e for t in targets for e in t.doc_errors
+            )[:200]
+            msg = (
+                f"Doc extraction: {total_doc_failed}/{total_doc_attempted} documents failed"
+                + (f" — {sample_errors}" if sample_errors else "")
+            )
+            if rate >= 0.5:
+                flags_red.append(msg)
+            else:
+                flags_yellow.append(msg)
+
+        # HTML snapshot write failures (breaks rerun feature)
+        snapshot_failed = [t for t in targets if t.snapshot_stored is False]
+        if snapshot_failed:
+            ids = ", ".join(t.target_id for t in snapshot_failed[:3])
+            sample = snapshot_failed[0].snapshot_error or "unknown"
+            flags_yellow.append(
+                f"HTML snapshot storage failed for {len(snapshot_failed)} target(s) "
+                f"({ids}): {sample[:120]}"
+            )
+
+        # Alert email failed to send when there were real changes
+        if self._email_send_ok is False and total_real_alerts > 0:
+            flags_yellow.append(
+                f"Alert email failed to send: {self._email_send_error or 'unknown error'}"
+            )
+
         if flags_red:
             return STATUS_RED, flags_red + flags_yellow
         if flags_yellow:
@@ -221,7 +284,11 @@ class RunTracker:
                 "agents_ok": len([t for t in targets if t.agent_ok]),
                 "pgvector_connected": len([t for t in targets if t.pgvector_used]),
                 "real_alerts": sum(t.real_alert_count for t in targets),
-                "doc_extractions": sum(t.doc_extraction_count for t in targets),
+                "doc_extractions_ok": sum(t.doc_extraction_count for t in targets),
+                "doc_extractions_attempted": sum(t.doc_attempted for t in targets),
+                "doc_extractions_failed": sum(t.doc_failed for t in targets),
+                "snapshots_failed": len([t for t in targets if t.snapshot_stored is False]),
+                "email_sent": self._email_send_ok,
                 "storage_ok": self._storage_ok,
             },
             # First 10 playwright errors for the email body
@@ -358,7 +425,10 @@ def _build_body(report: dict) -> str:
         f"Agent calls:    {s['agents_ok']}/{s['agents_called']} succeeded",
         f"pgvector:       {s['pgvector_connected']} targets connected",
         f"Real alerts:    {s['real_alerts']}",
-        f"Doc extracts:   {s['doc_extractions']}",
+        f"Doc extracts:   {s['doc_extractions_ok']}/{s['doc_extractions_attempted']} succeeded"
+            + (f"  ({s['doc_extractions_failed']} failed)" if s["doc_extractions_failed"] else ""),
+        f"Snapshots:      {'✗ ' + str(s['snapshots_failed']) + ' failed' if s['snapshots_failed'] else '✓ OK'}",
+        f"Alert email:    {'✓ sent' if s['email_sent'] else '✗ FAILED' if s['email_sent'] is False else 'N/A (no changes)'}",
         f"S3 storage:     {'✓ OK' if s['storage_ok'] else '✗ FAILED' if s['storage_ok'] is False else 'unknown'}",
     ]
 
@@ -416,6 +486,33 @@ def record_doc_extraction(*, target_id: str, doc_count: int) -> None:
         return
     try:
         _ACTIVE.record_doc_extraction(target_id, doc_count)
+    except Exception:
+        pass
+
+
+def record_doc_extraction_attempt(*, target_id: str, name: str, ok: bool, error: "str | None" = None) -> None:
+    if _ACTIVE is None:
+        return
+    try:
+        _ACTIVE.record_doc_extraction_attempt(target_id, name, ok, error)
+    except Exception:
+        pass
+
+
+def record_snapshot(*, target_id: str, ok: bool, error: "str | None" = None) -> None:
+    if _ACTIVE is None:
+        return
+    try:
+        _ACTIVE.record_snapshot(target_id, ok, error)
+    except Exception:
+        pass
+
+
+def record_email_send(*, ok: bool, error: "str | None" = None) -> None:
+    if _ACTIVE is None:
+        return
+    try:
+        _ACTIVE.record_email_send(ok, error)
     except Exception:
         pass
 

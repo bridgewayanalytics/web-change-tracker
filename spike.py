@@ -1555,18 +1555,23 @@ def process_target(
 
     if run_id and run_timestamp and (change.get("page_changed") or change.get("first_run")):
         from storage.page_change_s3 import store_page_change
-        store_page_change(
-            target_id=target_id,
-            run_id=run_id,
-            run_timestamp=run_timestamp,
-            label=label,
-            url=url,
-            before_html=prev_content_html or "",
-            after_html=content_html,
-            before_hash=change.get("before_hash"),
-            after_hash=change.get("after_hash"),
-            first_run=bool(change.get("first_run")),
-        )
+        try:
+            store_page_change(
+                target_id=target_id,
+                run_id=run_id,
+                run_timestamp=run_timestamp,
+                label=label,
+                url=url,
+                before_html=prev_content_html or "",
+                after_html=content_html,
+                before_hash=change.get("before_hash"),
+                after_hash=change.get("after_hash"),
+                first_run=bool(change.get("first_run")),
+            )
+            _ht.record_snapshot(target_id=target_id, ok=True)
+        except Exception as _snap_exc:
+            log.warning("page_change_s3: snapshot write failed for %s: %s", target_id, _snap_exc)
+            _ht.record_snapshot(target_id=target_id, ok=False, error=str(_snap_exc)[:200])
 
         try:
             from scrape.page_chunker import chunk_page
@@ -1842,18 +1847,26 @@ def _run_pipeline_agents(change_events: list[dict], run_id: str = "") -> None:
                 if not url:
                     log.warning("document_agent: skipping '%s' — no document URL (agent output N/A)", name[:80])
                     continue
-                doc_result_list = _extract_doc(
-                    name, url,
-                    alert_context=agent_output,
-                    before_html=ev.get("prev_content_html") or "",
-                    after_html=ev.get("content_html") or "",
-                )
-                log.info("document_agent: %s -> %d row(s)", name[:60], len(doc_result_list))
-                for doc_result in doc_result_list:
-                    doc_results.append({"item": item, "extraction": doc_result})
-                    relevance = doc_result.get("newsreel_relevance")
-                    if isinstance(relevance, dict) and relevance.get("status") == "Yes":
-                        doc_result["ingest_status"] = "pending"
+                _target_id = ev.get("target_id", ev.get("url", ""))
+                try:
+                    doc_result_list = _extract_doc(
+                        name, url,
+                        alert_context=agent_output,
+                        before_html=ev.get("prev_content_html") or "",
+                        after_html=ev.get("content_html") or "",
+                    )
+                    log.info("document_agent: %s -> %d row(s)", name[:60], len(doc_result_list))
+                    _ht.record_doc_extraction_attempt(target_id=_target_id, name=name,
+                                                     ok=bool(doc_result_list))
+                    for doc_result in doc_result_list:
+                        doc_results.append({"item": item, "extraction": doc_result})
+                        relevance = doc_result.get("newsreel_relevance")
+                        if isinstance(relevance, dict) and relevance.get("status") == "Yes":
+                            doc_result["ingest_status"] = "pending"
+                except Exception as _doc_exc:
+                    log.error("document_agent: extraction failed for '%s': %s", name[:60], _doc_exc)
+                    _ht.record_doc_extraction_attempt(target_id=_target_id, name=name,
+                                                     ok=False, error=str(_doc_exc)[:150])
         if doc_results:
             ev["__doc_extraction"] = doc_results
         _ht.record_doc_extraction(target_id=ev.get("target_id", ev.get("url", "")),
@@ -3435,7 +3448,12 @@ def main() -> None:
         else:
             email_body = REPORT_FILE.read_text(encoding="utf-8")
             log.info("Email body source: last_report.txt")
-        send_report(email_body, targets_changed)
+        try:
+            any_sent = send_report(email_body, targets_changed)
+            _ht.record_email_send(ok=bool(any_sent))
+        except Exception as _email_exc:
+            log.warning("send_report failed: %s", _email_exc)
+            _ht.record_email_send(ok=False, error=str(_email_exc)[:200])
 
     if os.environ.get("CHANGELOG_BUCKET", "").strip():
         from storage.changelog_s3 import append_change_events as s3_append
