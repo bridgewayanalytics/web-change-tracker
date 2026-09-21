@@ -77,6 +77,24 @@ def _get_pgvector_namespaces() -> list[str]:
     return _FALLBACK_PGVECTOR_NAMESPACES
 
 
+def open_eval_pool() -> None:
+    """Open the asyncpg pool once for the entire eval run (pgvector path only)."""
+    if not _pgvector_enabled():
+        return
+    from bubble.pgvector.client import init_pg_pool
+    _get_eval_loop().run_until_complete(init_pg_pool())
+
+
+def close_eval_pool() -> None:
+    """Close the asyncpg pool after the eval run completes."""
+    if not _pgvector_enabled():
+        return
+    from bubble.pgvector.client import close_pg_pool
+    loop = _get_eval_loop()
+    if not loop.is_closed():
+        loop.run_until_complete(close_pg_pool())
+
+
 def _pgvector_enabled() -> bool:
     if os.environ.get("PGVECTOR_ENABLED", "").strip().lower() not in ("1", "true", "yes"):
         return False
@@ -181,33 +199,33 @@ async def _run_with_pgvector(
       1. Agents SDK run — agent searches chronicles, newsreels, and ART documents
          as needed, then writes a free-text evaluation analysis.
       2. chat_json() call — formats the free-text into structured per-field scores.
+
+    Pool lifecycle is managed externally (init once, close once at run end via
+    open_eval_pool / close_eval_pool). Do NOT open/close the pool here — repeated
+    asyncpg pool teardown on a persistent event loop causes SIGSEGV through native
+    SSL/connection cleanup racing with the new pool creation.
     """
     from agents import Agent, Runner, ModelSettings
     from agents.model_settings import Reasoning
-    from bubble.pgvector.client import init_pg_pool, close_pg_pool
     from bubble.pgvector.search_tool import (
         set_pgvector_namespaces,
         search_knowledge_base,
         list_available_documents,
     )
 
-    await init_pg_pool()
-    try:
-        set_pgvector_namespaces(namespaces)
-        agent = Agent(
-            name=_CHAT_ID,
-            instructions=system_prompt,
-            tools=[search_knowledge_base, list_available_documents],
-            model=model,
-            model_settings=ModelSettings(
-                reasoning=Reasoning(effort=reasoning_effort),
-                verbosity=reasoning_effort,
-            ),
-        )
-        result = await Runner.run(agent, input=user_content)
-        gathered = result.final_output or ""
-    finally:
-        await close_pg_pool()
+    set_pgvector_namespaces(namespaces)
+    agent = Agent(
+        name=_CHAT_ID,
+        instructions=system_prompt,
+        tools=[search_knowledge_base, list_available_documents],
+        model=model,
+        model_settings=ModelSettings(
+            reasoning=Reasoning(effort=reasoning_effort),
+            verbosity=reasoning_effort,
+        ),
+    )
+    result = await Runner.run(agent, input=user_content)
+    gathered = result.final_output or ""
 
     if not gathered:
         return {"error": "Agent returned empty output"}
