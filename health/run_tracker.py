@@ -91,6 +91,7 @@ class RunTracker:
         self._storage_error: str | None = None
         self._email_send_ok: bool | None = None
         self._email_send_error: str | None = None
+        self._org_tree_live: bool | None = None
         _ACTIVE = self
 
     def _target(self, target_id: str, url: str = "") -> _TargetHealth:
@@ -145,6 +146,10 @@ class RunTracker:
     def record_storage(self, ok: bool, error: "str | None" = None) -> None:
         self._storage_ok = ok
         self._storage_error = error
+
+    def record_org_tree(self, ok: bool) -> None:
+        """Record whether the live Bubble org tree fetch succeeded."""
+        self._org_tree_live = ok
 
     def record_target_error(self, target_id: str, url: str, error: str) -> None:
         self._target(target_id, url).error = error
@@ -247,6 +252,13 @@ class RunTracker:
                 f"Alert email failed to send: {self._email_send_error or 'unknown error'}"
             )
 
+        # Org tree fell back to static file — organization assignments in agent output may be stale
+        if self._org_tree_live is False:
+            flags_yellow.append(
+                "Org tree: Bubble API fetch failed — agents ran with static prompts/org_tree.txt fallback. "
+                "Organization field assignments may be stale or incomplete."
+            )
+
         if flags_red:
             return STATUS_RED, flags_red + flags_yellow
         if flags_yellow:
@@ -290,6 +302,7 @@ class RunTracker:
                 "snapshots_failed": len([t for t in targets if t.snapshot_stored is False]),
                 "email_sent": self._email_send_ok,
                 "storage_ok": self._storage_ok,
+                "org_tree_live": self._org_tree_live,
             },
             # First 10 playwright errors for the email body
             "playwright_errors": [
@@ -430,6 +443,7 @@ def _build_body(report: dict) -> str:
         f"Snapshots:      {'✗ ' + str(s['snapshots_failed']) + ' failed' if s['snapshots_failed'] else '✓ OK'}",
         f"Alert email:    {'✓ sent' if s['email_sent'] else '✗ FAILED' if s['email_sent'] is False else 'N/A (no changes)'}",
         f"S3 storage:     {'✓ OK' if s['storage_ok'] else '✗ FAILED' if s['storage_ok'] is False else 'unknown'}",
+        f"Org tree:       {'✓ live (Bubble API)' if s['org_tree_live'] else '✗ fallback (static file)' if s['org_tree_live'] is False else 'N/A'}",
     ]
 
     if report.get("playwright_errors"):
@@ -531,5 +545,14 @@ def record_target_error(*, target_id: str, url: str, error: str) -> None:
         return
     try:
         _ACTIVE.record_target_error(target_id, url, error)
+    except Exception:
+        pass
+
+
+def record_org_tree(*, ok: bool) -> None:
+    if _ACTIVE is None:
+        return
+    try:
+        _ACTIVE.record_org_tree(ok)
     except Exception:
         pass

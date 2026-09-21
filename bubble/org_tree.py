@@ -115,12 +115,20 @@ def get_org_tree() -> str:
             return text
 
     text = _fetch_from_bubble()
+    live_ok = bool(text)
     if not text:
         text = _static_fallback()
         if text:
             log.info("org_tree: using static prompts/org_tree.txt fallback")
 
     _cache = (text, now)
+
+    # Report to health tracker on every cache refresh (not on cached hits).
+    try:
+        from health.run_tracker import record_org_tree
+        record_org_tree(ok=live_ok)
+    except Exception:
+        pass
 
     if text:
         _persist_to_s3(text)
