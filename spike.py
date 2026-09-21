@@ -728,13 +728,56 @@ def _dismiss_cookie_banner(page) -> None:
         pass  # Continue; page may have no banner
 
 
+_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/127.0.0.0 Safari/537.36"
+)
+
+_REQUESTS_HEADERS = {
+    "User-Agent": _BROWSER_UA,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+}
+
+# Masks navigator.webdriver to pass Cloudflare Managed Challenge fingerprinting
+_STEALTH_INIT_SCRIPT = """
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3]});
+Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+window.chrome = {runtime: {}};
+"""
+
+
 def fetch_with_playwright(url: str) -> str:
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.goto(url, wait_until="networkidle", timeout=15000)
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+        )
+        ctx = browser.new_context(
+            user_agent=_BROWSER_UA,
+            viewport={"width": 1920, "height": 1080},
+            locale="en-US",
+        )
+        ctx.add_init_script(_STEALTH_INIT_SCRIPT)
+        page = ctx.new_page()
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        # Wait for Cloudflare challenge to resolve if present
+        if "Just a moment" in page.title():
+            try:
+                page.wait_for_function(
+                    "document.title !== 'Just a moment...'",
+                    timeout=25000,
+                )
+                page.wait_for_load_state("domcontentloaded", timeout=10000)
+            except Exception:
+                pass
         _dismiss_cookie_banner(page)
         html = page.content()
         browser.close()
@@ -742,7 +785,7 @@ def fetch_with_playwright(url: str) -> str:
 
 
 def fetch_with_requests(url: str) -> str:
-    r = requests.get(url, timeout=15)
+    r = requests.get(url, timeout=15, headers=_REQUESTS_HEADERS)
     r.raise_for_status()
     r.encoding = r.apparent_encoding
     return r.text
