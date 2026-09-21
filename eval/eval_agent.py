@@ -207,6 +207,23 @@ async def _run_with_pgvector(
     # Step 2: format gathered analysis into structured per-field JSON scores.
     # Pass explicit field_names so the formatter scores EVERY field, not just
     # the ones the Step 1 analysis happened to mention.
+    #
+    # HARD RULES are injected here because the Step 2 formatter never sees the
+    # Step 1 system prompt. Without them, the formatter infers scores from
+    # ambiguous analysis text and violates field-level invariants (e.g. scoring
+    # alert_url Incorrect because Step 1 wrote "no evidence found in HTML").
+    _HARD_RULES = (
+        "HARD RULES — these override anything in the analysis below:\n"
+        "  • alert_url: ALWAYS score Correct. It is the configured monitoring URL, "
+        "not extracted from the HTML. Never score it Incorrect or Partially Correct.\n"
+        "  • alert_date_time / alert_date_time_et: score Correct for any valid ISO 8601 "
+        "datetime string; only Incorrect if the format is genuinely invalid.\n"
+        "  • agenda_item_title_official / agenda_item_standardized_id / agenda_item_official_id: "
+        "do NOT penalize New/Existing status — those reflect KB state at run time and cannot "
+        "be verified retroactively; score solely on title/ID accuracy.\n"
+        "  • agenda_item_title_chronicle_topics: do NOT penalize New/Existing status.\n"
+    )
+
     field_names_str = ", ".join(f'"{k}"' for k in (field_names or []))
     from bubble.openai_client import chat_json
     messages = [
@@ -223,6 +240,7 @@ async def _run_with_pgvector(
                     "Do NOT use display labels or human-readable names — use only the exact field names listed above. "
                     if field_names_str else ""
                 ) +
+                _HARD_RULES +
                 'Also include an "overall_summary" key: '
                 '{"correct": N, "partially_correct": N, "incorrect": N, "total": N, "pattern": "<systematic patterns>"}.'
             ),
