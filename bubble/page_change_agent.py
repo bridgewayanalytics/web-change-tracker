@@ -35,80 +35,9 @@ _CHAT_ID = "web-tracking-agent"
 
 # Fallback system prompt when DynamoDB config is unavailable
 _FALLBACK_SYSTEM_PROMPT = """\
-You are a structured data extraction agent. You will receive two versions of a
-web page's main content (before and after an update) and a short context object
-describing the page.
-
-Your task: identify what is NEW or CHANGED in the after version relative to the
-before version, then return a single JSON object with the following schema:
-
-{
-  "alert_type": string,
-  "alert_title": string,
-  "alert_description": string,
-  "alert_url": string | null,
-  "organization": string | null,
-  "alert_date_time": string | null,
-  "is_relevant_for_art_newsreel": boolean,
-  "events": [
-    {
-      "title": string,
-      "start_datetime": string | null,
-      "end_datetime": string | null,
-      "timezone": string | null,
-      "is_full_day": boolean,
-      "url": string | null,
-      "call_in_access_code": string | null,
-      "duration": string | null
-    }
-  ],
-  "library_items": [
-    {
-      "preliminary_title": string,
-      "url": string | null,
-      "file_name": string | null
-    }
-  ],
-  "agenda_items": [
-    {
-      "title": string,
-      "official_title": string | null,
-      "standardized_id": string | null,
-      "official_id": string | null,
-      "is_existing": boolean,
-      "chronicle_topics": [string]
-    }
-  ]
-}
-
-alert_type must be one of:
-- "New Agenda"
-- "New Materials"
-- "New Agenda & Materials"
-- "Updated Agenda"
-- "Updated Materials"
-- "Updated Agenda & Materials"
-- "New Meeting"
-- "Updated Meeting"
-- "New Request for Comment"
-- "Updated Request for Comment"
-- "New Effective Date"
-- "Updated Effective Date"
-- "New or Updated Report or Other Resource"
-- "Alert not relevant - the change was limited to carrousel or reordering of content"
-- "No Meaningful Change"
-- "Other"
-
-Rules:
-- Only include events and library_items that are NEW or CHANGED vs the before version.
-- If nothing meaningful changed, set alert_type to "No Meaningful Change".
-- If the change is only a carousel rotation or reordering with no new content, set alert_type to
-  "Alert not relevant - the change was limited to carrousel or reordering of content".
-- If the before version is empty (first run), extract all relevant items from after.
-- Set is_relevant_for_art_newsreel to true if the alert contains new substantive content
-  (documents, agenda items, meeting materials) that would be relevant for an ART Newsreel article.
-  Set to false otherwise.
-- Return ONLY valid JSON. No markdown fences, no commentary outside the JSON.
+You are a web change analysis agent. Given before and after HTML snapshots of a monitored page,
+identify what changed and return structured data describing the change.
+Return ONLY valid JSON — no markdown fences, no commentary outside the JSON.
 """
 
 # Lazily loaded from DynamoDB; None means not yet fetched
@@ -562,68 +491,10 @@ def extract_page_change(
 
         alerts = _unwrap_alerts(result)
 
-        # Backfill empty agenda arrays. The schema has no minItems constraint so the model
-        # can legally output [] when it finds nothing, but per instructions it must always
-        # include at least one N/A entry. This guard enforces that invariant in code.
-        _AGENDA_ARRAY_NA: dict[str, dict] = {
-            "agenda_item_title_chronicle_topics": {
-                "status": "N/A", "agenda_item_title": "N/A", "chronicle_topics": [],
-            },
-            "agenda_item_title_official": {"status": "N/A", "official_title": "N/A"},
-            "agenda_item_standardized_id": {"status": "N/A", "standardized_id": "N/A"},
-            "agenda_item_official_id": {"status": "N/A", "official_id": "N/A"},
-        }
-        for _alert in alerts:
-            for _field, _na_entry in _AGENDA_ARRAY_NA.items():
-                if isinstance(_alert.get(_field), list) and len(_alert[_field]) == 0:
-                    _alert[_field] = [_na_entry]
-                    log.warning(
-                        "page_change_agent: backfilled empty %s → [N/A] (call_id=%s)",
-                        _field, agent_call_id[:8],
-                    )
-
-        # Ground-truth contradiction check: find document URLs that are new in after_html.
-        # If new docs exist in the HTML, the agent cannot correctly classify as non-relevant.
-        # This fires even when step 2 faithfully echoed step 1's "not relevant" verdict and
-        # set all library fields to N/A — the HTML is authoritative.
-        _NOT_RELEVANT_TYPES = frozenset({
-            "Alert not relevant - the change was limited to carrousel or reordering of content",
-            "No Meaningful Change",
-        })
-        _doc_url_re = re.compile(
-            r'href=["\']([^"\']*\.(?:pdf|docx?|xlsx?|pptx?)[^"\']*)["\']', re.I
-        )
-        _before_doc_urls = set(_doc_url_re.findall(before_html or ""))
-        _after_doc_urls = set(_doc_url_re.findall(after_html or ""))
-        _new_doc_urls = _after_doc_urls - _before_doc_urls
-
         for alert in alerts:
             alert["agent_call_id"] = agent_call_id
-            alert_type = alert.get("alert_type", "")
-            if alert_type not in _NOT_RELEVANT_TYPES:
-                continue
 
-            lib = alert.get("library_item_preliminary_title")
-            lib_is_real = (
-                isinstance(lib, dict)
-                and lib.get("status") not in ("N/A", None, "")
-                and lib.get("title") not in ("N/A", None, "")
-            )
-
-            if lib_is_real or _new_doc_urls:
-                reason = (
-                    f"real library item '{lib.get('title', '')[:40]}'" if lib_is_real
-                    else f"{len(_new_doc_urls)} new doc URL(s) in HTML delta"
-                )
-                log.warning(
-                    "page_change_agent: contradictory output — %s but alert_type='%s'. "
-                    "Correcting to 'New or Updated Report or Other Resource' (call_id=%s).",
-                    reason, alert_type[:60], agent_call_id[:8],
-                )
-                alert["alert_type"] = "New or Updated Report or Other Resource"
-
-        # Drop any dicts that have no alert_type — these are malformed outputs
-        # (e.g. empty {} from pgvector returning no text) that would produce blank rows.
+        # Drop any dicts that have no alert_type — malformed output from pgvector empty response.
         alerts = [a for a in alerts if a.get("alert_type")]
         log.info("page_change_agent: produced %d alert(s) (call_id=%s)", len(alerts), agent_call_id[:8])
         return alerts
