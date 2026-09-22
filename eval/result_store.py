@@ -174,7 +174,11 @@ def delete_eval_result(agent_call_id: str) -> None:
     client = _s3_client()
     try:
         existing = _load_existing(client, bucket)
+        # Exact match first (full UUID or composite key)
         keys_to_delete = [k for k in existing if k == agent_call_id or k.startswith(agent_call_id + "|")]
+        # Fallback: suffix match on the agent_call_id part (supports short 8-char display IDs)
+        if not keys_to_delete:
+            keys_to_delete = [k for k in existing if k.split("|")[0].endswith(agent_call_id)]
         if not keys_to_delete:
             log.info("No eval result found for agent_call_id=%s — nothing to delete", agent_call_id)
             return

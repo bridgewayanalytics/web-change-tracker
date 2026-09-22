@@ -7,8 +7,10 @@ Usage:
   python eval/run_eval.py --since 1750000000     # rows since Unix timestamp
   python eval/run_eval.py --dry-run              # print selected rows, no agent calls
   python eval/run_eval.py --agent-call-ids a,b   # evaluate specific rows
+  python eval/run_eval.py --delete-agent-call-ids a,b  # delete eval results by id
 
-Triggered automatically after each Newsreel publication (trigger wired later).
+All alert rows sharing an agent_call_id (same HTML page diff) are evaluated
+together in a single agent call, matching the document extraction QA pattern.
 """
 
 import argparse
@@ -38,46 +40,50 @@ def _eval_row_key(row: dict, group: list[dict]) -> str:
     return cid
 
 
-def _run_row_file(path: str) -> None:
-    """Subprocess entrypoint: evaluate exactly one row and store results.
+def _run_group_file(path: str) -> None:
+    """Subprocess entrypoint: evaluate all rows in a group and store results.
 
-    Each row runs in its own fresh Python process to prevent 'Event loop is closed'
+    Each group runs in its own fresh Python process to prevent 'Event loop is closed'
     and glibc heap corruption (double free / SIGSEGV / exit 139) caused by asyncpg
     and the Agents SDK leaving stale C extension state across sequential asyncio.run()
-    calls within a single long-lived process. The subprocess pattern mirrors
-    run_doc_eval.py --group-file.
+    calls within a single long-lived process.
     """
     with open(path) as f:
         data = json.load(f)
 
-    row = data["row"]
-    sibling_rows = data.get("sibling_rows") or []
+    rows = data["rows"]
     before_html = data.get("before_html") or ""
     after_html = data.get("after_html") or ""
-    all_rows = data.get("all_rows") or [row]
+    eval_row_keys = data["eval_row_keys"]
     eval_run_id = data["eval_run_id"]
     eval_timestamp = data["eval_timestamp"]
 
-    from eval.eval_agent import evaluate_row
+    from eval.eval_agent import evaluate_group
     from eval.result_store import store_eval_results
 
-    scores = evaluate_row(
-        row=row,
-        before_html=before_html,
-        after_html=after_html,
-        reference_context="",
-        sibling_rows=sibling_rows if sibling_rows else None,
-    )
+    try:
+        score_results = evaluate_group(
+            rows=rows,
+            before_html=before_html,
+            after_html=after_html,
+            eval_row_keys=eval_row_keys,
+        )
+    except Exception as e:
+        log.error("Group eval failed: %s", e)
+        score_results = [{"eval_row_key": k, "eval_scores": {}, "error": str(e)} for k in eval_row_keys]
 
-    key = _eval_row_key(row, all_rows)
-    eval_row = {
-        **row,
-        "eval_run_id": eval_run_id,
-        "eval_timestamp": eval_timestamp,
-        "eval_scores": scores,
-        "eval_row_key": key,
-    }
-    store_eval_results([eval_row], eval_run_id)
+    eval_rows = []
+    for row, score_result in zip(rows, score_results):
+        key = score_result.get("eval_row_key") or eval_row_keys[rows.index(row)]
+        eval_rows.append({
+            **row,
+            "eval_run_id": eval_run_id,
+            "eval_timestamp": eval_timestamp,
+            "eval_scores": score_result.get("eval_scores", {}),
+            "overall_summary": score_result.get("overall_summary"),
+            "eval_row_key": key,
+        })
+    store_eval_results(eval_rows, eval_run_id)
 
 
 def run(
@@ -117,8 +123,8 @@ def run(
             }, indent=2))
         return rows
 
-    # Group by agent_call_id so siblings are evaluated together.
-    # Siblings share the same HTML — fetch once per group.
+    # Group by agent_call_id — all rows from the same HTML page diff are
+    # evaluated together in one agent call (mirrors doc extraction QA pattern).
     groups: dict[str, list[dict]] = {}
     ungrouped: list[dict] = []
     for row in rows:
@@ -130,66 +136,60 @@ def run(
 
     group_list = list(groups.values()) + [[r] for r in ungrouped]
     total_rows = sum(len(g) for g in group_list)
-    evaluated = 0
 
-    for group in group_list:
+    for i, group in enumerate(group_list, 1):
         representative = group[0]
         call_id = representative.get("agent_call_id", "unknown")
+        eval_row_keys = [_eval_row_key(row, group) for row in group]
 
-        # Fetch HTML once — all siblings share the same run/target/HTML
+        # Fetch HTML once — all rows in a group share the same run/target/HTML
         before_html, after_html = fetch_html_snapshots(representative)
 
-        for row in group:
-            evaluated += 1
-            siblings = [r for r in group if r is not row]
-            log.info(
-                "[%d/%d] Spawning eval agent_call_id=%s library_item=%s (%d sibling(s))",
-                evaluated, total_rows, call_id,
-                row.get("library_items_file_name") or row.get("alert_type"), len(siblings),
-            )
+        log.info(
+            "[%d/%d] Spawning eval agent_call_id=%s rows=%d",
+            i, len(group_list), call_id, len(group),
+        )
 
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-                json.dump({
-                    "row": row,
-                    "sibling_rows": siblings,
-                    "before_html": before_html,
-                    "after_html": after_html,
-                    "all_rows": group,
-                    "eval_run_id": eval_run_id,
-                    "eval_timestamp": eval_timestamp,
-                }, f, default=str)
-                tmp_path = f.name
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump({
+                "rows": group,
+                "before_html": before_html,
+                "after_html": after_html,
+                "eval_row_keys": eval_row_keys,
+                "eval_run_id": eval_run_id,
+                "eval_timestamp": eval_timestamp,
+            }, f, default=str)
+            tmp_path = f.name
 
-            _MAX_SUBPROCESS_RETRIES = 2
-            for attempt in range(_MAX_SUBPROCESS_RETRIES + 1):
-                try:
-                    proc = subprocess.run(
-                        [sys.executable, "-m", "eval.run_eval", "--row-file", tmp_path],
-                        timeout=600,
-                    )
-                    if proc.returncode == 0:
-                        break
-                    # Negative return code = killed by signal (SIGABRT, SIGSEGV, etc.)
-                    if proc.returncode < 0 and attempt < _MAX_SUBPROCESS_RETRIES:
-                        log.warning(
-                            "[%d/%d] Row crashed (signal %d) — retrying (attempt %d/%d)",
-                            evaluated, total_rows, -proc.returncode,
-                            attempt + 1, _MAX_SUBPROCESS_RETRIES,
-                        )
-                        continue
-                    log.error(
-                        "[%d/%d] Row failed (subprocess exit %d) agent_call_id=%s",
-                        evaluated, total_rows, proc.returncode, call_id,
-                    )
-                except subprocess.TimeoutExpired:
-                    log.error("[%d/%d] Row timed out after 600s agent_call_id=%s", evaluated, total_rows, call_id)
-                    break
+        _MAX_SUBPROCESS_RETRIES = 2
+        for attempt in range(_MAX_SUBPROCESS_RETRIES + 1):
             try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
+                proc = subprocess.run(
+                    [sys.executable, "-m", "eval.run_eval", "--group-file", tmp_path],
+                    timeout=600,
+                )
+                if proc.returncode == 0:
+                    break
+                if proc.returncode < 0 and attempt < _MAX_SUBPROCESS_RETRIES:
+                    log.warning(
+                        "[%d/%d] Group crashed (signal %d) — retrying (attempt %d/%d)",
+                        i, len(group_list), -proc.returncode,
+                        attempt + 1, _MAX_SUBPROCESS_RETRIES,
+                    )
+                    continue
+                log.error(
+                    "[%d/%d] Group failed (subprocess exit %d) agent_call_id=%s",
+                    i, len(group_list), proc.returncode, call_id,
+                )
+            except subprocess.TimeoutExpired:
+                log.error("[%d/%d] Group timed out after 600s agent_call_id=%s", i, len(group_list), call_id)
+                break
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
 
-    log.info("Eval run %s complete — %d rows evaluated", eval_run_id, evaluated)
+    log.info("Eval run %s complete — %d rows across %d group(s) evaluated", eval_run_id, total_rows, len(group_list))
     return []
 
 
@@ -211,13 +211,24 @@ def main():
     parser.add_argument("--since", type=int, default=None, dest="since_run_timestamp")
     parser.add_argument("--agent-call-ids", type=str, default=None)
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--row-file", type=str, default=None,
-                        help="Internal: path to a JSON file containing a pre-serialized row. "
+    parser.add_argument("--group-file", type=str, default=None,
+                        help="Internal: path to a JSON file containing a pre-serialized group. "
                              "Run by subprocess; do not use directly.")
+    parser.add_argument("--delete-agent-call-ids", type=str, default=None,
+                        help="Delete eval results for these agent_call_ids (comma-separated). "
+                             "Supports full UUIDs or trailing 8-char suffixes.")
     args = parser.parse_args()
 
-    if args.row_file:
-        _run_row_file(args.row_file)
+    if args.group_file:
+        _run_group_file(args.group_file)
+        return
+
+    if args.delete_agent_call_ids:
+        from eval.result_store import delete_eval_result
+        ids = [x.strip() for x in args.delete_agent_call_ids.split(",") if x.strip()]
+        for agent_call_id in ids:
+            log.info("Deleting eval results for agent_call_id=%s", agent_call_id)
+            delete_eval_result(agent_call_id)
         return
 
     call_ids = None

@@ -1,13 +1,17 @@
 """
-QA evaluation agent — one call per alert row.
+QA evaluation agent — one call per HTML page diff (agent_call_id group).
+
+All alert rows produced from the same page change (same agent_call_id) are
+evaluated together in a single agent call, matching the doc extraction QA
+pattern. The agent receives all rows and returns per-row scores keyed by
+eval_row_key.
 
 When PGVECTOR_ENABLED=true and DB credentials are present, runs via the
-OpenAI Agents SDK with pgvector tools (same two-step pattern as
-document_agent.py): Step 1 searches the knowledge base and gathers
-evidence; Step 2 formats the analysis into per-field JSON scores.
+OpenAI Agents SDK with pgvector tools (two-step pattern):
+  Step 1 — agent searches chronicles/newsreels and produces a free-text analysis
+  Step 2 — chat_json() formats the analysis into per-row, per-field JSON scores
 
-Falls back to direct chat_json (with pre-fetched reference_context) when
-pgvector is unavailable.
+Falls back to direct chat_json() when pgvector is unavailable.
 """
 
 import asyncio
@@ -76,60 +80,34 @@ def _pgvector_enabled() -> bool:
     )
 
 
-def _build_sibling_summary(sibling_rows: list[dict]) -> str:
-    lines = []
-    for i, r in enumerate(sibling_rows, 1):
-        lib_title = r.get("library_item_preliminary_title") or {}
-        if isinstance(lib_title, dict):
-            lib_title = lib_title.get("title") or ""
-        lines.append(
-            f"  Row {i}: alert_title={r.get('alert_title') or 'N/A'} | "
-            f"alert_type={r.get('alert_type')} | "
-            f"library_item={lib_title or r.get('library_items_file_name') or 'N/A'} | "
-            f"library_item_url={r.get('library_item_url') or 'N/A'}"
-        )
-    return "\n".join(lines)
-
-
-def _build_user_message(
-    row: dict,
+def _build_group_user_message(
+    rows: list[dict],
+    eval_row_keys: list[str],
     before_html: str,
     after_html: str,
-    reference_context: str,
-    sibling_rows: list[dict] | None = None,
 ) -> str:
-    alert_json = json.dumps(
-        {k: v for k, v in row.items() if k not in ALERT_PIPELINE_FIELDS and not k.startswith("bubble_action")},
-        indent=2,
-        default=str,
-    )
-
-    parts = [
-        "## Agent Output (the alert row to evaluate)\n```json",
-        alert_json,
-        "```",
-    ]
-
-    if sibling_rows:
-        parts += [
-            f"\n## Sibling Rows from the Same Run ({len(sibling_rows)} other row(s))",
-            "This alert is one of multiple rows produced from the same HTML change. "
-            "The following rows cover the other documents or items detected in the same page update. "
-            "Score ONLY the primary row above. Do NOT penalize it for content that appears on a sibling row.",
-            _build_sibling_summary(sibling_rows),
-        ]
+    """
+    Build the QA agent prompt for all alert rows from one HTML page diff.
+    All rows in the group are evaluated together so the agent has full context
+    and does not penalize any row for content that belongs to a sibling row.
+    """
+    parts = []
 
     from bubble.org_tree import get_org_tree
     org_tree = get_org_tree()
     if org_tree:
-        parts += ["\n## Organization Reference (valid org names — use this to evaluate the organization field)", org_tree]
+        parts += [
+            "\n## Organization Reference (valid org names — use this to evaluate the organization field)",
+            org_tree,
+        ]
 
-    source_url = row.get("source_url", "")
+    source_url = (rows[0].get("source_url") or "") if rows else ""
     if source_url:
         parts += [
             f"\n## Monitored Page URL\n{source_url}",
             "This is the URL of the page that was being monitored. "
-            "The alert_url field should exactly match this URL — evaluate it against this value, not against links found inside the HTML.",
+            "The alert_url field should exactly match this URL — evaluate it against this value, "
+            "not against links found inside the HTML.",
         ]
 
     if before_html:
@@ -138,22 +116,50 @@ def _build_user_message(
     if after_html:
         parts += ["\n## After HTML (what the page looked like after the change)", after_html]
 
-    if reference_context:
-        parts += ["\n" + reference_context]
+    parts.append(f"\n## Agent Output ({len(rows)} alert row(s) to evaluate)")
+    for key, row in zip(eval_row_keys, rows):
+        alert_json = json.dumps(
+            {k: v for k, v in row.items() if k not in ALERT_PIPELINE_FIELDS and not k.startswith("bubble_action")},
+            indent=2,
+            default=str,
+        )
+        parts += [f"\n### Row: {key}\n```json", alert_json, "```"]
 
     parts.append(
-        "\nEvaluate every field in the Agent Output above against the HTML snapshots and reference context provided. "
-        "Return a JSON object where each key is a field name and each value is:\n"
+        "\nEvaluate every field in each row above against the HTML snapshots and org reference. "
+        "Return a JSON object with one key per eval_row_key (use the exact keys shown in the ### Row: headings above). "
+        "Each value is a JSON object where each field name maps to:\n"
         '{"score": "Correct" | "Partially Correct" | "Incorrect", "reasoning": "<evidence-based explanation>"}\n\n'
         "Reasoning MUST be auditable — cite specific evidence:\n"
         "- Quote or reference the HTML or context that supports your score\n"
-        "- For agenda_item_title_chronicle_topics: state what the correct chronicle topics ARE based on the HTML and any chronicles context provided, not just whether the agent got them right\n"
-        "- For is_the_alert_relevant_for_an_art_newsreel_article: cite the newsreel backend presence check result and any newsreel/chronicle mentions found — explain the reasoning behind relevance or non-relevance\n"
+        "- For agenda_item_title_chronicle_topics: state what the correct chronicle topics ARE based on the HTML and any chronicles context provided\n"
+        "- For is_the_alert_relevant_for_an_art_newsreel_article: cite the newsreel backend presence check result and any newsreel/chronicle mentions found\n"
         "- If the agent output is wrong, state what the correct answer should be\n\n"
-        'Include an "overall_summary" key: {"correct": N, "partially_correct": N, "incorrect": N, "total": N, "pattern": "<any systematic patterns>"}'
+        'Each per-row object must include an "overall_summary" key: '
+        '{"correct": N, "partially_correct": N, "incorrect": N, "total": N, "pattern": "<any systematic patterns>"}\n\n'
+        "Top-level output structure:\n"
+        '{"<eval_row_key>": {"<field>": {"score": ..., "reasoning": ...}, ..., "overall_summary": {...}}, ...}'
     )
 
     return "\n".join(parts)
+
+
+def _flatten_scores(raw: dict, rows: list[dict], eval_row_keys: list[str]) -> list[dict]:
+    """Convert {eval_row_key: {field_scores}} response into per-row result dicts."""
+    results = []
+    for key, row in zip(eval_row_keys, rows):
+        scores = raw.get(key, {})
+        if isinstance(scores, dict):
+            overall_summary = scores.pop("overall_summary", None)
+        else:
+            scores = {}
+            overall_summary = None
+        results.append({
+            "eval_row_key": key,
+            "eval_scores": scores,
+            "overall_summary": overall_summary,
+        })
+    return results
 
 
 async def _run_with_pgvector(
@@ -162,19 +168,17 @@ async def _run_with_pgvector(
     model: str,
     reasoning_effort: str,
     namespaces: list[str],
+    eval_row_keys: list[str],
     field_names: list[str] | None = None,
 ) -> dict:
     """
-    Two-step evaluation with pgvector tool access:
-      1. Agents SDK run — agent searches chronicles, newsreels, and ART documents
-         as needed, then writes a free-text evaluation analysis.
-      2. chat_json() call — formats the free-text into structured per-field scores.
+    Two-step evaluation with pgvector tool access.
 
     Pool lifecycle is owned here — opened at entry, closed in finally. Called via
-    asyncio.run() so every eval row gets a fresh event loop. This ensures asyncpg's
-    native SSL cleanup runs on the same loop that created the pool, preventing the
-    heap corruption (double free / SIGSEGV) that occurs when background async tasks
-    from the Agents SDK linger on a persistent loop and race with pool teardown.
+    asyncio.run() so every eval group gets a fresh event loop. This ensures asyncpg's
+    native SSL cleanup runs on the same loop that created the pool, preventing heap
+    corruption (double free / SIGSEGV) that occurs when background async tasks from
+    the Agents SDK linger on a persistent loop and race with pool teardown.
     """
     from bubble.pgvector.client import init_pg_pool, close_pg_pool
     await init_pg_pool()
@@ -206,9 +210,7 @@ async def _run_with_pgvector(
     if not gathered:
         return {"error": "Agent returned empty output"}
 
-    # Step 2: format gathered analysis into structured per-field JSON scores.
-    # Pass explicit field_names so the formatter scores EVERY field, not just
-    # the ones the Step 1 analysis happened to mention.
+    keys_str = ", ".join(f'"{k}"' for k in eval_row_keys)
     field_names_str = ", ".join(f'"{k}"' for k in (field_names or []))
     from bubble.openai_client import chat_json
     messages = [
@@ -216,16 +218,17 @@ async def _run_with_pgvector(
             "role": "system",
             "content": (
                 "You are a JSON formatter. Given the QA evaluation analysis below, produce a JSON object "
-                "where each key is a field name from the evaluated alert and each value is: "
+                f"with exactly these top-level keys (one per evaluated row): {keys_str}. "
+                "Each value is a JSON object where each field maps to: "
                 '{"score": "Correct" | "Partially Correct" | "Incorrect", "reasoning": "<evidence-based explanation>"}. '
                 + (
-                    f"Use EXACTLY these field names as score keys: {field_names_str}. "
+                    f"Use EXACTLY these field names as the inner score keys: {field_names_str}. "
                     "Score ALL listed fields — if the analysis did not explicitly discuss a field, "
                     "infer its score from any available evidence in the analysis. "
                     "Do NOT use display labels or human-readable names — use only the exact field names listed above. "
                     if field_names_str else ""
                 ) +
-                'Also include an "overall_summary" key: '
+                'Each per-row object must include an "overall_summary" key: '
                 '{"correct": N, "partially_correct": N, "incorrect": N, "total": N, "pattern": "<systematic patterns>"}.'
             ),
         },
@@ -234,62 +237,77 @@ async def _run_with_pgvector(
     return chat_json(messages, model=model, reasoning_effort=reasoning_effort)
 
 
-def evaluate_row(
-    row: dict,
+def evaluate_group(
+    rows: list[dict],
     before_html: str,
     after_html: str,
-    reference_context: str,
-    sibling_rows: list[dict] | None = None,
-) -> dict:
+    eval_row_keys: list[str],
+) -> list[dict]:
     """
-    Run the eval agent on one alert row.
-    Returns a dict with per-field scores and overall_summary.
-    On failure returns {"error": "<message>"}.
+    Run the eval agent on all alert rows from one HTML page diff (same agent_call_id).
+    Returns a list of {eval_row_key, eval_scores, overall_summary} dicts — one per row.
+    On failure, returns dicts with eval_scores={} and an error key.
     """
+    if not rows:
+        return []
+
     system_prompt = _get_system_prompt()
     model = _get_model()
     reasoning_effort = _get_reasoning_effort()
-    user_message = _build_user_message(row, before_html, after_html, reference_context, sibling_rows)
+    user_message = _build_group_user_message(rows, eval_row_keys, before_html, after_html)
 
-    # Build explicit field list so the formatter scores EVERY field, not just ones
-    # the Step 1 analysis happened to mention (e.g. alert_url was routinely skipped).
-    field_names = [
-        k for k in row
-        if k not in ALERT_PIPELINE_FIELDS and not k.startswith("bubble_action")
-    ]
+    # Collect all scored field names across all rows (deduped, ordered)
+    seen: set[str] = set()
+    field_names: list[str] = []
+    for row in rows:
+        for k in row:
+            if k not in ALERT_PIPELINE_FIELDS and not k.startswith("bubble_action") and k not in seen:
+                field_names.append(k)
+                seen.add(k)
+
+    agent_call_id = rows[0].get("agent_call_id", "unknown")
 
     if _pgvector_enabled():
         namespaces = _get_pgvector_namespaces()
         log.info(
-            "eval_agent: running with pgvector tools (model=%s namespaces=%s) for agent_call_id=%s",
-            model, namespaces, row.get("agent_call_id"),
+            "eval_agent: running group with pgvector (model=%s namespaces=%s rows=%d) agent_call_id=%s",
+            model, namespaces, len(rows), agent_call_id,
         )
         try:
-            result = asyncio.run(
-                _run_with_pgvector(system_prompt, user_message, model, reasoning_effort, namespaces, field_names)
+            raw = asyncio.run(
+                _run_with_pgvector(system_prompt, user_message, model, reasoning_effort, namespaces, eval_row_keys, field_names)
             )
-            if not isinstance(result, dict):
-                return {"error": "Agent returned non-dict response"}
-            return result
+            if not isinstance(raw, dict):
+                return [{"eval_row_key": k, "eval_scores": {}, "error": "Agent returned non-dict response"} for k in eval_row_keys]
+            return _flatten_scores(raw, rows, eval_row_keys)
         except Exception as e:
-            log.error("Eval agent (pgvector path) failed for agent_call_id=%s: %s", row.get("agent_call_id"), e)
-            return {"error": str(e)}
+            log.error("Eval agent (pgvector) failed for agent_call_id=%s: %s", agent_call_id, e)
+            return [{"eval_row_key": k, "eval_scores": {}, "error": str(e)} for k in eval_row_keys]
 
-    # Fallback: direct chat_json with pre-fetched reference_context
+    # Fallback: direct chat_json
     from bubble.openai_client import chat_json
     log.info(
-        "eval_agent: running via direct API (model=%s) for agent_call_id=%s",
-        model, row.get("agent_call_id"),
+        "eval_agent: running group via direct API (model=%s rows=%d) agent_call_id=%s",
+        model, len(rows), agent_call_id,
+    )
+    keys_str = ", ".join(f'"{k}"' for k in eval_row_keys)
+    field_names_str = ", ".join(f'"{k}"' for k in field_names)
+    direct_system = (
+        system_prompt
+        + f"\n\nReturn a JSON object with exactly these top-level keys: {keys_str}. "
+        f"Each value is an object whose score keys are EXACTLY these field names: {field_names_str}. "
+        'Each field maps to: {"score": "Correct" | "Partially Correct" | "Incorrect", "reasoning": "..."}. '
+        'Also include an overall_summary key per row: {"correct": N, "partially_correct": N, "incorrect": N, "total": N, "pattern": "..."}.'
     )
     messages = [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": direct_system},
         {"role": "user", "content": user_message},
     ]
     try:
-        result = chat_json(messages, model=model, reasoning_effort=reasoning_effort)
-        if not isinstance(result, dict):
-            return {"error": "Agent returned non-dict response"}
-        return result
+        raw = chat_json(messages, model=model, reasoning_effort=reasoning_effort)
+        if not isinstance(raw, dict):
+            return [{"eval_row_key": k, "eval_scores": {}, "error": "Agent returned non-dict response"} for k in eval_row_keys]
+        return _flatten_scores(raw, rows, eval_row_keys)
     except Exception as e:
-        log.error("Eval agent failed for agent_call_id=%s: %s", row.get("agent_call_id"), e)
-        return {"error": str(e)}
+        log.error("Eval agent failed for agent_call_id=%s: %s", agent_call_id, e)
+        return [{"eval_row_key": k, "eval_scores": {}, "error": str(e)} for k in eval_row_keys]
