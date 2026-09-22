@@ -15,8 +15,9 @@ import argparse
 import json
 import logging
 import os
+import sys
+import tempfile
 import time
-import uuid
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger(__name__)
@@ -28,16 +29,66 @@ def _make_eval_run_id() -> str:
     return f"eval-{int(time.time())}"
 
 
+def _eval_row_key(row: dict, group: list[dict]) -> str:
+    """Stable unique key: agent_call_id alone for single rows, composite for siblings."""
+    cid = row.get("agent_call_id", "")
+    if len(group) > 1:
+        lib_url = str(row.get("library_item_url") or "").strip()
+        return f"{cid}|{lib_url}" if lib_url and lib_url.lower() != "n/a" else f"{cid}|{row.get('alert_title', '')}"
+    return cid
+
+
+def _run_row_file(path: str) -> None:
+    """Subprocess entrypoint: evaluate exactly one row and store results.
+
+    Each row runs in its own fresh Python process to prevent 'Event loop is closed'
+    and glibc heap corruption (double free / SIGSEGV / exit 139) caused by asyncpg
+    and the Agents SDK leaving stale C extension state across sequential asyncio.run()
+    calls within a single long-lived process. The subprocess pattern mirrors
+    run_doc_eval.py --group-file.
+    """
+    with open(path) as f:
+        data = json.load(f)
+
+    row = data["row"]
+    sibling_rows = data.get("sibling_rows") or []
+    before_html = data.get("before_html") or ""
+    after_html = data.get("after_html") or ""
+    all_rows = data.get("all_rows") or [row]
+    eval_run_id = data["eval_run_id"]
+    eval_timestamp = data["eval_timestamp"]
+
+    from eval.eval_agent import evaluate_row
+    from eval.result_store import store_eval_results
+
+    scores = evaluate_row(
+        row=row,
+        before_html=before_html,
+        after_html=after_html,
+        reference_context="",
+        sibling_rows=sibling_rows if sibling_rows else None,
+    )
+
+    key = _eval_row_key(row, all_rows)
+    eval_row = {
+        **row,
+        "eval_run_id": eval_run_id,
+        "eval_timestamp": eval_timestamp,
+        "eval_scores": scores,
+        "eval_row_key": key,
+    }
+    store_eval_results([eval_row], eval_run_id)
+
+
 def run(
     limit: int = _DEFAULT_LIMIT,
     since_run_timestamp: int | None = None,
     agent_call_ids: list[str] | None = None,
     dry_run: bool = False,
 ) -> list[dict]:
+    import subprocess
     from eval.row_selector import load_eligible_rows
     from eval.html_fetcher import fetch_html_snapshots
-    from eval.eval_agent import evaluate_row
-    from eval.result_store import store_eval_results
 
     eval_run_id = _make_eval_run_id()
     eval_timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -66,7 +117,7 @@ def run(
             }, indent=2))
         return rows
 
-    # Group rows by agent_call_id so siblings are evaluated together.
+    # Group by agent_call_id so siblings are evaluated together.
     # Siblings share the same HTML — fetch once per group.
     groups: dict[str, list[dict]] = {}
     ungrouped: list[dict] = []
@@ -77,15 +128,6 @@ def run(
         else:
             ungrouped.append(row)
 
-    def _eval_row_key(row: dict, group: list[dict]) -> str:
-        """Stable unique key: agent_call_id alone for single rows, composite for siblings."""
-        cid = row.get("agent_call_id", "")
-        if len(group) > 1:
-            lib_url = str(row.get("library_item_url") or "").strip()
-            return f"{cid}|{lib_url}" if lib_url and lib_url.lower() != "n/a" else f"{cid}|{row.get('alert_title', '')}"
-        return cid
-
-    eval_rows = []
     group_list = list(groups.values()) + [[r] for r in ungrouped]
     total_rows = sum(len(g) for g in group_list)
     evaluated = 0
@@ -96,38 +138,59 @@ def run(
 
         # Fetch HTML once — all siblings share the same run/target/HTML
         before_html, after_html = fetch_html_snapshots(representative)
-        reference_context = ""
 
         for row in group:
             evaluated += 1
             siblings = [r for r in group if r is not row]
             log.info(
-                "[%d/%d] Evaluating agent_call_id=%s library_item=%s (%d sibling(s))",
+                "[%d/%d] Spawning eval agent_call_id=%s library_item=%s (%d sibling(s))",
                 evaluated, total_rows, call_id,
                 row.get("library_items_file_name") or row.get("alert_type"), len(siblings),
             )
 
-            scores = evaluate_row(
-                row=row,
-                before_html=before_html,
-                after_html=after_html,
-                reference_context=reference_context,
-                sibling_rows=siblings if siblings else None,
-            )
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+                json.dump({
+                    "row": row,
+                    "sibling_rows": siblings,
+                    "before_html": before_html,
+                    "after_html": after_html,
+                    "all_rows": group,
+                    "eval_run_id": eval_run_id,
+                    "eval_timestamp": eval_timestamp,
+                }, f, default=str)
+                tmp_path = f.name
 
-            eval_row_key = _eval_row_key(row, group)
-            eval_row = {
-                **{k: v for k, v in row.items()},
-                "eval_run_id": eval_run_id,
-                "eval_timestamp": eval_timestamp,
-                "eval_scores": scores,
-                "eval_row_key": eval_row_key,
-            }
-            eval_rows.append(eval_row)
+            _MAX_SUBPROCESS_RETRIES = 2
+            for attempt in range(_MAX_SUBPROCESS_RETRIES + 1):
+                try:
+                    proc = subprocess.run(
+                        [sys.executable, "-m", "eval.run_eval", "--row-file", tmp_path],
+                        timeout=600,
+                    )
+                    if proc.returncode == 0:
+                        break
+                    # Negative return code = killed by signal (SIGABRT, SIGSEGV, etc.)
+                    if proc.returncode < 0 and attempt < _MAX_SUBPROCESS_RETRIES:
+                        log.warning(
+                            "[%d/%d] Row crashed (signal %d) — retrying (attempt %d/%d)",
+                            evaluated, total_rows, -proc.returncode,
+                            attempt + 1, _MAX_SUBPROCESS_RETRIES,
+                        )
+                        continue
+                    log.error(
+                        "[%d/%d] Row failed (subprocess exit %d) agent_call_id=%s",
+                        evaluated, total_rows, proc.returncode, call_id,
+                    )
+                except subprocess.TimeoutExpired:
+                    log.error("[%d/%d] Row timed out after 600s agent_call_id=%s", evaluated, total_rows, call_id)
+                    break
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
-    store_eval_results(eval_rows, eval_run_id)
-    log.info("Eval run %s complete — %d rows evaluated", eval_run_id, len(eval_rows))
-    return eval_rows
+    log.info("Eval run %s complete — %d rows evaluated", eval_run_id, evaluated)
+    return []
 
 
 def _load_secrets() -> None:
@@ -148,7 +211,14 @@ def main():
     parser.add_argument("--since", type=int, default=None, dest="since_run_timestamp")
     parser.add_argument("--agent-call-ids", type=str, default=None)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--row-file", type=str, default=None,
+                        help="Internal: path to a JSON file containing a pre-serialized row. "
+                             "Run by subprocess; do not use directly.")
     args = parser.parse_args()
+
+    if args.row_file:
+        _run_row_file(args.row_file)
+        return
 
     call_ids = None
     if args.agent_call_ids:

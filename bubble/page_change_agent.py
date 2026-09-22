@@ -605,7 +605,7 @@ def extract_page_change(
                                 "overall change. If a page change adds a new meeting AND new documents, the "
                                 "meeting entry uses a meeting alert_type (e.g. 'New Meeting') and each document "
                                 "entry uses the appropriate document alert_type (e.g. 'New Agenda & Materials', "
-                                "'New or Updated Minutes', 'New or Updated Report or Other Resource'). "
+                                "'New Materials', 'New or Updated Report or Other Resource'). "
                                 "An entry with library_item_url set and event_title 'N/A' is a document entry — "
                                 "never assign it a meeting alert_type. "
                                 "For string fields not mentioned in the analysis, use \"N/A\". "
