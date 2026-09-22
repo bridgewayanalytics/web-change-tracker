@@ -111,47 +111,6 @@ Rules:
 - Return ONLY valid JSON. No markdown fences, no commentary outside the JSON.
 """
 
-# Fallback output schema when DynamoDB output_schema_json is absent.
-# This dict is serialised to JSON and injected into the user message.
-_FALLBACK_OUTPUT_SCHEMA: dict = {
-    "alert_type": "string",
-    "alert_title": "string",
-    "alert_description": "string",
-    "alert_url": "string (N/A if not applicable)",
-    "organization": "string (N/A if not applicable)",
-    "alert_date_time": "string ISO 8601 Eastern Time (N/A if not applicable)",
-    "is_relevant_for_art_newsreel": "boolean",
-    "events": [
-        {
-            "title": "string",
-            "start_datetime": "string ISO 8601 Eastern Time (N/A if not applicable)",
-            "end_datetime": "string ISO 8601 Eastern Time (N/A if not applicable)",
-            "timezone": "string (N/A if not applicable)",
-            "is_full_day": "boolean",
-            "url": "string (N/A if not applicable)",
-            "call_in_access_code": "string (N/A if not applicable)",
-            "duration": "string (N/A if not applicable)",
-        }
-    ],
-    "library_items": [
-        {
-            "preliminary_title": "string",
-            "url": "string (N/A if not applicable)",
-            "file_name": "string (N/A if not applicable)",
-        }
-    ],
-    "agenda_items": [
-        {
-            "title": "string",
-            "official_title": "string (N/A if not applicable)",
-            "standardized_id": "string (N/A if not applicable)",
-            "official_id": "string (N/A if not applicable)",
-            "is_existing": "boolean",
-            "chronicle_topics": ["string"],
-        }
-    ],
-}
-
 # Lazily loaded from DynamoDB; None means not yet fetched
 _dynamo_config: dict | None = None
 
@@ -167,37 +126,6 @@ def _load_dynamo_config() -> dict:
 def _get_system_prompt() -> str:
     cfg = _load_dynamo_config()
     return cfg.get("instructions") or _FALLBACK_SYSTEM_PROMPT
-
-
-def _extract_schema_from_instructions(instructions: str) -> str | None:
-    """
-    Extract the JSON schema from the ``## Output JSON Schema`` section of the
-    instructions.  Returns the raw JSON string, or None if not found.
-    """
-    m = re.search(r"```json\s*\n(.*?)```", instructions, re.DOTALL)
-    if m:
-        return m.group(1).strip()
-    return None
-
-
-def _get_output_schema_str() -> str:
-    """
-    Return the JSON output schema string to embed in the user message.
-
-    Priority:
-    1. A ```json``` block inside the DynamoDB instructions (explicit override).
-    2. The DynamoDB output_json_schema (same schema Step 2 enforces — keeps
-       Step 1 output format aligned so Step 2 is a pure formatter, not a transformer).
-    3. _FALLBACK_OUTPUT_SCHEMA (old nested format) — only when DynamoDB has no schema.
-    """
-    instructions = _get_system_prompt()
-    extracted = _extract_schema_from_instructions(instructions)
-    if extracted:
-        return extracted
-    schema = _get_output_json_schema()
-    if schema:
-        return json.dumps(schema, indent=2)
-    return json.dumps(_FALLBACK_OUTPUT_SCHEMA, indent=2)
 
 
 def _get_model() -> str | None:
@@ -554,7 +482,6 @@ def extract_page_change(
             f"Pipeline run time (Eastern): {run_time_et}"
         )
 
-        output_schema = _get_output_schema_str()
         from bubble.org_tree import get_org_tree
         org_tree = get_org_tree()
         org_tree_block = (
@@ -565,10 +492,7 @@ def extract_page_change(
             f"=== TARGET CONTEXT ===\n{context_block}\n\n"
             f"{org_tree_block}"
             f"=== BEFORE (previous version) ===\n{before_html or '(empty — first run)'}\n\n"
-            f"=== AFTER (current version) ===\n{after_html}\n\n"
-            f"Return your analysis as a JSON object matching exactly this schema:\n"
-            f"{output_schema}\n"
-            "Return ONLY valid JSON — no markdown fences, no commentary outside the JSON."
+            f"=== AFTER (current version) ===\n{after_html}"
         )
 
         _store_agent_context(agent_call_id, "alerts", user_content, system_prompt)
