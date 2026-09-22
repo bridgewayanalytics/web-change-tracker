@@ -567,6 +567,15 @@ def extract_page_change(
             f"=== AFTER (current version) ===\n{after_html}\n\n"
             f"Return your analysis as a JSON object matching exactly this schema:\n"
             f"{output_schema}\n"
+            "The alert_type field must be exactly one of: "
+            "'New Agenda', 'New Materials', 'New Agenda & Materials', "
+            "'Updated Agenda', 'Updated Materials', 'Updated Agenda & Materials', "
+            "'New Meeting', 'Updated Meeting', "
+            "'New Request for Comment', 'Updated Request for Comment', "
+            "'New Effective Date', 'Updated Effective Date', "
+            "'Alert not relevant - the change was limited to carrousel or reordering of content', "
+            "'Alert not relevant - the change was limited to removal of content', "
+            "'Other', 'No Meaningful Change'.\n"
             "Return ONLY valid JSON — no markdown fences, no commentary outside the JSON."
         )
 
