@@ -601,7 +601,16 @@ def extract_page_change(
                                 "Use only data from the analysis — do not invent values. "
                                 "For required string fields with no explicit value, output \"N/A\". "
                                 "For array fields with no applicable items, output exactly one entry "
-                                "where status is \"N/A\" and all other content fields are \"N/A\"."
+                                "where status is \"N/A\" and all other content fields are \"N/A\". "
+                                "alert_type must be exactly one of: "
+                                "\"New Agenda\", \"New Materials\", \"New Agenda & Materials\", "
+                                "\"Updated Agenda\", \"Updated Materials\", \"Updated Agenda & Materials\", "
+                                "\"New Meeting\", \"Updated Meeting\", "
+                                "\"New Request for Comment\", \"Updated Request for Comment\", "
+                                "\"New Effective Date\", \"Updated Effective Date\", "
+                                "\"New or Updated Report or Other Resource\", "
+                                "\"Alert not relevant - the change was limited to carrousel or reordering of content\", "
+                                "\"No Meaningful Change\", \"Other\"."
                             ),
                         },
                         {"role": "user", "content": raw},
