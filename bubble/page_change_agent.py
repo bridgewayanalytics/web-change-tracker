@@ -595,22 +595,12 @@ def extract_page_change(
                             "role": "system",
                             "content": (
                                 "You are a JSON formatter. Format the web change analysis below "
-                                "into a JSON object that strictly matches the required schema. "
-                                "Use only the data provided — do not invent values. "
-                                "CRITICAL: the top-level 'alerts' array must contain one entry per distinct "
-                                "document/PDF or event/meeting identified in the analysis. "
-                                "If the analysis describes 7 documents, produce 7 entries. "
-                                "Do NOT merge or summarise multiple documents into a single alerts entry. "
-                                "Each entry's alert_type must describe THAT entry's primary content, not the "
-                                "overall change. If a page change adds a new meeting AND new documents, the "
-                                "meeting entry uses a meeting alert_type (e.g. 'New Meeting') and each document "
-                                "entry uses the appropriate document alert_type (e.g. 'New Agenda & Materials', "
-                                "'New Materials', 'New or Updated Report or Other Resource'). "
-                                "An entry with library_item_url set and event_title 'N/A' is a document entry — "
-                                "never assign it a meeting alert_type. "
-                                "For string fields not mentioned in the analysis, use \"N/A\". "
-                                "For array fields, always include at least one entry — never output an empty array. "
-                                "If there are no applicable items for an array field, output exactly one entry "
+                                "into the required schema. The schema expects an 'alerts' array with "
+                                "exactly one entry per distinct document/PDF or event/meeting identified "
+                                "in the analysis — do NOT merge multiple documents into a single entry. "
+                                "Use only data from the analysis — do not invent values. "
+                                "For required string fields with no explicit value, output \"N/A\". "
+                                "For array fields with no applicable items, output exactly one entry "
                                 "where status is \"N/A\" and all other content fields are \"N/A\"."
                             ),
                         },
