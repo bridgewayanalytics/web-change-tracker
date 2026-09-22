@@ -83,7 +83,8 @@ def _build_sibling_summary(sibling_rows: list[dict]) -> str:
         if isinstance(lib_title, dict):
             lib_title = lib_title.get("title") or ""
         lines.append(
-            f"  Row {i}: alert_type={r.get('alert_type')} | "
+            f"  Row {i}: alert_title={r.get('alert_title') or 'N/A'} | "
+            f"alert_type={r.get('alert_type')} | "
             f"library_item={lib_title or r.get('library_items_file_name') or 'N/A'} | "
             f"library_item_url={r.get('library_item_url') or 'N/A'}"
         )
