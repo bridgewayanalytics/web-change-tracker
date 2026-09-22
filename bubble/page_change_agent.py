@@ -184,18 +184,19 @@ def _get_output_schema_str() -> str:
     """
     Return the JSON output schema string to embed in the user message.
 
-    The schema is extracted from the ``## Output JSON Schema`` fenced code
-    block inside the DynamoDB instructions.  This makes the instructions the
-    single source of truth — editing the schema there automatically updates
-    the agent output, S3 storage, and dashboard columns.
-
-    Falls back to _FALLBACK_OUTPUT_SCHEMA only if the instructions don't
-    contain a schema block.
+    Priority:
+    1. A ```json``` block inside the DynamoDB instructions (explicit override).
+    2. The DynamoDB output_json_schema (same schema Step 2 enforces — keeps
+       Step 1 output format aligned so Step 2 is a pure formatter, not a transformer).
+    3. _FALLBACK_OUTPUT_SCHEMA (old nested format) — only when DynamoDB has no schema.
     """
     instructions = _get_system_prompt()
     extracted = _extract_schema_from_instructions(instructions)
     if extracted:
         return extracted
+    schema = _get_output_json_schema()
+    if schema:
+        return json.dumps(schema, indent=2)
     return json.dumps(_FALLBACK_OUTPUT_SCHEMA, indent=2)
 
 
