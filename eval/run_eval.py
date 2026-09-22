@@ -90,41 +90,40 @@ def run(
     total_rows = sum(len(g) for g in group_list)
     evaluated = 0
 
-    try:
-        for group in group_list:
-            representative = group[0]
-            call_id = representative.get("agent_call_id", "unknown")
+    for group in group_list:
+        representative = group[0]
+        call_id = representative.get("agent_call_id", "unknown")
 
-            # Fetch HTML once — all siblings share the same run/target/HTML
-            before_html, after_html = fetch_html_snapshots(representative)
-            reference_context = ""
+        # Fetch HTML once — all siblings share the same run/target/HTML
+        before_html, after_html = fetch_html_snapshots(representative)
+        reference_context = ""
 
-            for row in group:
-                evaluated += 1
-                siblings = [r for r in group if r is not row]
-                log.info(
-                    "[%d/%d] Evaluating agent_call_id=%s library_item=%s (%d sibling(s))",
-                    evaluated, total_rows, call_id,
-                    row.get("library_items_file_name") or row.get("alert_type"), len(siblings),
-                )
+        for row in group:
+            evaluated += 1
+            siblings = [r for r in group if r is not row]
+            log.info(
+                "[%d/%d] Evaluating agent_call_id=%s library_item=%s (%d sibling(s))",
+                evaluated, total_rows, call_id,
+                row.get("library_items_file_name") or row.get("alert_type"), len(siblings),
+            )
 
-                scores = evaluate_row(
-                    row=row,
-                    before_html=before_html,
-                    after_html=after_html,
-                    reference_context=reference_context,
-                    sibling_rows=siblings if siblings else None,
-                )
+            scores = evaluate_row(
+                row=row,
+                before_html=before_html,
+                after_html=after_html,
+                reference_context=reference_context,
+                sibling_rows=siblings if siblings else None,
+            )
 
-                eval_row_key = _eval_row_key(row, group)
-                eval_row = {
-                    **{k: v for k, v in row.items()},
-                    "eval_run_id": eval_run_id,
-                    "eval_timestamp": eval_timestamp,
-                    "eval_scores": scores,
-                    "eval_row_key": eval_row_key,
-                }
-                eval_rows.append(eval_row)
+            eval_row_key = _eval_row_key(row, group)
+            eval_row = {
+                **{k: v for k, v in row.items()},
+                "eval_run_id": eval_run_id,
+                "eval_timestamp": eval_timestamp,
+                "eval_scores": scores,
+                "eval_row_key": eval_row_key,
+            }
+            eval_rows.append(eval_row)
 
     store_eval_results(eval_rows, eval_run_id)
     log.info("Eval run %s complete — %d rows evaluated", eval_run_id, len(eval_rows))
