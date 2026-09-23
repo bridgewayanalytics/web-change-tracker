@@ -82,7 +82,17 @@ def _sanitize_schema_node(node: object) -> object:
         if key == "$schema":
             continue  # unsupported top-level keyword
         if key == "oneOf":
-            # Replace with plain string — agent will output strings
+            schemas = [s for s in val if isinstance(s, dict)]
+            # Prefer object schemas — keep the first one (sanitized) so structured
+            # fields like {status, details} are enforced rather than collapsed to string.
+            object_schemas = [s for s in schemas if s.get("type") == "object"]
+            if object_schemas:
+                return _sanitize_schema_node(object_schemas[0])
+            # Single non-null schema: unwrap it (e.g. oneOf:[{type:string},{type:null}])
+            non_null = [s for s in schemas if s.get("type") != "null"]
+            if len(non_null) == 1:
+                return _sanitize_schema_node(non_null[0])
+            # Fallback: collapse to plain string
             return {"type": "string"}
         if key in ("minItems", "maxItems"):
             continue  # not supported in OpenAI Structured Outputs strict mode
