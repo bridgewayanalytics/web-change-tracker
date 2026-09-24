@@ -135,6 +135,13 @@ def _build_group_user_message(
         "- For agenda_item_title_chronicle_topics: state what the correct chronicle topics ARE based on the HTML and any chronicles context provided\n"
         "- For is_the_alert_relevant_for_an_art_newsreel_article: cite the newsreel backend presence check result and any newsreel/chronicle mentions found\n"
         "- If the agent output is wrong, state what the correct answer should be\n\n"
+        "Field-specific scoring rules:\n"
+        "- library_item_preliminary_title: This is a DESCRIPTIVE preliminary title — it does not need to exactly match the HTML link text "
+        "(which is often just 'Agenda', 'Materials', 'Recording', etc.). Score as Correct if the title accurately identifies the document "
+        "(type, date, meeting/group) based on all available context including the filename, URL, and surrounding HTML. "
+        "Only mark Partially Correct if the title is inaccurate or misleading, not merely because it elaborates beyond the link text.\n"
+        "- library_items_file_name: Filenames are extracted from URLs and must be URL-decoded (spaces instead of %20 or %2520, etc.). "
+        "Score decoded filenames as Correct — do NOT penalize for decoding. Only mark Incorrect/Partially Correct if the wrong file is identified.\n\n"
         'Each per-row object must include an "overall_summary" key: '
         '{"correct": N, "partially_correct": N, "incorrect": N, "total": N, "pattern": "<any systematic patterns>"}\n\n'
         "Top-level output structure:\n"
