@@ -383,6 +383,13 @@ def run(
             pass
 
     log.info("Doc eval run %s complete", eval_run_id)
+
+    try:
+        from eval.doc_score_reporter import generate_score_report
+        generate_score_report(triggered_by_run=eval_run_id)
+    except Exception as e:
+        log.warning("doc_score_reporter: failed to generate report: %s", e)
+
     return []
 
 

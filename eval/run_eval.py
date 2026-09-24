@@ -190,6 +190,13 @@ def run(
             pass
 
     log.info("Eval run %s complete — %d rows across %d group(s) evaluated", eval_run_id, total_rows, len(group_list))
+
+    try:
+        from eval.alert_score_reporter import generate_score_report
+        generate_score_report(triggered_by_run=eval_run_id)
+    except Exception as e:
+        log.warning("alert_score_reporter: failed to generate report: %s", e)
+
     return []
 
 
