@@ -53,6 +53,27 @@ _EXCLUDE_SCORE_FIELDS = {
 _MIN_FIELD_SAMPLES = 50
 
 
+def _get_valid_fields() -> set[str] | None:
+    """Return the set of current output schema field names from DynamoDB.
+    Only these fields are shown in the report — filters out old schema names
+    from historical eval runs. Returns None if config is unavailable."""
+    try:
+        from config.chatkit_config import get_chat_config
+        cfg = get_chat_config("document-data-extraction")
+        schema = cfg.get("output_json_schema") or {}
+        props = schema.get("properties") or {}
+        # Schema has an agenda_items array wrapper — drill into items
+        if "agenda_items" in props:
+            inner = (props["agenda_items"].get("items") or {})
+            fields = set(inner.get("required") or [])
+        else:
+            fields = set(schema.get("required") or [])
+        return fields or None
+    except Exception as e:
+        log.warning("doc_score_reporter: could not load schema fields: %s", e)
+        return None
+
+
 def _get_bucket() -> str:
     return (
         os.environ.get("CHANGELOG_BUCKET", "").strip()
@@ -91,6 +112,8 @@ def generate_score_report(triggered_by_run: str | None = None) -> dict:
         log.error("doc_score_reporter: failed to read results: %s", e)
         return {}
 
+    valid_fields = _get_valid_fields()
+
     # Per-field accumulators: {field -> {Correct: N, Partially Correct: N, Incorrect: N}}
     field_counts: dict[str, dict[str, int]] = defaultdict(lambda: {
         _SCORE_CORRECT: 0, _SCORE_PARTIALLY: 0, _SCORE_INCORRECT: 0
@@ -113,6 +136,8 @@ def generate_score_report(triggered_by_run: str | None = None) -> dict:
         total_rows += 1
         for field, entry in scores.items():
             if field in _EXCLUDE_SCORE_FIELDS:
+                continue
+            if valid_fields and field not in valid_fields:
                 continue
             if not isinstance(entry, dict):
                 continue
