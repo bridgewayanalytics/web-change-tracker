@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 _DEFAULT_BUCKET = "web-change-tracker-prod-artifacts-815039343351"
 _RESULTS_KEY = "alerts/doc_eval_results_table.jsonl"
 _REPORT_KEY = "alerts/doc_eval_score_report.json"
+_PREV_REPORT_KEY = "alerts/doc_eval_score_report_prev.json"
 
 _SCORE_CORRECT = "Correct"
 _SCORE_PARTIALLY = "Partially Correct"
@@ -187,6 +188,18 @@ def generate_score_report(triggered_by_run: str | None = None) -> dict:
     }
 
     try:
+        # Rotate current → prev before writing new current
+        try:
+            cur = client.get_object(Bucket=bucket, Key=_REPORT_KEY)
+            client.put_object(
+                Bucket=bucket,
+                Key=_PREV_REPORT_KEY,
+                Body=cur["Body"].read(),
+                ContentType="application/json",
+            )
+        except Exception:
+            pass  # No existing report yet
+
         client.put_object(
             Bucket=bucket,
             Key=_REPORT_KEY,
