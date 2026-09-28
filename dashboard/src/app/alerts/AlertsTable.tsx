@@ -958,14 +958,12 @@ function QaScoreRow({
   columns,
   stickyLefts,
   callId,
-  onRerun,
   isRunning,
 }: {
   evalResult: EvalResult;
   columns: string[];
   stickyLefts: number[];
   callId: string;
-  onRerun: (callId: string) => void;
   isRunning: boolean;
 }) {
   const { correct, total } = computeQaScore(evalResult.eval_scores);
@@ -989,7 +987,7 @@ function QaScoreRow({
             QA &nbsp;<span className="font-normal text-gray-600">{correct}/{total}</span>
           </div>
           {evalDateStr && <div className="text-[10px] text-gray-500">{evalDateStr}</div>}
-          {isRunning ? (
+          {isRunning && (
             <div className="flex items-center gap-1 text-[11px] text-gray-400">
               <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -997,13 +995,6 @@ function QaScoreRow({
               </svg>
               Running…
             </div>
-          ) : (
-            <button
-              onClick={() => onRerun(callId)}
-              className="text-[11px] text-gray-400 hover:text-gray-600 hover:underline text-left"
-            >
-              Re-run QA
-            </button>
           )}
         </div>
       </td>
@@ -1782,7 +1773,6 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
                         columns={columns}
                         stickyLefts={stickyLefts}
                         callId={String(row.agent_call_id ?? "")}
-                        onRerun={startQa}
                         isRunning={qaRunning.has(String(row.agent_call_id ?? ""))}
                       />
                     )}
