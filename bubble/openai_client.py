@@ -61,6 +61,7 @@ def chat_json(
     json_schema: dict | None = None,
     json_schema_name: str = "output",
     json_schema_strict: bool = True,
+    surface: str | None = None,
 ) -> dict:
     """
     Call OpenAI Responses API with JSON-only output. Uses reasoning (moderate).
@@ -103,6 +104,17 @@ def chat_json(
         kwargs["reasoning"] = {"effort": reasoning_effort}
 
     response = client.responses.create(**kwargs)
+
+    if surface:
+        from bubble.usage_telemetry import extract_responses_api_usage, post_usage
+        u = extract_responses_api_usage(response)
+        post_usage(
+            surface, model,
+            u["input_tokens"], u["output_tokens"],
+            cached_input_tokens=u["cached_input_tokens"],
+            reasoning_tokens=u["reasoning_tokens"],
+        )
+
     content = _extract_text_from_response(response)
     if not content or not content.strip():
         raise ValueError("Empty response from OpenAI")

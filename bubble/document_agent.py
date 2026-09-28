@@ -192,6 +192,16 @@ async def _run_with_pgvector(
         )
         result = await Runner.run(agent, input=user_content)
         gathered = result.final_output or ""
+        from bubble.usage_telemetry import extract_agents_sdk_usage, post_usage
+        u = extract_agents_sdk_usage(result)
+        if u["requests"]:
+            post_usage(
+                "document_data_extraction", model,
+                u["input_tokens"], u["output_tokens"],
+                cached_input_tokens=u["cached_input_tokens"],
+                reasoning_tokens=u["reasoning_tokens"],
+                requests_count=u["requests"],
+            )
     finally:
         await close_pg_pool()
         # Reset the reranker's httpx client so its connections don't persist across
@@ -245,6 +255,7 @@ async def _run_with_pgvector(
             json_schema=json_schema,
             json_schema_name=json_schema_name,
             json_schema_strict=json_schema_strict,
+            surface="document_data_extraction",
         )
 
     # Fallback if no schema: parse free text
@@ -510,6 +521,7 @@ def extract_document_data(
                 json_schema=json_schema,
                 json_schema_name=json_schema_name,
                 json_schema_strict=json_schema_strict,
+                surface="document_data_extraction",
             )
             out = result if isinstance(result, dict) else {}
             if not out:

@@ -293,6 +293,16 @@ async def _run_with_pgvector(
             ),
         )
         result = await Runner.run(agent, input=user_content)
+        from bubble.usage_telemetry import extract_agents_sdk_usage, post_usage
+        u = extract_agents_sdk_usage(result)
+        if u["requests"]:
+            post_usage(
+                "web_tracking_agent", model,
+                u["input_tokens"], u["output_tokens"],
+                cached_input_tokens=u["cached_input_tokens"],
+                reasoning_tokens=u["reasoning_tokens"],
+                requests_count=u["requests"],
+            )
         return result.final_output or ""
     finally:
         await close_pg_pool()
@@ -474,6 +484,7 @@ def extract_page_change(
                     json_schema=json_schema,
                     json_schema_name=_get_output_json_schema_name(),
                     json_schema_strict=_get_output_json_schema_strict(),
+                    surface="web_tracking_agent",
                 )
             else:
                 result = _parse_output(raw)
@@ -494,6 +505,7 @@ def extract_page_change(
                 json_schema=json_schema,
                 json_schema_name=_get_output_json_schema_name(),
                 json_schema_strict=_get_output_json_schema_strict(),
+                surface="web_tracking_agent",
             )
 
         if not isinstance(result, dict):
