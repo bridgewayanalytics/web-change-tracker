@@ -18,6 +18,8 @@ Usage:
   python3 scripts/bulk_qa_eval.py --batch-size 20         # adjust batch size
   python3 scripts/bulk_qa_eval.py --ids-only              # print IDs one per line (for piping)
   python3 scripts/bulk_qa_eval.py --approved-only         # only ingest_status=approved rows
+  python3 scripts/bulk_qa_eval.py --alert-type "New Agenda Posted"  # filter by alert type (substring match)
+  python3 scripts/bulk_qa_eval.py --alert-type "New Agenda Posted" --include-done --ecs  # re-eval specific type
 
 ECS mode:
   Dispatches each batch as an ECS Fargate task and exits immediately — no local compute needed.
@@ -192,10 +194,13 @@ def main() -> None:
                         help="Print agent_call_ids only, one per line")
     parser.add_argument("--approved-only", action="store_true",
                         help="Only rows with ingest_status=approved")
+    parser.add_argument("--alert-type", type=str, default=None,
+                        help="Filter by alert_type (case-insensitive substring match, e.g. 'New Agenda Posted')")
     args = parser.parse_args()
 
     use_ecs = args.ecs
     batch_size = args.batch_size or (_DEFAULT_ECS_BATCH_SIZE if use_ecs else _DEFAULT_BATCH_SIZE)
+    alert_type_filter = args.alert_type.strip() if args.alert_type else None
 
     bucket = _get_bucket()
     client = _s3_client()
@@ -216,6 +221,7 @@ def main() -> None:
     old_schema_skipped = 0
     no_bubble_action_skipped = 0
     not_approved_skipped = 0
+    wrong_alert_type_skipped = 0
     already_done_skipped = 0
 
     seen_call_ids: set[str] = set()
@@ -242,6 +248,12 @@ def main() -> None:
         if args.approved_only and row.get("ingest_status") != "approved":
             not_approved_skipped += 1
             continue
+
+        if alert_type_filter:
+            row_type = str(row.get("alert_type") or "")
+            if alert_type_filter.lower() not in row_type.lower():
+                wrong_alert_type_skipped += 1
+                continue
 
         if not args.include_done and cid in already_done:
             already_done_skipped += 1
@@ -272,6 +284,9 @@ def main() -> None:
     print(f"  No bubble_action skipped:  {no_bubble_action_skipped}")
     if args.approved_only:
         print(f"  Non-approved skipped:      {not_approved_skipped}")
+    if alert_type_filter:
+        print(f"  Alert type filter:         \"{alert_type_filter}\"")
+        print(f"  Wrong alert type skipped:  {wrong_alert_type_skipped}")
     print(f"  Already QA'd skipped:      {already_done_skipped}")
     print(f"Eligible agent_call_ids:     {len(eligible_call_ids)}")
     print(f"Batch size:                  {batch_size}")
