@@ -1124,31 +1124,46 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
       .catch(() => {});
   }, [evalVersion]);
 
-  // Poll in-flight QA tasks every 5s
+  // Poll in-flight QA tasks every 5s — one batched ECS call for all pending tasks
   useEffect(() => {
     if (qaRunning.size === 0) return;
     const interval = setInterval(async () => {
-      for (const [callId, taskId] of Array.from(qaRunning.entries())) {
-        try {
-          const res = await fetch(`/api/eval/alerts/${taskId}`);
-          const data = await res.json() as { status: string; error?: string };
-          if (data.status === "running") continue;
+      const entries = Array.from(qaRunning.entries());
+      const taskIds = entries.map(([, taskId]) => taskId);
+      try {
+        const res = await fetch("/api/eval/alerts/batch-status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ taskIds }),
+        });
+        const data = await res.json() as { results: Record<string, { status: string; error?: string }> };
+        const results = data.results ?? {};
+        let anyComplete = false;
+        const failed: string[] = [];
+        const toRemove: string[] = [];
+        for (const [callId, taskId] of entries) {
+          const taskResult = results[taskId];
+          if (!taskResult || taskResult.status === "running") continue;
+          toRemove.push(callId);
+          if (taskResult.status === "complete") {
+            anyComplete = true;
+          } else if (taskResult.status === "failed") {
+            failed.push(taskResult.error ?? "Unknown error");
+          } else {
+            // "unknown": task purged from ECS — refresh results anyway
+            anyComplete = true;
+          }
+        }
+        if (toRemove.length > 0) {
           setQaRunning((prev) => {
             const next = new Map(prev);
-            next.delete(callId);
+            for (const callId of toRemove) next.delete(callId);
             return next;
           });
-          if (data.status === "complete") {
-            setEvalVersion((v) => v + 1);
-          } else if (data.status === "failed" || data.status === "error") {
-            alert(`QA evaluation failed: ${data.error ?? "Unknown error"}`);
-          } else {
-            // "unknown": task not found in ECS (completed and purged, or transient).
-            // Refresh results — if the task completed, scores will appear.
-            setEvalVersion((v) => v + 1);
-          }
-        } catch { /* keep polling */ }
-      }
+        }
+        if (anyComplete) setEvalVersion((v) => v + 1);
+        if (failed.length > 0) alert(`QA evaluation failed:\n${failed.join("\n")}`);
+      } catch { /* keep polling */ }
     }, 5000);
     return () => clearInterval(interval);
   }, [qaRunning]);
