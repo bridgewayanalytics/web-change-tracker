@@ -946,9 +946,11 @@ interface DocExtractionsTableProps {
   schemaVersion?: number;
   hasQaScoreFilter?: boolean;
   hasImperfectQaFilter?: boolean;
+  evalRefreshTrigger?: number;
+  pinnedCallIds?: string[] | null;
 }
 
-export function DocExtractionsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFilter = false, hasImperfectQaFilter = false }: DocExtractionsTableProps) {
+export function DocExtractionsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFilter = false, hasImperfectQaFilter = false, evalRefreshTrigger = 0, pinnedCallIds = null }: DocExtractionsTableProps) {
   const [schemaColumns, setSchemaColumns] = useState<string[] | null>(null);
   const [schemaLabels, setSchemaLabels] = useState<Record<string, string> | null>(null);
   const [priorKeys, setPriorKeys] = useState<Record<string, string[]>>({});
@@ -1007,7 +1009,7 @@ export function DocExtractionsTable({ rows, onAccepted, schemaVersion = 0, hasQa
         if (d.results) setEvalResults(d.results);
       })
       .catch(() => {});
-  }, [evalVersion]);
+  }, [evalVersion, evalRefreshTrigger]);
 
   // Trigger QA after auto-accept — runs in a clean React effect context, not inside setInterval
   useEffect(() => {
@@ -1290,7 +1292,7 @@ export function DocExtractionsTable({ rows, onAccepted, schemaVersion = 0, hasQa
   const rowIndexMap = useMemo(() => new Map(rows.map((r, i) => [r, i])), [rows]);
 
   // Apply QA filters
-  const displayedRows = hasImperfectQaFilter
+  let displayedRows = hasImperfectQaFilter
     ? rows.filter((r) => {
         const ev = getEvalForRow(r, evalResults);
         if (!ev) return false;
@@ -1301,12 +1303,21 @@ export function DocExtractionsTable({ rows, onAccepted, schemaVersion = 0, hasQa
     ? rows.filter((r) => !!getEvalForRow(r, evalResults))
     : rows;
 
+  if (pinnedCallIds) {
+    const pinned = new Set(pinnedCallIds);
+    displayedRows = displayedRows.filter((r) => {
+      const callId = String(r.agent_call_id ?? "");
+      const libUrl = String(r.library_item_url ?? "");
+      return (libUrl && libUrl !== "N/A" && pinned.has(`${callId}|${libUrl}`)) || pinned.has(callId);
+    });
+  }
+
   const totalPages = Math.ceil(displayedRows.length / PAGE_SIZE);
   const pagedRows = displayedRows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   // Reset to page 0 when filters or row count changes
   const prevFilterKey = React.useRef("");
-  const filterKey = `${hasImperfectQaFilter}|${hasQaScoreFilter}|${displayedRows.length}`;
+  const filterKey = `${hasImperfectQaFilter}|${hasQaScoreFilter}|${pinnedCallIds ? pinnedCallIds.join(",") : "null"}|${displayedRows.length}`;
   if (filterKey !== prevFilterKey.current) {
     prevFilterKey.current = filterKey;
     if (page !== 0) setPage(0);

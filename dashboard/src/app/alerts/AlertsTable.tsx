@@ -1055,9 +1055,13 @@ interface AlertsTableProps {
   hasQaScoreFilter?: boolean;
   /** If true, only show rows with a QA score that is not perfect (correct < total). */
   hasImperfectQaFilter?: boolean;
+  /** When this value changes, trigger an internal re-fetch of eval results. */
+  evalRefreshTrigger?: number;
+  /** When set, only show rows with these agent_call_ids (or compound callId|libUrl keys for sibling rows). */
+  pinnedCallIds?: string[] | null;
 }
 
-export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFilter = false, hasImperfectQaFilter = false }: AlertsTableProps) {
+export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFilter = false, hasImperfectQaFilter = false, evalRefreshTrigger = 0, pinnedCallIds = null }: AlertsTableProps) {
   const [schemaColumns, setSchemaColumns] = useState<string[] | null>(null);
   const [schemaLabels, setSchemaLabels] = useState<Record<string, string> | null>(null);
   const [priorKeys, setPriorKeys] = useState<Record<string, string[]>>({});
@@ -1126,7 +1130,7 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
         if (d.results) setEvalResults(d.results);
       })
       .catch(() => {});
-  }, [evalVersion]);
+  }, [evalVersion, evalRefreshTrigger]);
 
   // Poll in-flight QA tasks every 5s — one batched ECS call for all pending tasks
   useEffect(() => {
@@ -1409,7 +1413,7 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
     return () => clearInterval(interval);
   }, [activeTasks]);
 
-  const displayRows = hasImperfectQaFilter
+  let displayRows = hasImperfectQaFilter
     ? rows.filter((r) => {
         const ev = lookupEvalResult(r, evalResults);
         if (!ev) return false;
@@ -1419,6 +1423,15 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
     : hasQaScoreFilter
     ? rows.filter((r) => !!lookupEvalResult(r, evalResults))
     : rows;
+
+  if (pinnedCallIds) {
+    const pinned = new Set(pinnedCallIds);
+    displayRows = displayRows.filter((r) => {
+      const callId = String(r.agent_call_id ?? "");
+      const libUrl = String(r.library_item_url ?? "");
+      return (libUrl && libUrl !== "N/A" && pinned.has(`${callId}|${libUrl}`)) || pinned.has(callId);
+    });
+  }
 
   const totalPages = Math.ceil(displayRows.length / PAGE_SIZE);
   const pagedRows = displayRows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
@@ -1431,6 +1444,9 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
   const alertRowIndexMap = useMemo(() => new Map(rows.map((r, i) => [r, i])), [rows]);
 
   if (displayRows.length === 0) {
+    if (pinnedCallIds) {
+      return <p className="text-sm text-gray-500 mt-2">No rows match the current QA filter.</p>;
+    }
     if (hasImperfectQaFilter) {
       return <p className="text-sm text-gray-500 mt-2">No rows with imperfect QA scores found.</p>;
     }
