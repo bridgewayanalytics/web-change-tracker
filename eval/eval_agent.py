@@ -117,17 +117,17 @@ def _build_group_user_message(
         parts += ["\n## After HTML (what the page looked like after the change)", after_html]
 
     parts.append(f"\n## Agent Output ({len(rows)} alert row(s) to evaluate)")
-    for key, row in zip(eval_row_keys, rows):
+    for i, row in enumerate(rows):
         alert_json = json.dumps(
             {k: v for k, v in row.items() if k not in ALERT_PIPELINE_FIELDS and not k.startswith("bubble_action")},
             indent=2,
             default=str,
         )
-        parts += [f"\n### Row: {key}\n```json", alert_json, "```"]
+        parts += [f"\n### Row {i}\n```json", alert_json, "```"]
 
     parts.append(
         "\nEvaluate every field in each row above against the HTML snapshots and org reference. "
-        "Return a JSON object with one key per eval_row_key (use the exact keys shown in the ### Row: headings above). "
+        "Return a JSON object with one integer key per row (use the row indices shown in the ### Row N headings: 0, 1, 2, ...). "
         "Each value is a JSON object where each field name maps to:\n"
         '{"score": "Correct" | "Partially Correct" | "Incorrect", "reasoning": "<evidence-based explanation>"}\n\n'
         "Reasoning MUST be auditable — cite specific evidence:\n"
@@ -138,7 +138,7 @@ def _build_group_user_message(
         'Each per-row object must include an "overall_summary" key: '
         '{"correct": N, "partially_correct": N, "incorrect": N, "total": N, "pattern": "<any systematic patterns>"}\n\n'
         "Top-level output structure:\n"
-        '{"<eval_row_key>": {"<field>": {"score": ..., "reasoning": ...}, ..., "overall_summary": {...}}, ...}'
+        '{"0": {"<field>": {"score": ..., "reasoning": ...}, ..., "overall_summary": {...}}, "1": {...}, ...}'
     )
 
     return "\n".join(parts)
@@ -210,7 +210,9 @@ async def _run_with_pgvector(
     if not gathered:
         return {"error": "Agent returned empty output"}
 
-    keys_str = ", ".join(f'"{k}"' for k in eval_row_keys)
+    # Use sequential integer indices as JSON keys — avoids LLM failing to echo back
+    # complex eval_row_key strings (UUIDs + pipe + URLs) perfectly, which caused 0/0 scores.
+    index_keys_str = ", ".join(f'"{i}"' for i in range(len(eval_row_keys)))
     field_names_str = ", ".join(f'"{k}"' for k in (field_names or []))
     from bubble.openai_client import chat_json
     messages = [
@@ -218,7 +220,8 @@ async def _run_with_pgvector(
             "role": "system",
             "content": (
                 "You are a JSON formatter. Given the QA evaluation analysis below, produce a JSON object "
-                f"with exactly these top-level keys (one per evaluated row): {keys_str}. "
+                f"with exactly these top-level keys (integer strings, one per row in order): {index_keys_str}. "
+                'Key "0" = Row 0, "1" = Row 1, etc. '
                 "Each value is a JSON object where each field maps to: "
                 '{"score": "Correct" | "Partially Correct" | "Incorrect", "reasoning": "<evidence-based explanation>"}. '
                 + (
@@ -234,7 +237,13 @@ async def _run_with_pgvector(
         },
         {"role": "user", "content": gathered},
     ]
-    return chat_json(messages, model=model, reasoning_effort=reasoning_effort)
+    indexed = chat_json(messages, model=model, reasoning_effort=reasoning_effort) or {}
+    # Remap integer-index keys → real eval_row_keys so _flatten_scores works unchanged.
+    return {
+        eval_row_keys[int(k)]: v
+        for k, v in indexed.items()
+        if k.isdigit() and int(k) < len(eval_row_keys)
+    }
 
 
 def evaluate_group(
@@ -290,11 +299,12 @@ def evaluate_group(
         "eval_agent: running group via direct API (model=%s rows=%d) agent_call_id=%s",
         model, len(rows), agent_call_id,
     )
-    keys_str = ", ".join(f'"{k}"' for k in eval_row_keys)
+    index_keys_str = ", ".join(f'"{i}"' for i in range(len(eval_row_keys)))
     field_names_str = ", ".join(f'"{k}"' for k in field_names)
     direct_system = (
         system_prompt
-        + f"\n\nReturn a JSON object with exactly these top-level keys: {keys_str}. "
+        + f"\n\nReturn a JSON object with exactly these top-level keys (integer strings): {index_keys_str}. "
+        'Key "0" = Row 0, "1" = Row 1, etc. '
         f"Each value is an object whose score keys are EXACTLY these field names: {field_names_str}. "
         'Each field maps to: {"score": "Correct" | "Partially Correct" | "Incorrect", "reasoning": "..."}. '
         'Also include an overall_summary key per row: {"correct": N, "partially_correct": N, "incorrect": N, "total": N, "pattern": "..."}.'
@@ -304,9 +314,14 @@ def evaluate_group(
         {"role": "user", "content": user_message},
     ]
     try:
-        raw = chat_json(messages, model=model, reasoning_effort=reasoning_effort)
-        if not isinstance(raw, dict):
+        indexed = chat_json(messages, model=model, reasoning_effort=reasoning_effort) or {}
+        if not isinstance(indexed, dict):
             return [{"eval_row_key": k, "eval_scores": {}, "error": "Agent returned non-dict response"} for k in eval_row_keys]
+        raw = {
+            eval_row_keys[int(k)]: v
+            for k, v in indexed.items()
+            if k.isdigit() and int(k) < len(eval_row_keys)
+        }
         return _flatten_scores(raw, rows, eval_row_keys)
     except Exception as e:
         log.error("Eval agent failed for agent_call_id=%s: %s", agent_call_id, e)

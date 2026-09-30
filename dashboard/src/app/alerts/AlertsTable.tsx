@@ -891,7 +891,11 @@ interface EvalResult {
 function lookupEvalResult(row: AlertRow, evalResults: Record<string, EvalResult>): EvalResult | undefined {
   const callId = String(row.agent_call_id ?? "");
   if (!callId) return undefined;
-  const libUrl = String(row.library_item_url ?? "").trim();
+  const libUrlRaw = String(row.library_item_url ?? "").trim();
+  // URL-decode so the composite key matches what eval/run_eval.py stores
+  // (eval_row_key uses unquote(library_item_url) to avoid LLM %XX decode mismatches).
+  let libUrl = libUrlRaw;
+  try { libUrl = libUrlRaw ? decodeURIComponent(libUrlRaw) : ""; } catch { /* leave as-is on malformed %XX */ }
   const plain = evalResults[callId];
   const composite = (libUrl && libUrl.toLowerCase() !== "n/a")
     ? evalResults[`${callId}|${libUrl}`]
