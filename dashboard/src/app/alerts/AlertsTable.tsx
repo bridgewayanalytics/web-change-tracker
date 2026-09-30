@@ -962,12 +962,14 @@ function QaScoreRow({
   columns,
   stickyLefts,
   callId,
+  onRerun,
   isRunning,
 }: {
   evalResult: EvalResult;
   columns: string[];
   stickyLefts: number[];
   callId: string;
+  onRerun: (callId: string) => void;
   isRunning: boolean;
 }) {
   const { correct, total } = computeQaScore(evalResult.eval_scores);
@@ -991,7 +993,7 @@ function QaScoreRow({
             QA &nbsp;<span className="font-normal text-gray-600">{correct}/{total}</span>
           </div>
           {evalDateStr && <div className="text-[10px] text-gray-500">{evalDateStr}</div>}
-          {isRunning && (
+          {isRunning ? (
             <div className="flex items-center gap-1 text-[11px] text-gray-400">
               <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -999,6 +1001,13 @@ function QaScoreRow({
               </svg>
               Running…
             </div>
+          ) : (
+            <button
+              onClick={() => onRerun(callId)}
+              className="text-[11px] text-gray-400 hover:text-gray-600 hover:underline text-left"
+            >
+              Re-run QA
+            </button>
           )}
         </div>
       </td>
@@ -1576,6 +1585,30 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
                           })()}
                           {(() => {
                             const callId = String(row.agent_call_id ?? "");
+                            if (!callId) return null;
+                            const hasEval = !!lookupEvalResult(row, evalResults);
+                            if (hasEval) return null;
+                            const isQaRunning = qaRunning.has(callId);
+                            if (isQaRunning) return (
+                              <div className="flex items-center gap-1 text-[11px] text-gray-400">
+                                <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                                </svg>
+                                QA Running…
+                              </div>
+                            );
+                            return (
+                              <button
+                                onClick={() => startQa(callId)}
+                                className="text-[11px] font-medium text-violet-600 hover:text-violet-800 hover:underline whitespace-nowrap"
+                              >
+                                Run QA
+                              </button>
+                            );
+                          })()}
+                          {(() => {
+                            const callId = String(row.agent_call_id ?? "");
                             const overrideData = rowOverrides.get(callId) ?? {};
                             const effectiveRow = { ...row, ...overrideData };
 
@@ -1777,6 +1810,7 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
                         columns={columns}
                         stickyLefts={stickyLefts}
                         callId={String(row.agent_call_id ?? "")}
+                        onRerun={startQa}
                         isRunning={qaRunning.has(String(row.agent_call_id ?? ""))}
                       />
                     )}
