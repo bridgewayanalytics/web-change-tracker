@@ -32,10 +32,16 @@ def _make_eval_run_id() -> str:
 
 
 def _eval_row_key(row: dict, group: list[dict]) -> str:
-    """Stable unique key: agent_call_id alone for single rows, composite for siblings."""
+    """Stable unique key: agent_call_id alone for single rows, composite for siblings.
+
+    URL-decode the library_item_url so the key contains human-readable text — the
+    LLM decodes %XX sequences when echoing keys back, causing raw.get(key) misses
+    when the key contains percent-encoded characters like %20, %25, %26.
+    """
+    from urllib.parse import unquote
     cid = row.get("agent_call_id", "")
     if len(group) > 1:
-        lib_url = str(row.get("library_item_url") or "").strip()
+        lib_url = unquote(str(row.get("library_item_url") or "").strip())
         return f"{cid}|{lib_url}" if lib_url and lib_url.lower() != "n/a" else f"{cid}|{row.get('alert_title', '')}"
     return cid
 

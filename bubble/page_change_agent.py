@@ -453,6 +453,11 @@ def extract_page_change(
                 pgvector_namespaces if isinstance(pgvector_namespaces, list) else [],
             ))
 
+            # Log Step 1 output for debugging (visible in CloudWatch + stored to S3).
+            log.info("page_change_agent: Step 1 raw output (call_id=%s, len=%d):\n%s",
+                     agent_call_id[:8], len(raw or ""), (raw or "")[:4000])
+            _store_agent_context(agent_call_id, "alerts_step1", raw or "", "")
+
             if not raw:
                 log.warning("page_change_agent: pgvector step returned empty output — treating as no change (call_id=%s)", agent_call_id[:8])
                 return []
@@ -472,6 +477,11 @@ def extract_page_change(
                                 "into a JSON object that strictly matches the required schema. "
                                 "Use only the data provided — do not invent values. "
                                 "For string fields not mentioned in the analysis, use \"N/A\". "
+                                "EXCEPTION: alert_type must NEVER be \"N/A\". "
+                                "If the analysis does not explicitly state the alert_type for a row, "
+                                "infer it from the row's content and context (document replaced → "
+                                "\"Updated Materials\", new RFC/exposure draft → \"New Request for Comment\", "
+                                "meeting added → \"New Meeting\", etc.). "
                                 "For array fields, always include at least one entry — never output an empty array. "
                                 "If there are no applicable items for an array field, output exactly one entry "
                                 "where status is \"N/A\" and all other content fields are \"N/A\"."
@@ -516,8 +526,9 @@ def extract_page_change(
         for alert in alerts:
             alert["agent_call_id"] = agent_call_id
 
-        # Drop any dicts that have no alert_type — malformed output from pgvector empty response.
-        alerts = [a for a in alerts if a.get("alert_type")]
+        # Drop rows with no alert_type or an invalid sentinel — both indicate malformed output.
+        _INVALID_ALERT_TYPE = frozenset({"N/A", "n/a", "na", "NA", ""})
+        alerts = [a for a in alerts if a.get("alert_type") and a.get("alert_type") not in _INVALID_ALERT_TYPE]
         log.info("page_change_agent: produced %d alert(s) (call_id=%s)", len(alerts), agent_call_id[:8])
         return alerts
 
