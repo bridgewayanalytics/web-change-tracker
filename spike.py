@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import random
 import re
 import time
 from pathlib import Path
@@ -728,14 +729,16 @@ def _dismiss_cookie_banner(page) -> None:
         pass  # Continue; page may have no banner
 
 
-_BROWSER_UA = (
+# Used only for the requests-library fallback (Playwright uses its own default UA,
+# which correctly matches the bundled Chromium version — we do not override it).
+_REQUESTS_FALLBACK_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/127.0.0.0 Safari/537.36"
+    "Chrome/131.0.0.0 Safari/537.36"
 )
 
 _REQUESTS_HEADERS = {
-    "User-Agent": _BROWSER_UA,
+    "User-Agent": _REQUESTS_FALLBACK_UA,
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.5",
     "Accept-Encoding": "gzip, deflate, br",
@@ -743,45 +746,133 @@ _REQUESTS_HEADERS = {
     "Upgrade-Insecure-Requests": "1",
 }
 
-# Masks navigator.webdriver to pass Cloudflare Managed Challenge fingerprinting
+# Minimal stealth: suppress the navigator.webdriver automation flag.
+# navigator.plugins is intentionally NOT overridden — a fake integer array was
+# previously used here and is worse than the default (Cloudflare detects it).
 _STEALTH_INIT_SCRIPT = """
 Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3]});
 Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
 window.chrome = {runtime: {}};
 """
 
+# ---------------------------------------------------------------------------
+# Cloudflare challenge detection
+# ---------------------------------------------------------------------------
+
+_CF_CHALLENGE_MARKERS = (
+    "cf-turnstile-response",            # Turnstile hidden input present in all Turnstile pages
+    "challenges.cloudflare.com",        # Cloudflare challenge script source
+    "Performing security verification", # Turnstile h2 body text
+    "_cf_chl_opt",                      # Cloudflare challenge JS config object
+)
+
+
+def _is_cloudflare_challenge(html: str) -> bool:
+    """Return True if html is a Cloudflare challenge page (Turnstile or managed challenge)."""
+    return any(marker in html for marker in _CF_CHALLENGE_MARKERS)
+
+
+# ---------------------------------------------------------------------------
+# Shared Playwright session for content.naic.org
+# ---------------------------------------------------------------------------
+# One browser + context is reused across all NAIC targets in a pipeline run.
+# This allows cookies to persist between pages (matching real-user behaviour)
+# and avoids the cold-start fingerprint signal produced by 29 fresh browser
+# launches in rapid succession.
+
+_naic_pw = None   # playwright instance
+_naic_browser = None
+_naic_context = None
+
+
+def _open_naic_session() -> None:
+    global _naic_pw, _naic_browser, _naic_context
+    from playwright.sync_api import sync_playwright
+    _naic_pw = sync_playwright().__enter__()
+    _naic_browser = _naic_pw.chromium.launch(
+        headless=True,
+        args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+    )
+    _naic_context = _naic_browser.new_context(
+        viewport={"width": 1920, "height": 1080},
+        locale="en-US",
+        timezone_id="America/New_York",
+    )
+    _naic_context.add_init_script(_STEALTH_INIT_SCRIPT)
+    log.info("[NAIC SESSION] Shared browser context opened")
+
+
+def _close_naic_session() -> None:
+    global _naic_pw, _naic_browser, _naic_context
+    try:
+        if _naic_context:
+            _naic_context.close()
+        if _naic_browser:
+            _naic_browser.close()
+        if _naic_pw:
+            _naic_pw.__exit__(None, None, None)
+    except Exception as _e:
+        log.warning("[NAIC SESSION] Error closing shared session: %s", _e)
+    finally:
+        _naic_pw = _naic_browser = _naic_context = None
+    log.info("[NAIC SESSION] Shared browser context closed")
+
+
+def _pw_navigate(page, url: str) -> str:
+    """Navigate *page* to *url* and return the full HTML. Handles the old-style
+    'Just a moment…' Cloudflare managed challenge by waiting up to 25 s for it
+    to resolve. (Turnstile challenges are detected after the fact via
+    _is_cloudflare_challenge().)"""
+    page.goto(url, wait_until="domcontentloaded", timeout=30000)
+    if "Just a moment" in page.title():
+        try:
+            page.wait_for_function(
+                "document.title !== 'Just a moment...'",
+                timeout=25000,
+            )
+            page.wait_for_load_state("domcontentloaded", timeout=10000)
+        except Exception:
+            pass
+    _dismiss_cookie_banner(page)
+    return page.content()
+
 
 def fetch_with_playwright(url: str) -> str:
-    from playwright.sync_api import sync_playwright
+    """Fetch *url* via Playwright.
 
+    Uses the shared NAIC session (one browser + context for the whole run)
+    when *url* is on content.naic.org and the session has been opened.
+    Falls back to a fresh browser/context per call for all other URLs.
+    """
+    if _naic_context is not None and "content.naic.org" in url:
+        # Reuse the shared context — open a new tab, navigate, close the tab.
+        # Cookies set by earlier pages in the run are automatically available.
+        page = _naic_context.new_page()
+        try:
+            log.info("[FETCH] %s (shared context)", url)
+            return _pw_navigate(page, url)
+        finally:
+            page.close()
+
+    # Fresh browser for non-NAIC URLs or when the shared session is not open.
+    from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
             args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
         )
         ctx = browser.new_context(
-            user_agent=_BROWSER_UA,
             viewport={"width": 1920, "height": 1080},
             locale="en-US",
+            timezone_id="America/New_York",
         )
         ctx.add_init_script(_STEALTH_INIT_SCRIPT)
         page = ctx.new_page()
-        page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        # Wait for Cloudflare challenge to resolve if present
-        if "Just a moment" in page.title():
-            try:
-                page.wait_for_function(
-                    "document.title !== 'Just a moment...'",
-                    timeout=25000,
-                )
-                page.wait_for_load_state("domcontentloaded", timeout=10000)
-            except Exception:
-                pass
-        _dismiss_cookie_banner(page)
-        html = page.content()
-        browser.close()
-    return html
+        try:
+            log.info("[FETCH] %s (fresh context)", url)
+            return _pw_navigate(page, url)
+        finally:
+            browser.close()
 
 
 def fetch_with_requests(url: str) -> str:
@@ -1493,6 +1584,54 @@ def process_target(
     log.info("--- %s ---", label)
     log.info("Fetching %s...", url)
     html = fetch_page(url, target_id=target_id)
+
+    # --- Cloudflare / Turnstile challenge detection ---
+    _fetch_status = "ok"
+    if _is_cloudflare_challenge(html):
+        _cf_delay = random.uniform(30, 60)
+        log.warning(
+            "[CLOUDFLARE CHALLENGE] %s — challenge page received; retrying in %.0fs",
+            url, _cf_delay,
+        )
+        time.sleep(_cf_delay)
+        try:
+            html = fetch_page(url, target_id=target_id)
+            if _is_cloudflare_challenge(html):
+                log.warning(
+                    "[CLOUDFLARE BLOCKED] %s — still challenged after retry; "
+                    "preserving last-good state, skipping diff and agent",
+                    url,
+                )
+                return {
+                    "target_id": target_id,
+                    "label": label,
+                    "url": url,
+                    "cloudflare_blocked": True,
+                    "fetch_status": "blocked",
+                    "change": {"page_changed": False, "first_run": False},
+                    "content_html": "",
+                    "prev_content_html": None,
+                }
+            log.info("[CLOUDFLARE RECOVERED] %s — real content received on retry", url)
+            _fetch_status = "recovered"
+        except Exception as _cf_retry_err:
+            log.warning(
+                "[CLOUDFLARE RETRY ERROR] %s: %s — preserving last-good state",
+                url, _cf_retry_err,
+            )
+            return {
+                "target_id": target_id,
+                "label": label,
+                "url": url,
+                "cloudflare_blocked": True,
+                "fetch_status": "blocked",
+                "change": {"page_changed": False, "first_run": False},
+                "content_html": "",
+                "prev_content_html": None,
+            }
+    else:
+        log.info("[FETCH OK] %s", url)
+
     # Archive raw HTML to S3 (non-blocking, skipped if HTML_SNAPSHOT_BUCKET not set)
     if run_id and run_timestamp:
         from storage.html_snapshot_s3 import store_html_snapshot
@@ -1622,6 +1761,7 @@ def process_target(
         "label": label,
         "url": url,
         "change": change,
+        "fetch_status": _fetch_status,
         "prev_content_html": prev_content_html,
         "content_html": content_html,
     }
@@ -1740,7 +1880,7 @@ def _run_pipeline_agents(change_events: list[dict], run_id: str = "") -> None:
     # merge agent-extracted by_type data into the change event before payload building.
     if PAGE_CHANGE_AGENT_ENABLED:
         for ev in change_events:
-            if "error" in ev:
+            if "error" in ev or ev.get("cloudflare_blocked"):
                 continue
             change = ev.get("change", {})
             if not change.get("page_changed") and not change.get("first_run"):
@@ -3398,17 +3538,56 @@ def main() -> None:
                     ev[k] = t[k]
             return ev
 
-    if targets is not None and targets:
-        for i, t in enumerate(targets):
-            if i > 0 and DELAY_BETWEEN_PAGES > 0:
-                time.sleep(DELAY_BETWEEN_PAGES)
-            url = t.get("url")
-            if url:
-                change_events.append(process_one(t))
-            else:
-                log.warning("--- %s --- Skipping: no URL", t.get("label", "unknown"))
-    else:
-        change_events.append(process_one({"id": "default", "label": "default", "url": TARGET_URL}))
+    # Open a shared Playwright session for content.naic.org if any targets use it.
+    _naic_target_urls = [t.get("url", "") for t in (targets or [])]
+    if USE_PLAYWRIGHT and any("content.naic.org" in u for u in _naic_target_urls):
+        _open_naic_session()
+
+    # Fetch-result counters for the end-of-run summary.
+    _cnt_ok = _cnt_recovered = _cnt_blocked = _cnt_error = 0
+
+    try:
+        if targets is not None and targets:
+            for i, t in enumerate(targets):
+                if i > 0:
+                    _turl = t.get("url", "")
+                    if "content.naic.org" in _turl:
+                        # Randomised delay so 29 NAIC pages aren't hammered in
+                        # a 90-second burst from a datacenter IP.
+                        _delay = random.uniform(5, 15)
+                        log.info("[NAIC DELAY] %.1fs before next request", _delay)
+                    else:
+                        _delay = float(DELAY_BETWEEN_PAGES)
+                    if _delay > 0:
+                        time.sleep(_delay)
+
+                url = t.get("url")
+                if url:
+                    ev = process_one(t)
+                    change_events.append(ev)
+                    _fs = ev.get("fetch_status")
+                    if ev.get("cloudflare_blocked"):
+                        _cnt_blocked += 1
+                    elif _fs == "recovered":
+                        _cnt_recovered += 1
+                        _cnt_ok += 1
+                    elif "error" in ev:
+                        _cnt_error += 1
+                    else:
+                        _cnt_ok += 1
+                else:
+                    log.warning("--- %s --- Skipping: no URL", t.get("label", "unknown"))
+        else:
+            ev = process_one({"id": "default", "label": "default", "url": TARGET_URL})
+            change_events.append(ev)
+    finally:
+        _close_naic_session()
+
+    log.info(
+        "=== Fetch summary — %d succeeded (%d first-attempt, %d after retry) | "
+        "%d Cloudflare blocked | %d errors ===",
+        _cnt_ok, _cnt_ok - _cnt_recovered, _cnt_recovered, _cnt_blocked, _cnt_error,
+    )
 
     # Run the active pipeline agents: LLM agents, recording matcher, transcriber, classifier
     _run_pipeline_agents(change_events, run_id=run_id)
