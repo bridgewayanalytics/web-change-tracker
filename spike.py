@@ -797,6 +797,15 @@ def _open_naic_session() -> None:
         viewport={"width": 1920, "height": 1080},
         locale="en-US",
         timezone_id="America/New_York",
+        user_agent=_REQUESTS_FALLBACK_UA,
+        extra_http_headers={
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "Upgrade-Insecure-Requests": "1",
+        },
     )
     _naic_context.add_init_script(_STEALTH_INIT_SCRIPT)
     log.info("[NAIC SESSION] Shared browser context opened")
@@ -865,6 +874,15 @@ def fetch_with_playwright(url: str) -> str:
             viewport={"width": 1920, "height": 1080},
             locale="en-US",
             timezone_id="America/New_York",
+            user_agent=_REQUESTS_FALLBACK_UA,
+            extra_http_headers={
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+                "Upgrade-Insecure-Requests": "1",
+            },
         )
         ctx.add_init_script(_STEALTH_INIT_SCRIPT)
         page = ctx.new_page()
