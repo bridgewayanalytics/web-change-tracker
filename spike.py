@@ -810,7 +810,7 @@ def _close_naic_session() -> None:
         if _naic_browser:
             _naic_browser.close()
         if _naic_pw:
-            _naic_pw.__exit__(None, None, None)
+            _naic_pw.stop()
     except Exception as _e:
         log.warning("[NAIC SESSION] Error closing shared session: %s", _e)
     finally:
