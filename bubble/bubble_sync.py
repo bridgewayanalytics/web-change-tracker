@@ -792,7 +792,13 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
                     log.warning("bubble_sync: create-event returned no id: %s", event_result)
 
             elif event_action == "update":
-                existing_event_id = _find_calendar_item(ep.get("match_search") or {}, client)
+                ev_match = dict(ep.get("match_search") or {})
+                # bubble_action may have been stamped when date was missing — supplement from live row value
+                if not ev_match.get("date"):
+                    raw_date = str(alert.get("event_start_date_time") or "").strip()
+                    if raw_date and raw_date.upper() != "N/A":
+                        ev_match["date"] = raw_date[:10]
+                existing_event_id = _find_calendar_item(ev_match, client)
                 if not existing_event_id:
                     raise RuntimeError(
                         f"No matched event was found — could not locate existing calendar item "

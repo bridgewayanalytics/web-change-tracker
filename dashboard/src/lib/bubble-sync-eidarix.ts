@@ -606,7 +606,12 @@ export async function syncAlert(
         else console.warn("[bubble-sync] create-event returned no id:", eventResult);
 
       } else if (eventAction === "update") {
-        const matchSearch = (ep.match_search ?? {}) as Record<string, string>;
+        const matchSearch = { ...(ep.match_search ?? {}) } as Record<string, string>;
+        // bubble_action may have been stamped when date was missing — supplement from live row value
+        if (!matchSearch.date) {
+          const rawDate = String(row.event_start_date_time ?? "").trim();
+          if (rawDate && rawDate.toUpperCase() !== "N/A") matchSearch.date = rawDate.slice(0, 10);
+        }
         const existingEventId = await findCalendarItem(matchSearch);
         if (!existingEventId) {
           throw new Error(`No matched calendar item found for match_search=${JSON.stringify(matchSearch)}`);
