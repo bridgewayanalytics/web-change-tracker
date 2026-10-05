@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
-import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
+import { syncAlert } from "@/lib/bubble-sync-eidarix";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -16,19 +16,12 @@ const SPACE_IDS: Record<string, string> = {
 };
 const SPACE_ID = SPACE_IDS[EIDARIX_VERSION] ?? SPACE_IDS.test;
 const BUBBLE_API_BASE = "https://eidarix.bridgewayanalytics.com/api/1.1/obj";
-const BUBBLE_API_KEY = process.env.BUBBLE_API_KEY ?? "0a951ec86c08a59e274411913ce6aec3";
-const BUBBLE_SYNC_LAMBDA = "web-change-tracker-prod-bubble-sync";
+const BUBBLE_API_KEY = process.env.BUBBLE_API_KEY ?? "";
 
 let s3: S3Client | null = null;
 function getS3() {
   if (!s3) s3 = new S3Client({ region: REGION });
   return s3;
-}
-
-let lambdaClient: LambdaClient | null = null;
-function getLambda() {
-  if (!lambdaClient) lambdaClient = new LambdaClient({ region: REGION });
-  return lambdaClient;
 }
 
 async function findMissingOrgs(orgNames: string[]): Promise<string[]> {
@@ -96,8 +89,7 @@ export async function GET(request: NextRequest) {
 
 // POST /api/bubble/sync
 // Body: { agent_call_id, action?, skip_validation? }
-// Invokes the bubble-sync Lambda synchronously — waits for completion and returns the result.
-// No polling needed; the response contains the final sync outcome directly.
+// Calls Eidarix workflow endpoints directly — no Lambda intermediary.
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json() as { agent_call_id?: string; action?: string; skip_validation?: boolean };
@@ -112,7 +104,7 @@ export async function POST(request: NextRequest) {
     const plan = row.bubble_action as Record<string, unknown> | null | undefined;
     if (!plan) return NextResponse.json({ error: "no bubble_action on row" }, { status: 400 });
 
-    // Pre-validate org names before invoking Lambda
+    // Pre-validate org names before syncing
     if (!skip_validation) {
       const ep = (plan.event_preview ?? {}) as Record<string, unknown>;
       const lp = (plan.library_item_preview ?? {}) as Record<string, unknown>;
@@ -121,7 +113,7 @@ export async function POST(request: NextRequest) {
       const missingOrgs = await findMissingOrgs(orgNames);
       if (missingOrgs.length > 0) {
         return NextResponse.json({
-          error: `Organization(s) not found in Bubble: ${JSON.stringify(missingOrgs)}. Check that the org names match exactly and that the correct Eidarix space is configured (EIDARIX_VERSION=${EIDARIX_VERSION}).`,
+          error: `Organization(s) not found in Bubble: ${JSON.stringify(missingOrgs)}. Check that org names match exactly and EIDARIX_VERSION=${EIDARIX_VERSION} is correct.`,
         }, { status: 400 });
       }
     }
@@ -134,34 +126,20 @@ export async function POST(request: NextRequest) {
       await saveRows(rows);
     }
 
-    // Invoke Lambda synchronously — waits for completion, returns final result
-    console.info("[bubble/sync] invoking Lambda agent_call_id=%s action=%s", agent_call_id, action);
-    const invokeResult = await getLambda().send(new InvokeCommand({
-      FunctionName: BUBBLE_SYNC_LAMBDA,
-      InvocationType: "RequestResponse",
-      Payload: JSON.stringify({ agent_call_id, action }),
-    }));
+    // Execute sync directly against Eidarix — no Lambda
+    console.info("[bubble/sync] syncing agent_call_id=%s action=%s", agent_call_id, action);
+    const result = await syncAlert(agent_call_id, action, rows);
 
-    if (invokeResult.FunctionError) {
-      const errPayload = invokeResult.Payload
-        ? JSON.parse(new TextDecoder().decode(invokeResult.Payload))
-        : {};
-      const msg = errPayload.errorMessage ?? invokeResult.FunctionError;
-      console.error("[bubble/sync] Lambda function error: %s", msg);
-      return NextResponse.json({ error: msg }, { status: 500 });
-    }
+    // Save the mutated rows (syncAlert patches them in-place)
+    await saveRows(rows);
 
-    const result = invokeResult.Payload
-      ? JSON.parse(new TextDecoder().decode(invokeResult.Payload)) as Record<string, unknown>
-      : {};
-
-    console.info("[bubble/sync] Lambda complete ok=%s lib_id=%s event_id=%s", result.ok, result.bubble_library_item_id, result.bubble_event_id);
+    console.info("[bubble/sync] complete ok=%s lib_id=%s event_id=%s", result.ok, result.bubble_library_item_id, result.bubble_event_id);
 
     if (!result.ok) {
       return NextResponse.json({ error: result.error ?? "Sync failed" }, { status: 400 });
     }
 
-    return NextResponse.json({ ok: true, ...result });
+    return NextResponse.json({ ...result });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[/api/bubble/sync POST]", msg);

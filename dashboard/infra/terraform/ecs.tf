@@ -9,6 +9,7 @@ locals {
       { name = "NODE_ENV", value = "production" },
       { name = "AWS_REGION", value = local.region },
       { name = "BUBBLE_ARTIFACT_BUCKET", value = var.bubble_artifact_bucket },
+      { name = "EIDARIX_VERSION", value = var.eidarix_version },
       { name = "BUBBLE_REPORT_LATEST_KEY", value = var.bubble_report_latest_key },
       { name = "BUBBLE_REPORT_RECENT_RUNS_PREFIX", value = var.bubble_report_recent_runs_prefix },
       { name = "BUBBLE_REPORT_RECENT_RUNS_LIMIT", value = tostring(var.bubble_report_recent_runs_limit) },

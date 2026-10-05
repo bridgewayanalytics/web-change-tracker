@@ -100,14 +100,6 @@ resource "aws_iam_role_policy" "ecs_task_rerun" {
           "arn:aws:s3:::${var.bubble_artifact_bucket}/alerts/reruns/*"
         ]
       },
-      {
-        Sid    = "InvokeBubbleSync"
-        Effect = "Allow"
-        Action = ["lambda:InvokeFunction"]
-        Resource = [
-          "arn:aws:lambda:${local.region}:${local.account_id}:function:web-change-tracker-prod-bubble-sync"
-        ]
-      }
     ]
   })
 }

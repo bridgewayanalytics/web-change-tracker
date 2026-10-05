@@ -108,6 +108,12 @@ variable "auth0_client_secret" {
 }
 
 
+variable "eidarix_version" {
+  description = "Eidarix space to target: 'test' or 'live'"
+  type        = string
+  default     = "test"
+}
+
 variable "acm_certificate_arn" {
   description = "ACM certificate ARN for HTTPS on the ALB"
   type        = string
