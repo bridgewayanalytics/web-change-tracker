@@ -145,7 +145,30 @@ def _find_calendar_item(match_search: dict, client) -> str | None:
     date_str = match_search.get("date", "")
 
     if not date_str:
-        log.warning("bubble_sync: match_search missing date, cannot locate calendaritem")
+        log.warning("bubble_sync: match_search missing date, falling back to org-only calendaritem search")
+        if not org_name:
+            return None
+        name_to_id: dict[str, str] = {
+            (o.get("Name") or "").strip(): o.get("_id") or ""
+            for o in client.list_all(TYPE_ORGANIZATION, constraints=SPACE_CONSTRAINT)
+        }
+        org_id = name_to_id.get(org_name)
+        if not org_id:
+            log.warning("bubble_sync: org %r not found in Bubble, cannot locate calendaritem", org_name)
+            return None
+        result = client.search(TYPE_CALENDAR_ITEM, constraints=[
+            *SPACE_CONSTRAINT,
+            {"key": "orgs", "constraint_type": "contains", "value": org_id},
+        ], limit=10)
+        items = result.get("results", [])
+        if len(items) == 1:
+            log.info("bubble_sync: org-only fallback matched 1 calendaritem: %s", items[0].get("_id"))
+            return items[0].get("_id")
+        if len(items) > 1:
+            raise RuntimeError(
+                f"No event date available and org-only search returned {len(items)} calendar items for "
+                f"{org_name!r} — cannot safely update. Add a date to the alert or update Bubble manually."
+            )
         return None
 
     constraints = list(SPACE_CONSTRAINT)

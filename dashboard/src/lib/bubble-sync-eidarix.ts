@@ -230,28 +230,56 @@ async function findLibraryItem(matchSearch: Record<string, string>): Promise<str
 
 async function findCalendarItem(matchSearch: Record<string, string>): Promise<string | null> {
   const dateStr = matchSearch.date ?? "";
-  if (!dateStr) return null;
 
-  const nextDay = new Date(dateStr + "T00:00:00.000Z");
-  nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+  if (dateStr) {
+    const nextDay = new Date(dateStr + "T00:00:00.000Z");
+    nextDay.setUTCDate(nextDay.getUTCDate() + 1);
 
-  const constraints: object[] = [
-    ...SPACE_CONSTRAINT,
-    { key: "date", constraint_type: "greater than", value: `${dateStr}T00:00:00.000Z` },
-    { key: "date", constraint_type: "less than", value: nextDay.toISOString().slice(0, 10) + "T00:00:00.000Z" },
-  ];
+    const constraints: object[] = [
+      ...SPACE_CONSTRAINT,
+      { key: "date", constraint_type: "greater than", value: `${dateStr}T00:00:00.000Z` },
+      { key: "date", constraint_type: "less than", value: nextDay.toISOString().slice(0, 10) + "T00:00:00.000Z" },
+    ];
 
-  if (matchSearch.org) {
-    try {
-      const orgs = await bubbleListAll("organization", SPACE_CONSTRAINT);
-      const org = orgs.find(o => String(o.Name ?? "").trim() === matchSearch.org);
-      if (org?._id) constraints.push({ key: "orgs", constraint_type: "contains", value: org._id });
-    } catch { /* skip org constraint on failure */ }
+    if (matchSearch.org) {
+      try {
+        const orgs = await bubbleListAll("organization", SPACE_CONSTRAINT);
+        const org = orgs.find(o => String(o.Name ?? "").trim() === matchSearch.org);
+        if (org?._id) constraints.push({ key: "orgs", constraint_type: "contains", value: org._id });
+      } catch { /* skip org constraint on failure */ }
+    }
+
+    const results = await bubbleSearch("calendaritem", constraints, 10);
+    if (results.length > 1) console.warn("[bubble-sync] multiple calendaritems found for", matchSearch);
+    return results[0]?._id ? String(results[0]._id) : null;
   }
 
-  const results = await bubbleSearch("calendaritem", constraints, 10);
-  if (results.length > 1) console.warn("[bubble-sync] multiple calendaritems found for", matchSearch);
-  return results[0]?._id ? String(results[0]._id) : null;
+  // No date — fall back to org-only search
+  if (!matchSearch.org) return null;
+  console.warn("[bubble-sync] no date in match_search — falling back to org-only calendaritem search for:", matchSearch.org);
+  try {
+    const orgs = await bubbleListAll("organization", SPACE_CONSTRAINT);
+    const org = orgs.find(o => String(o.Name ?? "").trim() === matchSearch.org);
+    if (!org?._id) return null;
+    const results = await bubbleSearch("calendaritem", [
+      ...SPACE_CONSTRAINT,
+      { key: "orgs", constraint_type: "contains", value: String(org._id) },
+    ], 10);
+    if (results.length === 1) {
+      console.info("[bubble-sync] org-only fallback matched 1 calendaritem:", results[0]._id);
+      return String(results[0]._id);
+    }
+    if (results.length > 1) {
+      throw new Error(
+        `No event date available and org-only search returned ${results.length} calendar items for ` +
+        `"${matchSearch.org}" — cannot safely update. Add a date to the alert or update Bubble manually.`
+      );
+    }
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith("No event date")) throw e;
+    console.warn("[bubble-sync] org-only calendaritem fallback failed:", e);
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
