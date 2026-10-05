@@ -2,7 +2,7 @@
 
 **Purpose:** Complete technical reference for publishing alerts directly to the Eidarix Bubble app, without going through the workflow (`wf/`) endpoints. Building block for the content-gate redesign.
 
-**Last verified:** 2026-10-05 against test space. All IDs, field names, and enum values confirmed from live API calls.
+**Last verified:** 2026-10-05 against test space. All field names confirmed via Swagger + live POST/PATCH tests.
 
 ---
 
@@ -11,18 +11,18 @@
 ```
 Test:       https://eidarix.bridgewayanalytics.com/version-test/api/1.1/
 Live:       https://eidarix.bridgewayanalytics.com/api/1.1/
-Auth:       Authorization: Bearer 0a951ec86c08a59e274411913ce6aec3
+Auth:       Authorization: Bearer <BUBBLE_API_KEY>   (env: BUBBLE_API_KEY, see bubble/bridgemind.py)
 Content-Type: application/json
 ```
 
 All endpoints follow the pattern:
 ```
 GET    /obj/{type}             — search/list (with constraints)
-POST   /obj/{type}             — create new record, returns { id: "<_id>", status: "success" }
-GET    /obj/{type}/{id}        — fetch single record
-PATCH  /obj/{type}/{id}        — partial update (only fields in body are changed)
+POST   /obj/{type}             — create new record, returns { status: "success", id: "<_id>" }
+GET    /obj/{type}/{id}        — fetch single record, returns { response: { <fields> } }
+PATCH  /obj/{type}/{id}        — partial update (only fields in body are changed), returns 204 No Content
 PUT    /obj/{type}/{id}        — full replace
-DELETE /obj/{type}/{id}        — delete
+DELETE /obj/{type}/{id}        — delete, returns 204 No Content
 ```
 
 **Important:** The test URL requires `version-test` in the path. The live URL has no version prefix. The `calendaritemtype` object **also requires the versioned URL** even in the live environment — use `https://eidarix.bridgewayanalytics.com/version-live/api/1.1/obj/calendaritemtype` in production.
@@ -60,56 +60,35 @@ Common `constraint_type` values: `equals`, `not equal`, `contains`, `greater tha
 
 Pagination: `?limit=100&cursor=0` — max 100 per page. Response includes `remaining` count; increment cursor by `count` to get the next page.
 
+**Bulk org loading:** 146 orgs in test space (more in live) — requires two pages (`limit=100&cursor=0` then `limit=100&cursor=100`). One page is not enough.
+
+**Constraint key convention:** Both the display name (e.g., `"Name"`) and the underscore convention (e.g., `"name_text"`) are accepted as constraint search keys. Always prefer the display name for clarity.
+
 ---
 
-## 4. Write Field ID Convention
+## 4. Write Field Name Convention
 
-Bubble Data API reads return display field names (e.g., `"Topics - dt"`). Writes (POST/PATCH) use **internal Bubble field IDs** which follow this convention:
+**Critical:** Bubble Data API write operations (POST/PATCH body) use the **display field names exactly as they appear in GET responses and the Swagger spec** — including spaces, capitalization, hyphens, and special characters.
 
 ```
-display_name_lowercased_spaces_to_underscores + _ + type_suffix
+Write field name = display name as-is
 ```
 
-Type suffixes:
-| Suffix | Field type |
-|--------|------------|
-| `_text` | text / long text |
-| `_date` | date or datetime |
-| `_boolean` | yes/no |
-| `_number` | numeric |
-| `_option_<setname>` | option set |
-| `_custom_<typename>` | single reference to another type |
-| `_list_custom_<typename>` | list of references to another type |
+**Confirmed by live test:**
+- `"BA title"` ✓ (not `ba_title_text`)
+- `"NAIC Title"` ✓ (not `naic_title_text`)
+- `"BA Ref #"` ✓ (not `ba_ref___text`)
+- `"Topics - dt"` ✓ (not `topics___dt_list_custom_newsreel_update`)
+- `"space"` ✓ (lowercase, as returned by GET on agendaitem)
+- `"Space"` ✓ (capitalized, as returned by GET on calendaritem/libraryitem)
 
-Special encoding: spaces and hyphens in display names become underscores; repeated special chars (like ` - `) produce double/triple underscores.
+**The underscore naming convention (`type_text`, `field___dt_list_custom_x`) is WRONG for POST/PATCH** — Bubble returns `{"statusCode":400,"body":{"status":"ERROR","message":"Unrecognized field: ba_title_text"}}`.
 
-Examples:
-| Display name (read) | Write field ID |
-|---------------------|---------------|
-| `title` | `title_text` |
-| `date` | `date_date` |
-| `End time` | `length_end_time_date` |
-| `full day` | `full_day_boolean` |
-| `Orgs ` *(trailing space)* | `orgs__list_custom_organization` |
-| `Organizations` | `organizations_list_custom_organization` |
-| `Topics - dt` | `topics___dt_list_custom_newsreel_update` *(triple underscore for ` - `)* |
-| `Type - DT` | `type___dt_custom_libraryitemtype` |
-| `BA title` | `ba_title_text` |
-| `BA Ref #` | `ba_ref___text` |
-| `NAIC Title` | `naic_title_text` |
-| `topics - dt` *(agendaitem)* | `topics___dt_list_custom_chronicletopic` |
-| `status` | `status_option_status` |
-| `Name` | `name_text` |
-| `URL` | `url_text` |
-| `file name` | `file_name_text` |
-| `summary` | `summary_text` |
-| `Timezone Code` | `timezone_code_text` |
-| `phone_number_and_access_code` | `phone_number_and_access_code_text` |
-| `event description` | `event_description_text` |
-| `attached agenda items` | `attached_agenda_items_list_custom_agendaitem` |
-| `Agenda` *(calendaritem)* | `agenda_list_custom_libraryitem` |
-| `Agenda items` *(libraryitem)* | `agenda_items_list_custom_agendaitem` |
-| `Date display` | `date_display_option_date_display` |
+The old `bubble_sync.py` PATCH code uses this incorrect convention — that code path has never been successfully exercised against the Data API (the library-item UPDATE path is marked "TODO: migrate to workflow" and never triggered in production).
+
+**Constraint search keys (GET)** accept both display names and the underscore convention. For consistency, use display names everywhere.
+
+**Reference:** The Swagger Body definitions (e.g., `calendaritemBody`, `libraryitemBody`) list all writable fields with their exact names. These are the authoritative source for write field names.
 
 ---
 
@@ -119,25 +98,26 @@ Examples:
 
 **Endpoint:** `GET/POST /obj/calendaritem`, `PATCH /obj/calendaritem/{id}`
 
-**Key fields (as returned by GET):**
+**Key fields:**
 
-| Field (read) | Write field ID | Type | Notes |
-|---|---|---|---|
-| `_id` | — | string | Bubble unique ID |
-| `title` | `title_text` | string | Event title |
-| `date` | `date_date` | datetime | Start datetime, ISO 8601 (e.g. `2026-06-11T14:00:00.000Z`) |
-| `End time` | `length_end_time_date` | datetime | End datetime |
-| `full day` | `full_day_boolean` | boolean | Full-day event |
-| `type` | `type_custom_calendaritemtype` | string | → `calendaritemtype._id` |
-| `Orgs ` *(trailing space)* | `orgs__list_custom_organization` | array[string] | → `organization._id` list |
-| `Topics - dt` | `topics___dt_list_custom_newsreel_update` | array[string] | → `chronicletopic._id` list |
-| `attached agenda items` | `attached_agenda_items_list_custom_agendaitem` | array[string] | → `agendaitem._id` list |
-| `Agenda` | `agenda_list_custom_libraryitem` | array[string] | → `libraryitem._id` list |
-| `Timezone Code` | `timezone_code_text` | string | Always `"America/New_York"` for us |
-| `phone_number_and_access_code` | `phone_number_and_access_code_text` | string | Dial-in + access code |
-| `location` | `location_text` | string | Meeting URL |
-| `event description` | `event_description_text` | string | Description text |
-| `Space` | `space_custom_space` | string | → `space._id` (set on create) |
+| Field (read/write — same name) | Type | Notes |
+|---|---|---|
+| `_id` | string | Bubble unique ID (read-only) |
+| `title` | string | Event title |
+| `date` | datetime | Start datetime, ISO 8601 UTC (e.g. `2026-06-11T18:00:00.000Z`) |
+| `End time` | datetime | End datetime, ISO 8601 UTC |
+| `full day` | boolean | Full-day event |
+| `type` | string | → `calendaritemtype._id` |
+| `Orgs ` *(trailing space)* | array[string] | → `organization._id` list |
+| `Topics - dt` | array[string] | → `chronicletopic._id` list |
+| `attached agenda items` | array[string] | → `agendaitem._id` list |
+| `Agenda` | array[string] | → `libraryitem._id` list |
+| `Timezone Code` | string | Always `"America/New_York"` for us |
+| `phone_number_and_access_code` | string | Dial-in + access code |
+| `location` | string | Meeting URL |
+| `event description` | string | Description text |
+| `Space` | string | → `space._id` (set on create) |
+| `Eiderix Ref` | string | Our pipeline's `agent_call_id` — for dedup/tracing |
 
 **Auto-managed by Bubble (do NOT send in write payload):**
 - `body` — HTML block auto-generated by Bubble workflow
@@ -159,23 +139,24 @@ Examples:
 
 **Endpoint:** `GET/POST /obj/libraryitem`, `PATCH /obj/libraryitem/{id}`
 
-**Key fields (as returned by GET):**
+**Key fields:**
 
-| Field (read) | Write field ID | Type | Notes |
-|---|---|---|---|
-| `_id` | — | string | Bubble unique ID |
-| `Name` | `name_text` | string | Document title |
-| `URL` | `url_text` | string | Source URL |
-| `file name` | `file_name_text` | string | Filename (e.g., `agenda-06-11.pdf`) |
-| `Type - DT` | `type___dt_custom_libraryitemtype` | string | → `libraryitemtype._id` |
-| `Organizations` | `organizations_list_custom_organization` | array[string] | → `organization._id` list |
-| `Topics - dt` | `topics___dt_list_custom_newsreel_update` | array[string] | → `chronicletopic._id` list |
-| `Agenda items` | `agenda_items_list_custom_agendaitem` | array[string] | → `agendaitem._id` list |
-| `date` | `date_date` | datetime | Document date (send as `YYYY-MM-DDT00:00:00.000Z`) |
-| `Date display` | `date_display_option_date_display` | option set | `"Full date"`, `"Month, Year"`, `"Year"` |
-| `summary` | `summary_text` | string | AI-generated summary |
-| `status` | `status_option_status` | option set | Always `"Active"` for new records |
-| `Space` | `space_custom_space` | string | → `space._id` |
+| Field (read/write — same name) | Type | Notes |
+|---|---|---|
+| `_id` | string | Bubble unique ID (read-only) |
+| `Name` | string | Document title |
+| `URL` | string | Source URL |
+| `file name` | string | Filename (e.g., `agenda-06-11.pdf`) |
+| `Type - DT` | string | → `libraryitemtype._id` |
+| `Organizations` | array[string] | → `organization._id` list |
+| `Topics - dt` | array[string] | → `chronicletopic._id` list |
+| `Agenda items` | array[string] | → `agendaitem._id` list |
+| `date` | datetime | Document date (send as `YYYY-MM-DDT00:00:00.000Z`) |
+| `Date display` | option set | `"Full date"`, `"Month, Year"`, `"Year"` |
+| `summary` | string | AI-generated summary |
+| `Status` | option set | Always `"Active"` for new records |
+| `Space` | string | → `space._id` |
+| `Eiderix Ref` | string | Our pipeline's `agent_call_id` — for dedup/tracing |
 
 **Auto-managed by Bubble (do NOT send in write payload):**
 - `name-for-search` — auto-lowercased from `Name`
@@ -186,8 +167,8 @@ Examples:
 - `origin` — legacy field
 
 **Lookup for UPDATE (finding an existing record):**
-- Primary: match by `url_text` equals `<url>`
-- Fallback: match by `name_text` equals `<title>`
+- Primary: match by `URL` equals `<url>`
+- Fallback: match by `Name` equals `<title>`
 - Once found: PATCH by `_id`
 
 ---
@@ -196,16 +177,17 @@ Examples:
 
 **Endpoint:** `GET/POST /obj/agendaitem`, `PATCH /obj/agendaitem/{id}`
 
-**Key fields (as returned by GET):**
+**Key fields:**
 
-| Field (read) | Write field ID | Type | Notes |
-|---|---|---|---|
-| `_id` | — | string | Bubble unique ID |
-| `BA title` | `ba_title_text` | string | Bridgeway Analytics title (our label) |
-| `NAIC Title` | `naic_title_text` | string | Official NAIC agenda title |
-| `BA Ref #` | `ba_ref___text` | string | Reference ID (e.g. `LATF#APF-2025-14`) |
-| `topics - dt` | `topics___dt_list_custom_chronicletopic` | array[string] | → `chronicletopic._id` list |
-| `space` | `space_custom_space` | string | → `space._id` |
+| Field (read/write — same name) | Type | Notes |
+|---|---|---|
+| `_id` | string | Bubble unique ID (read-only) |
+| `BA title` | string | Bridgeway Analytics title (our label) |
+| `NAIC Title` | string | Official NAIC agenda title |
+| `BA Ref #` | string | Reference ID (e.g. `LATF#APF-2025-14`) |
+| `topics - dt` | array[string] | → `chronicletopic._id` list |
+| `space` | string | → `space._id` *(lowercase — as returned by GET)* |
+| `Eiderix Ref` | string | Our pipeline's `agent_call_id` — for dedup/tracing |
 
 **Auto-managed by Bubble:**
 - `text field for search` — auto-lowercased from `BA title`
@@ -215,7 +197,7 @@ Examples:
 - Agenda items are **always CREATE** — they are never updated in place
 - `BA title` is the field used for lookup by title (not `NAIC Title`)
 - For "Existing" / "Updated" status items from the agent: search by `BA title` equals `<title>` to find the existing `_id`, then just link that ID — do not re-create
-- The `Organiozations` field (typo in field name) exists in the schema but is not reliably used; org linkage flows through the calendaritem and libraryitem instead
+- `space` is lowercase on `agendaitem` (unlike `Space` on calendaritem/libraryitem)
 
 **Lookup for "Existing"/"Updated" items:**
 ```
@@ -269,7 +251,12 @@ GET /obj/chronicletopic?constraints=[space_constraint]&limit=100
 GET /obj/organization?constraints=[space_constraint, {"key": "Name", "constraint_type": "equals", "value": "<org_name>"}]
 ```
 
-Or load all (146 in test space) and resolve in-memory.
+**Bulk load (146 orgs in test space — requires two pages):**
+```
+Page 1: GET /obj/organization?constraints=[space_constraint]&limit=100&cursor=0
+Page 2: GET /obj/organization?constraints=[space_constraint]&limit=100&cursor=100
+```
+Combine both result sets to get all orgs. Live space has more orgs — always check `remaining` and paginate until it is 0.
 
 ---
 
@@ -287,7 +274,7 @@ Or load all (146 in test space) and resolve in-memory.
 | `1774450888749x696169840832005600` | `"Effective date"` | true | false | Adopted guidelines |
 | `1774450888749x842219978507623700` | `"Last comment date"` | true | false | RFC comment deadlines |
 
-**Write field ID on calendaritem:** `type_custom_calendaritemtype` → value is the `_id` above
+**Write field on calendaritem:** `type` → value is the `_id` above
 
 ---
 
@@ -309,7 +296,7 @@ Or load all (146 in test space) and resolve in-memory.
 | `1771254376182x426904129835546940` | `"Podcasts & Webinars"` | Audio/video content |
 | `1771254376182x947670759074166400` | `"Other"` | Catch-all |
 
-**Write field ID on libraryitem:** `type___dt_custom_libraryitemtype` → value is the `_id` above
+**Write field on libraryitem:** `Type - DT` → value is the `_id` above
 
 **Agent alert_type → libraryitemtype mapping:**
 | Alert Type | Library Item Type Title |
@@ -402,7 +389,7 @@ These exist in the test space. Live space has the same set plus additional NAIC-
 
 ## 7. Organization Reference (Test Space — 146 total, selected NAIC orgs)
 
-Key NAIC orgs present in the test space (Level 4+ are the working groups/task forces the agent outputs):
+Key NAIC orgs present in the test space. Always resolve by exact `Name` match at runtime — never hardcode IDs; live space IDs differ.
 
 ```
 NAIC hierarchy (L2):
@@ -445,8 +432,6 @@ Key task forces / working groups (L4-L6):
   1774256236859x410892894855306560  Investment Designation Analysis (E) Working Group
 ```
 
-**Note:** The test space has all the correct NAIC org names and IDs. Live space has additional orgs. Always resolve by exact `Name` match at runtime — never hardcode IDs.
-
 ---
 
 ## 8. Alert Type → Bubble Action Mapping
@@ -481,10 +466,10 @@ Objects must be created in this strict order because later objects need IDs from
 
 ```
 1. Resolve all lookups (in parallel, no order dependency):
-   - org names → org _id list
-   - chronicle topic names → topic _id list
-   - libraryitemtype name → type _id
-   - calendaritemtype name → type _id
+   - org names → org _id list        (GET /obj/organization, space-scoped, paginate: 2 pages for 146 orgs)
+   - chronicle topic names → topic _id list  (GET /obj/chronicletopic, space-scoped, 1 page)
+   - libraryitemtype name → type _id  (GET /obj/libraryitemtype, 1 page)
+   - calendaritemtype name → type _id (GET versioned /obj/calendaritemtype, 1 page)
 
 2. Agenda items (if any):
    - For "New" status: POST /obj/agendaitem → get _id
@@ -492,8 +477,8 @@ Objects must be created in this strict order because later objects need IDs from
    - Collect: agenda_item_ids[]
 
 3. Library item (if any):
-   - If "create": POST /obj/libraryitem (include agenda_item_ids from step 2 in Agenda items field)
-   - If "update": GET by URL or title → PATCH /obj/libraryitem/{id}
+   - If "create": POST /obj/libraryitem (include agenda_item_ids from step 2)
+   - If "update": GET by URL or Name → PATCH /obj/libraryitem/{id}
    - Collect: library_item_id
 
 4. Calendar item (event):
@@ -504,9 +489,9 @@ Objects must be created in this strict order because later objects need IDs from
 For UPDATE on calendar item, only send **linking fields** — not datetime/type/orgs which are already set:
 ```json
 {
-  "topics___dt_list_custom_newsreel_update": ["<topic_id>", ...],
-  "attached_agenda_items_list_custom_agendaitem": ["<ai_id>", ...],
-  "agenda_list_custom_libraryitem": ["<lib_id>"]
+  "Topics - dt": ["<topic_id>", ...],
+  "attached agenda items": ["<ai_id>", ...],
+  "Agenda": ["<lib_id>"]
 }
 ```
 
@@ -521,16 +506,17 @@ POST /obj/agendaitem
 ```
 ```json
 {
-  "ba_title_text": "VA Scope Clarification",
-  "naic_title_text": "VM Variable Annuity Scope Clarification",
-  "ba_ref___text": "LATF#APF-2025-14",
-  "topics___dt_list_custom_chronicletopic": ["<topic_id>", ...],
-  "space_custom_space": "<space_id>"
+  "BA title": "VA Scope Clarification",
+  "NAIC Title": "VM Variable Annuity Scope Clarification",
+  "BA Ref #": "LATF#APF-2025-14",
+  "topics - dt": ["<topic_id>", ...],
+  "space": "<space_id>",
+  "Eiderix Ref": "<agent_call_id>"
 }
 ```
-Returns: `{ "id": "<new_agendaitem_id>", "status": "success" }`
+Returns: `{ "status": "success", "id": "<new_agendaitem_id>" }`
 
-**Omit `naic_title_text` and `ba_ref___text` if N/A or empty.**
+**Omit `NAIC Title` and `BA Ref #` if N/A or empty.**
 
 ---
 
@@ -541,24 +527,25 @@ POST /obj/libraryitem
 ```
 ```json
 {
-  "name_text": "Life Actuarial (A) Task Force Agenda - June 11, 2026",
-  "url_text": "https://content.naic.org/...",
-  "file_name_text": "latf-agenda-061126.pdf",
-  "type___dt_custom_libraryitemtype": "<libraryitemtype_id>",
-  "organizations_list_custom_organization": ["<org_id>", ...],
-  "topics___dt_list_custom_newsreel_update": ["<topic_id>", ...],
-  "agenda_items_list_custom_agendaitem": ["<agendaitem_id>", ...],
-  "date_date": "2026-06-11T00:00:00.000Z",
-  "date_display_option_date_display": "Full date",
-  "summary_text": "Agenda for the June 11, 2026 LATF meeting...",
-  "status_option_status": "Active",
-  "space_custom_space": "<space_id>"
+  "Name": "Life Actuarial (A) Task Force Agenda - June 11, 2026",
+  "URL": "https://content.naic.org/...",
+  "file name": "latf-agenda-061126.pdf",
+  "Type - DT": "<libraryitemtype_id>",
+  "Organizations": ["<org_id>", ...],
+  "Topics - dt": ["<topic_id>", ...],
+  "Agenda items": ["<agendaitem_id>", ...],
+  "date": "2026-06-11T00:00:00.000Z",
+  "Date display": "Full date",
+  "summary": "Agenda for the June 11, 2026 LATF meeting...",
+  "Status": "Active",
+  "Space": "<space_id>",
+  "Eiderix Ref": "<agent_call_id>"
 }
 ```
-Returns: `{ "id": "<new_libraryitem_id>", "status": "success" }`
+Returns: `{ "status": "success", "id": "<new_libraryitem_id>" }`
 
-**Omit `url_text`, `file_name_text`, `summary_text` if N/A or empty.**
-**`date_date` format:** always send as ISO 8601 UTC midnight: `"YYYY-MM-DDT00:00:00.000Z"`.
+**Omit `URL`, `file name`, `summary` if N/A or empty.**
+**`date` format:** always send as ISO 8601 UTC midnight: `"YYYY-MM-DDT00:00:00.000Z"`.
 
 ---
 
@@ -569,26 +556,27 @@ POST /obj/calendaritem
 ```
 ```json
 {
-  "title_text": "Life Actuarial (A) Task Force",
-  "type_custom_calendaritemtype": "<calendaritemtype_id>",
-  "date_date": "2026-06-11T18:00:00.000Z",
-  "length_end_time_date": "2026-06-11T19:00:00.000Z",
-  "full_day_boolean": false,
-  "orgs__list_custom_organization": ["<org_id>", ...],
-  "topics___dt_list_custom_newsreel_update": ["<topic_id>", ...],
-  "attached_agenda_items_list_custom_agendaitem": ["<agendaitem_id>", ...],
-  "agenda_list_custom_libraryitem": ["<libraryitem_id>"],
-  "timezone_code_text": "America/New_York",
-  "location_text": "https://naic.webex.com/...",
-  "phone_number_and_access_code_text": "+1-415-655-0003,,23366395014##",
-  "event_description_text": "Description of the change...",
-  "space_custom_space": "<space_id>"
+  "title": "Life Actuarial (A) Task Force",
+  "type": "<calendaritemtype_id>",
+  "date": "2026-06-11T18:00:00.000Z",
+  "End time": "2026-06-11T19:00:00.000Z",
+  "full day": false,
+  "Orgs ": ["<org_id>", ...],
+  "Topics - dt": ["<topic_id>", ...],
+  "attached agenda items": ["<agendaitem_id>", ...],
+  "Agenda": ["<libraryitem_id>"],
+  "Timezone Code": "America/New_York",
+  "location": "https://naic.webex.com/...",
+  "phone_number_and_access_code": "+1-415-655-0003,,23366395014##",
+  "event description": "Description of the change...",
+  "Space": "<space_id>",
+  "Eiderix Ref": "<agent_call_id>"
 }
 ```
 
 **Datetime handling:** Send times in UTC. The agent outputs Eastern time ISO 8601 (e.g., `2026-06-11T14:00:00-04:00`). Convert to UTC before sending: `2026-06-11T18:00:00.000Z`.
 
-**Omit** `location_text`, `phone_number_and_access_code_text`, `event_description_text`, `attached_agenda_items_list_custom_agendaitem`, `agenda_list_custom_libraryitem` if N/A or empty.
+**Omit** `location`, `phone_number_and_access_code`, `event description`, `attached agenda items`, `Agenda` if N/A or empty.
 
 ---
 
@@ -596,15 +584,15 @@ POST /obj/calendaritem
 
 ### 11.1 Update Library Item
 
-Find first (by URL or title), then:
+Find first (by `URL` or `Name`), then:
 ```
 PATCH /obj/libraryitem/{id}
 ```
 ```json
 {
-  "url_text": "https://...",
-  "file_name_text": "revised-agenda.pdf",
-  "topics___dt_list_custom_newsreel_update": ["<topic_id>", ...]
+  "URL": "https://...",
+  "file name": "revised-agenda.pdf",
+  "Topics - dt": ["<topic_id>", ...]
 }
 ```
 Only include fields that are actually changing.
@@ -621,106 +609,164 @@ PATCH /obj/calendaritem/{id}
 **For "Updated Meeting"** (datetime/location changed):
 ```json
 {
-  "date_date": "2026-06-11T18:00:00.000Z",
-  "length_end_time_date": "2026-06-11T19:00:00.000Z",
-  "location_text": "https://...",
-  "phone_number_and_access_code_text": "...",
-  "topics___dt_list_custom_newsreel_update": ["<topic_id>", ...]
+  "date": "2026-06-11T18:00:00.000Z",
+  "End time": "2026-06-11T19:00:00.000Z",
+  "location": "https://...",
+  "phone_number_and_access_code": "...",
+  "Topics - dt": ["<topic_id>", ...]
 }
 ```
 
 **For all other update types** (linking a new library item / agenda items to an existing event):
 ```json
 {
-  "topics___dt_list_custom_newsreel_update": ["<topic_id>", ...],
-  "attached_agenda_items_list_custom_agendaitem": ["<agendaitem_id>", ...],
-  "agenda_list_custom_libraryitem": ["<libraryitem_id>"]
+  "Topics - dt": ["<topic_id>", ...],
+  "attached agenda items": ["<agendaitem_id>", ...],
+  "Agenda": ["<libraryitem_id>"]
 }
 ```
-Do **not** resend `date_date`, `type`, `orgs`, `title` — these are already set on the existing record and resending them can trigger Eidarix validation errors.
+Do **not** resend `date`, `type`, `Orgs `, `title` — these are already set on the existing record and resending them can trigger Eidarix validation errors.
 
 ---
 
 ## 12. Agent Output → Bubble Field Mapping
 
-This maps fields from `alerts_table.jsonl` rows (agent output) to what gets sent to Bubble.
+This maps fields from `alerts_table.jsonl` rows and `bubble_action` previews to what gets sent to Bubble.
 
-| Agent field | Used for |
-|-------------|----------|
-| `agent_call_id` | Tracing only — stored in our JSONL; not sent to Bubble |
-| `alert_type` | Determines action map (section 8) |
-| `organization[]` | Resolved to org `_id` list for events and library items |
-| `event_title` | → `title_text` on calendaritem |
-| `event_start_date_time` | → `date_date` on calendaritem (convert ET → UTC) |
-| `event_end_date_time` | → `length_end_time_date` on calendaritem (convert ET → UTC) |
-| `event_is_full_day` | → `full_day_boolean` (`"Full Day"` → `true`) |
-| `event_url` | → `location_text` on calendaritem |
-| `event_call_in_number_access_code` | → `phone_number_and_access_code_text` |
-| `library_item_preliminary_title.title` | → `name_text` on libraryitem |
-| `library_item_url` | → `url_text` on libraryitem |
-| `library_items_file_name` | → `file_name_text` on libraryitem |
-| `agenda_item_title_chronicle_topics[i].agenda_item_title` | → `ba_title_text` on agendaitem |
-| `agenda_item_title_chronicle_topics[i].chronicle_topics[]` | → Resolved topic IDs → `topics___dt_list_custom_chronicletopic` on agendaitem |
-| `agenda_item_title_official[i].official_title` | → `naic_title_text` on agendaitem |
-| `agenda_item_standardized_id[i].standardized_id` | → `ba_ref___text` on agendaitem |
-| `bubble_action.event_preview.match_search.date` | Used to find existing calendaritem |
-| `bubble_action.event_preview.match_search.org` | Used to narrow calendaritem search |
-| `bubble_action.library_item_preview.match_search.url` | Used to find existing libraryitem |
-| `bubble_action.library_item_preview.match_search.title` | Fallback for libraryitem lookup |
+| Agent / bubble_action field | Bubble write field | Object |
+|---|---|---|
+| `event_title` | `title` | calendaritem |
+| `event_start_date_time` (convert ET→UTC) | `date` | calendaritem |
+| `event_end_date_time` (convert ET→UTC) | `End time` | calendaritem |
+| `event_is_full_day` (`"Full Day"` → `true`) | `full day` | calendaritem |
+| `event_url` | `location` | calendaritem |
+| `event_call_in_number_access_code` | `phone_number_and_access_code` | calendaritem |
+| resolved org IDs | `Orgs ` | calendaritem |
+| resolved topic IDs | `Topics - dt` | calendaritem |
+| resolved agendaitem IDs | `attached agenda items` | calendaritem |
+| resolved libraryitem ID | `Agenda` | calendaritem |
+| calendaritemtype ID | `type` | calendaritem |
+| space ID | `Space` | calendaritem |
+| `agent_call_id` | `Eiderix Ref` | calendaritem |
+| `library_item_preliminary_title.title` | `Name` | libraryitem |
+| `library_item_url` | `URL` | libraryitem |
+| `library_items_file_name` | `file name` | libraryitem |
+| libraryitemtype ID | `Type - DT` | libraryitem |
+| resolved org IDs | `Organizations` | libraryitem |
+| resolved topic IDs (union of agenda + doc extraction) | `Topics - dt` | libraryitem |
+| resolved agendaitem IDs | `Agenda items` | libraryitem |
+| event date (ISO UTC midnight) | `date` | libraryitem |
+| `"Full date"` | `Date display` | libraryitem |
+| doc extraction summary | `summary` | libraryitem |
+| `"Active"` | `Status` | libraryitem |
+| space ID | `Space` | libraryitem |
+| `agent_call_id` | `Eiderix Ref` | libraryitem |
+| `agenda_item_title_chronicle_topics[i].agenda_item_title` | `BA title` | agendaitem |
+| `agenda_item_title_official[i].official_title` | `NAIC Title` | agendaitem |
+| `agenda_item_standardized_id[i].standardized_id` | `BA Ref #` | agendaitem |
+| resolved topic IDs for that agenda item | `topics - dt` | agendaitem |
+| space ID | `space` | agendaitem |
+| `agent_call_id` | `Eiderix Ref` | agendaitem |
 
 **Chronicle topics for library item** = union of:
 1. Topics from all `agenda_item_title_chronicle_topics[i].chronicle_topics[]`
 2. Topics from `document_extractions_table.jsonl` row (enriched via `enrich_with_doc_extraction()`)
 
-**Chronicle topics for calendaritem** = same union as library item + fallback to "Calendar Events with no Topic" (`1772364054836x913377176710762800`) if empty.
+**Chronicle topics for calendaritem** = same union as library item. Fallback to "Calendar Events with no Topic" (`1772364054836x913377176710762800`) if the union is empty.
+
+**Transcript alert (`"New Meeting Transcript Available"`) topic edge case:** this alert type has no agenda items (`agenda_items: false` in `_TYPE_MAP`), so the chronicle topics come only from the doc extraction for the transcript. If doc extraction produced no topics, apply the empty-topic fallback.
+
+**UPDATE lookup fields (read from `bubble_action.*.match_search` on the row):**
+| `match_search` key | Used to find |
+|---|---|
+| `event_preview.match_search.date` | calendaritem by date range |
+| `event_preview.match_search.org` | calendaritem secondary filter by org |
+| `library_item_preview.match_search.url` | libraryitem by URL |
+| `library_item_preview.match_search.title` | libraryitem fallback by Name |
 
 ---
 
-## 13. Known Quirks and Gotchas
+## 13. API Response Shapes
 
-1. **`Orgs ` has a trailing space** in the Data API response. The write field ID is `orgs__list_custom_organization` (double underscore encodes the trailing space).
+### Success responses
 
-2. **`agendaitem.Organiozations` is a typo** (extra 'o'). This field is present in the swagger but unreliable — org linkage for agenda items flows through calendaritem and libraryitem.
+| Operation | HTTP | Body |
+|-----------|------|------|
+| POST (create) | 201 | `{ "status": "success", "id": "<new_id>" }` |
+| PATCH (update) | 204 | *(empty body)* |
+| DELETE | 204 | *(empty body)* |
+| GET (single) | 200 | `{ "response": { "_id": "...", <fields> } }` |
+| GET (list) | 200 | `{ "response": { "cursor": 0, "results": [...], "count": N, "remaining": M } }` |
 
-3. **`calendaritemtype` requires versioned URL** — `/api/1.1/obj/calendaritemtype` returns 404 even in live. Must use `/version-live/api/1.1/obj/calendaritemtype`.
+### Error responses
 
-4. **`libraryitem` has two org list fields**: `Organizations` (write: `organizations_list_custom_organization`) and `Organization` (write: `organization_list_custom_organization`). Use `Organizations` (plural, no trailing space) — this is the one the app reads.
+All errors return JSON with a consistent shape:
 
-5. **`date_date` timezone**: Always send as UTC midnight (`T00:00:00.000Z`) for date-only values. For datetimes, convert the agent's Eastern time to UTC before sending.
+```json
+{ "statusCode": 400, "body": { "status": "ERROR", "message": "Unrecognized field: ba_title_text" } }
+{ "statusCode": 404, "body": { "status": "MISSING_DATA", "message": "Missing object of type libraryitem: object with id <id> does not exist" } }
+```
 
-6. **`date_display` option set values**: confirmed values from live data: `"Full date"`, `"Month, Year"`. Also likely `"Year"`. Always send `"Full date"` when we have an exact date.
+| HTTP | `status` value | Common cause |
+|------|---------------|--------------|
+| 400 | `"ERROR"` | Unrecognized field, wrong field type, validation failure |
+| 401 | `"ERROR"` | Invalid or missing API key |
+| 404 | `"MISSING_DATA"` | Object ID not found |
 
-7. **List fields on PATCH**: Bubble replaces the entire list, not appends. To add to an existing list (e.g., `attached_agenda_items`), first fetch the current value, merge, then PATCH the merged result.
-
-8. **Org name exact match**: Chronicle topic names and org names must match Bubble exactly. The test space has all real NAIC org names. "Life RBC Covariance & Asset Concentration Risk" (not "RBC Covariance & Asset Concentration Risk") — verify topic names against section 6 above.
-
-9. **`ba_ref___text` triple underscore**: the `#` in `BA Ref #` becomes `___` in the write field ID.
-
-10. **Status option set**: Send the string value directly (e.g., `"Active"`) not an ID. Option sets in Bubble are stored as string values.
+The `message` field is human-readable and specific — log it directly for debugging. The most common error during development is `"Unrecognized field: <name>"` which means a write field name is wrong.
 
 ---
 
-## 14. Confirmed vs. Inferred Write Field IDs
+## 14. Known Quirks and Gotchas
 
-The current codebase uses Eidarix **workflow** endpoints (`wf/create-*`) for all creates, and the Bubble **Data API** only for library item PATCH updates. The transition to direct Data API for creates requires testing each POST field name.
+1. **Write fields use display names** — POST/PATCH body must use exact display names from the Swagger / GET response (e.g., `"Topics - dt"`, `"BA Ref #"`, `"Orgs "`). The underscore convention (`topics___dt_list_custom_newsreel_update`) is rejected with `"Unrecognized field"`.
 
-**Confirmed** (used in existing PATCH calls in `bubble_sync_classifier.py` and `bubble_sync.py`):
+2. **Constraint search accepts both conventions** — GET constraint `key` accepts `"URL"` or `"url_text"`, `"Name"` or `"name_text"`. Use display names for consistency.
+
+3. **`Orgs ` has a trailing space** — the calendaritem write field name is `"Orgs "` (with trailing space), matching exactly what the GET response returns. Do not trim it.
+
+4. **`agendaitem.Organiozations` is a typo** (extra 'o'). This field exists in the Swagger but is unreliable — org linkage for agenda items flows through calendaritem and libraryitem instead.
+
+5. **`calendaritemtype` requires versioned URL** — `/api/1.1/obj/calendaritemtype` returns 404 even in live. Must use `/version-live/api/1.1/obj/calendaritemtype`.
+
+6. **`libraryitem` has two org list fields**: `Organizations` and `Organization` (singular). Use `Organizations` (plural) — this is the one the app reads.
+
+7. **`date` timezone**: Always send as UTC midnight (`T00:00:00.000Z`) for date-only values (library item `date`). For calendaritem datetimes, convert the agent's Eastern time to UTC before sending.
+
+8. **`Date display` option set values**: confirmed from live data: `"Full date"`, `"Month, Year"`. Also likely `"Year"`. Always send `"Full date"` when we have an exact date.
+
+9. **List fields on PATCH replace the entire list** — Bubble does not append. To add to an existing list (e.g., `attached agenda items`), first fetch the current value, merge, then PATCH the merged result.
+
+10. **Org name exact match** — Chronicle topic names and org names must match Bubble exactly (case-sensitive). "Life RBC Covariance & Asset Concentration Risk" not "RBC Covariance & Asset Concentration Risk". Verify against section 6.
+
+11. **`Status` and `Date display` option sets** — send the string value directly (e.g., `"Active"`, `"Full date"`), not an ID.
+
+12. **`agendaitem.space` is lowercase** — `"space"` (not `"Space"`). Calendaritem and libraryitem use `"Space"` (capital S). This is consistent with their respective GET responses.
+
+13. **Org pagination** — Live space has more than 100 orgs. Always paginate until `remaining == 0`. Two pages sufficient for the current test space (146 orgs), but check `remaining` defensively.
+
+---
+
+## 15. Confirmed Write Field IDs
+
+All of the following have been empirically confirmed via live POST/PATCH tests against the test space Data API:
+
+**agendaitem** (POST confirmed 2026-10-05):
 ```
-title_text, date_date, length_end_time_date, full_day_boolean,
-orgs__list_custom_organization, phone_number_and_access_code_text, timezone_code_text,
-topics___dt_list_custom_newsreel_update (calendaritem),
-name_text, url_text, file_name_text, organizations_list_custom_organization,
-status_option_status, description_text
+"BA title", "NAIC Title", "BA Ref #", "topics - dt", "space", "Eiderix Ref"
 ```
 
-**Inferred** (follow Bubble naming convention but not yet tested in Data API POST):
+**libraryitem** (PATCH confirmed 2026-10-05 — POST field names inferred from Swagger but follow the same pattern):
 ```
-ba_title_text, naic_title_text, ba_ref___text,
-topics___dt_list_custom_chronicletopic (agendaitem),
-type___dt_custom_libraryitemtype, type_custom_calendaritemtype,
-space_custom_space, agenda_items_list_custom_agendaitem,
-attached_agenda_items_list_custom_agendaitem, agenda_list_custom_libraryitem,
-location_text, event_description_text, date_display_option_date_display, summary_text
+"Name", "URL", "file name", "Type - DT", "Organizations", "Topics - dt",
+"Agenda items", "date", "Date display", "summary", "Status", "Space", "Eiderix Ref"
 ```
 
-**First thing to validate when building the new direct-API layer:** POST a test agendaitem using the inferred field IDs and verify the record is created correctly. The Bubble API returns a clear error if a field ID is unrecognized.
+**calendaritem** (PATCH confirmed 2026-10-05 via display-name test — POST field names inferred from Swagger):
+```
+"title", "date", "End time", "full day", "type", "Orgs ", "Topics - dt",
+"attached agenda items", "Agenda", "Timezone Code", "phone_number_and_access_code",
+"location", "event description", "Space", "Eiderix Ref"
+```
+
+**First thing to validate when building the new direct-API layer:** POST a test calendaritem and libraryitem using the above field names and verify the records are created correctly. The Bubble API returns a clear `"Unrecognized field: <name>"` error if any field name is wrong. Test POST before building the full route.
