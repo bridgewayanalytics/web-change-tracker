@@ -36,6 +36,10 @@ import re
 from dataclasses import dataclass, field
 from typing import Literal
 
+from bubble.bubble_field_map import CalendarItemField as CI
+from bubble.bubble_field_map import LibraryItemField as LI
+from bubble.bubble_field_map import AgendaItemField as AI  # noqa: F401 (imported for callers)
+
 _NOT_APPLICABLE = frozenset({
     "No Meaningful Change",
     "Alert not relevant - the change was limited to carrousel or reordering of content",
@@ -190,18 +194,18 @@ def _build_event_preview(alert: dict, alert_type: str, event_action: str | None)
 
         field_ids: dict = {}
         if not _is_na(title):
-            field_ids["title_text"] = title
+            field_ids[CI.TITLE] = title
         if not _is_na(start):
-            field_ids["date_date"] = start
+            field_ids[CI.DATE] = start          # ET string; executor converts to UTC
         if not _is_na(end):
-            field_ids["length_end_time_date"] = end
+            field_ids[CI.END_TIME] = end        # ET string; executor converts to UTC
         if is_full_day:
-            field_ids["full_day_boolean"] = True
+            field_ids[CI.FULL_DAY] = True
         if org:
-            field_ids["orgs__list_custom_organization"] = org  # names; executor resolves to IDs
+            field_ids[CI.ORGS] = org            # names; executor resolves to org _id list
         if not _is_na(call_in):
-            field_ids["phone_number_and_access_code_text"] = call_in
-        field_ids["timezone_code_text"] = "America/New_York"
+            field_ids[CI.PHONE] = call_in
+        field_ids[CI.TIMEZONE] = "America/New_York"
 
         match_search: dict = {}
 
@@ -226,16 +230,16 @@ def _build_event_preview(alert: dict, alert_type: str, event_action: str | None)
 
             field_ids = {}
             if not _is_na(title):
-                field_ids["title_text"] = title
+                field_ids[CI.TITLE] = title
             if not _is_na(start):
-                field_ids["date_date"] = start
+                field_ids[CI.DATE] = start      # ET string; executor converts to UTC
             if not _is_na(end):
-                field_ids["length_end_time_date"] = end
+                field_ids[CI.END_TIME] = end    # ET string; executor converts to UTC
             if org:
-                field_ids["orgs__list_custom_organization"] = org
+                field_ids[CI.ORGS] = org        # names; executor resolves to org _id list
             if not _is_na(call_in):
-                field_ids["phone_number_and_access_code_text"] = call_in
-            field_ids["timezone_code_text"] = "America/New_York"
+                field_ids[CI.PHONE] = call_in
+            field_ids[CI.TIMEZONE] = "America/New_York"
         else:
             # Only change is linking/updating a library item — executor handles this dynamically
             link_label = _EVENT_AGENDA_LINK_LABEL.get(alert_type, "→ Update document reference")
@@ -289,14 +293,14 @@ def _build_library_item_preview(alert: dict, alert_type: str, lib_action: str | 
 
         field_ids: dict = {}
         if not _is_na(title):
-            field_ids["name_text"] = title
+            field_ids[LI.NAME] = title
         if not _is_na(url):
-            field_ids["url_text"] = url
+            field_ids[LI.URL] = url
         if not _is_na(filename):
-            field_ids["file_name_text"] = filename
+            field_ids[LI.FILE_NAME] = filename
         if org:
-            field_ids["organizations_list_custom_organization"] = org  # names; executor resolves to IDs
-        field_ids["status_option_status"] = "Active"
+            field_ids[LI.ORGS] = org            # names; executor resolves to org _id list
+        field_ids[LI.STATUS] = "Active"
 
         match_search: dict = {}
 
@@ -309,9 +313,9 @@ def _build_library_item_preview(alert: dict, alert_type: str, lib_action: str | 
 
         field_ids = {}
         if not _is_na(url):
-            field_ids["url_text"] = url
+            field_ids[LI.URL] = url
         if not _is_na(filename):
-            field_ids["file_name_text"] = filename
+            field_ids[LI.FILE_NAME] = filename
 
         match_search = {}
         if not _is_na(url):
@@ -335,9 +339,9 @@ def _build_library_item_preview(alert: dict, alert_type: str, lib_action: str | 
             if _t_str and _t_str.lower() not in _NA_VALUES and _t_str not in _seen:
                 _topics.append(_t_str)
                 _seen.add(_t_str)
-    if _topics and "topics___dt_list_custom_newsreel_update" not in field_ids:
+    if _topics and LI.TOPICS not in field_ids:
         fields["Topics"] = ", ".join(_topics)
-        field_ids["topics___dt_list_custom_newsreel_update"] = _topics
+        field_ids[LI.TOPICS] = _topics
 
     return {
         # Existing keys — backward compat
@@ -487,8 +491,8 @@ def enrich_with_doc_extraction(bubble_action: dict, extraction: dict) -> None:
     if isinstance(ep, dict) and topics:
         ep_field_ids = dict(ep.get("field_ids") or {})
         ep_fields = dict(ep.get("fields") or {})
-        if "topics___dt_list_custom_newsreel_update" not in ep_field_ids:
-            ep_field_ids["topics___dt_list_custom_newsreel_update"] = topics
+        if CI.TOPICS not in ep_field_ids:
+            ep_field_ids[CI.TOPICS] = topics
             ep_fields["Topics"] = ", ".join(topics)
         ep["field_ids"] = ep_field_ids
         ep["fields"] = ep_fields
@@ -532,18 +536,17 @@ def enrich_with_doc_extraction(bubble_action: dict, extraction: dict) -> None:
     date_pub = _val("date_published")
     doc_type = _val("document_type")
 
-    if description and "description_text" not in field_ids:
+    if description and LI.SUMMARY not in field_ids:
         fields["Description"] = description[:500] + ("…" if len(description) > 500 else "")
-        field_ids["description_text"] = description[:2000]
-    if date_pub and "date_date" not in field_ids:
+        field_ids[LI.SUMMARY] = description[:2000]
+    if date_pub and LI.DATE not in field_ids:
         fields["Date"] = date_pub
-        field_ids["date_date"] = date_pub
-    if doc_type and "type___text_text" not in field_ids:
-        fields["Doc Type"] = doc_type
-        field_ids["type___text_text"] = doc_type
-    if topics and "topics___dt_list_custom_newsreel_update" not in field_ids:
+        field_ids[LI.DATE] = date_pub
+    if doc_type:
+        fields["Doc Type"] = doc_type          # display only; type ID resolved from alert_type at sync time
+    if topics and LI.TOPICS not in field_ids:
         fields["Topics"] = ", ".join(topics)
-        field_ids["topics___dt_list_custom_newsreel_update"] = topics
+        field_ids[LI.TOPICS] = topics
 
     lp["fields"] = fields
     lp["field_ids"] = field_ids
