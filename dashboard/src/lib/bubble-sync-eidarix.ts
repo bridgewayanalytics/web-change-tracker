@@ -170,10 +170,12 @@ async function resolveTopicIds(
 async function resolveLibraryItemTypeId(typeName: string): Promise<string | null> {
   try {
     const types = await bubbleSearch("libraryitemtype", SPACE_CONSTRAINT, 50);
+    const needle = typeName.trim().toLowerCase();
     for (const t of types) {
-      if (String(t.Title ?? "").trim().toLowerCase() === typeName.trim().toLowerCase()) return String(t._id);
+      // Check display name first (Bubble option sets), then Title field
+      if (String(t.display ?? t.Title ?? "").trim().toLowerCase() === needle) return String(t._id);
     }
-    console.warn("[bubble-sync] libraryitemtype not found:", typeName);
+    console.warn("[bubble-sync] libraryitemtype not found:", typeName, "available:", types.map(t => t.display ?? t.Title));
   } catch (e) { console.warn("[bubble-sync] libraryitemtype lookup failed:", e); }
   return null;
 }

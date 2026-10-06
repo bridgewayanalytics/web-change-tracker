@@ -156,30 +156,55 @@ function allLibraryItemTopics(
 
 // Enrich agenda item previews with live doc extraction data.
 // Used for display only — the sync/patch paths use the un-enriched bubble_action data.
+//
+// Doc extraction rows use this structure (field name: agenda_item_bridgeway_title_chronicle_topic):
+//   [{ agenda_item_title: "...", chronicle_topics: ["..."], status: "New|Existing" }, ...]
+// Official titles: agenda_item_title_official: [{ official_title: "...", status: "..." }, ...]
+// Reference IDs:   agenda_item_standardized_id: [{ standardized_id: "...", status: "..." }, ...]
 function enrichFromDocExtraction(
   items: AgendaItemPreview[],
   docRows: Array<Record<string, unknown>>,
 ): AgendaItemPreview[] {
   if (!docRows.length) return items;
-  const byTitle = new Map<string, Record<string, unknown>>();
+
+  // Build title → enrichment map from all doc extraction rows.
+  // Each row typically covers one agenda item (arrays of length 1).
+  type DocEntry = { chronicle_topics: string[]; official_title: string; reference_id: string };
+  const byTitle = new Map<string, DocEntry>();
+
   for (const dr of docRows) {
-    const t = String(dr.agenda_item_title ?? "").trim().toLowerCase();
-    if (t && !NA_SET.has(t)) byTitle.set(t, dr);
+    // Support new field name (bridgeway) and legacy field name
+    const bridgewayItems = (
+      dr.agenda_item_bridgeway_title_chronicle_topic ??
+      dr.agenda_item_title_chronicle_topic
+    ) as Array<Record<string, unknown>> | undefined;
+    const officialArr    = (dr.agenda_item_title_official    as Array<Record<string, unknown>> | undefined) ?? [];
+    const standardizedArr = (dr.agenda_item_standardized_id as Array<Record<string, unknown>> | undefined) ?? [];
+
+    if (!Array.isArray(bridgewayItems)) continue;
+    bridgewayItems.forEach((entry, i) => {
+      const titleRaw = String(entry.agenda_item_title ?? "").trim();
+      if (!titleRaw || NA_SET.has(titleRaw.toLowerCase())) return;
+      const docTopics = Array.isArray(entry.chronicle_topics)
+        ? (entry.chronicle_topics as unknown[]).map(String).filter(t => t && notNA(t))
+        : [];
+      const offTitle = String(officialArr[i]?.official_title ?? "").trim();
+      const refId    = String(standardizedArr[i]?.standardized_id ?? "").trim();
+      byTitle.set(titleRaw.toLowerCase(), { chronicle_topics: docTopics, official_title: offTitle, reference_id: refId });
+    });
   }
+
+  if (!byTitle.size) return items;
+
   return items.map(item => {
-    const key = stripStatusPrefix(item.title).toLowerCase();
-    const dr = byTitle.get(key);
-    if (!dr) return item;
-    const docTopics = Array.isArray(dr.chronicle_topics)
-      ? (dr.chronicle_topics as unknown[]).map(String).filter(t => t && notNA(t))
-      : [];
-    const offTitle = String(dr.agenda_item_title_official ?? "").trim();
-    const refId    = String(dr.agenda_item_standardized_id ?? "").trim();
+    const key  = stripStatusPrefix(item.title).toLowerCase();
+    const data = byTitle.get(key);
+    if (!data) return item;
     return {
       ...item,
-      ...(docTopics.length > 0 ? { chronicle_topics: docTopics } : {}),
-      ...(offTitle && notNA(offTitle) ? { official_title: offTitle } : {}),
-      ...(refId    && notNA(refId)    ? { reference_id: refId }      : {}),
+      ...(data.chronicle_topics.length > 0               ? { chronicle_topics: data.chronicle_topics } : {}),
+      ...(data.official_title && notNA(data.official_title) ? { official_title: data.official_title }   : {}),
+      ...(data.reference_id   && notNA(data.reference_id)   ? { reference_id: data.reference_id }       : {}),
     };
   });
 }
