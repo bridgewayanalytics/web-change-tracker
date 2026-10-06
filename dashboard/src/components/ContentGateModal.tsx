@@ -11,6 +11,69 @@ interface ContentGateModalProps {
 
 type SectionStatus = "idle" | "loading" | "done" | "error";
 
+interface ValidationIssue {
+  field: string;
+  message: string;
+  unresolved: string[];
+  severity: "error" | "warning";
+}
+
+interface ValidationResult {
+  valid: boolean;
+  issues: ValidationIssue[];
+}
+
+function ValidationBanner({ result }: { result: ValidationResult | null | "loading" }) {
+  if (!result || result === "loading" || result.issues.length === 0) return null;
+  const errors   = result.issues.filter(i => i.severity === "error");
+  const warnings = result.issues.filter(i => i.severity === "warning");
+  return (
+    <div className="rounded-lg border border-gray-200 overflow-hidden text-[11px]">
+      <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 flex items-center gap-1.5">
+        <span className="font-semibold text-gray-600 uppercase tracking-wider text-[10px]">Pre-flight validation</span>
+        {errors.length > 0 && (
+          <span className="ml-auto bg-red-100 text-red-700 rounded px-1.5 py-0.5 font-medium">
+            {errors.length} error{errors.length > 1 ? "s" : ""}
+          </span>
+        )}
+        {warnings.length > 0 && (
+          <span className={`${errors.length ? "" : "ml-auto"} bg-amber-100 text-amber-700 rounded px-1.5 py-0.5 font-medium`}>
+            {warnings.length} warning{warnings.length > 1 ? "s" : ""}
+          </span>
+        )}
+      </div>
+      <div className="divide-y divide-gray-100">
+        {result.issues.map((issue, i) => (
+          <div key={i} className={`px-3 py-2 ${issue.severity === "error" ? "bg-red-50" : "bg-amber-50"}`}>
+            <div className="flex items-start gap-1.5">
+              <span className={`mt-0.5 flex-shrink-0 ${issue.severity === "error" ? "text-red-500" : "text-amber-500"}`}>
+                {issue.severity === "error" ? "✕" : "⚠"}
+              </span>
+              <div className="min-w-0">
+                <span className={`font-semibold ${issue.severity === "error" ? "text-red-700" : "text-amber-700"}`}>
+                  {issue.field}:{" "}
+                </span>
+                <span className={issue.severity === "error" ? "text-red-600" : "text-amber-600"}>
+                  {issue.message}
+                </span>
+                {issue.unresolved.length > 0 && (
+                  <div className="mt-1 space-y-0.5">
+                    {issue.unresolved.map(name => (
+                      <div key={name} className={`font-mono text-[10px] truncate ${issue.severity === "error" ? "text-red-500" : "text-amber-500"}`}>
+                        → {name}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 type ValidationPopup = {
   section: string;
   message: string;
@@ -68,7 +131,9 @@ function stripStatusPrefix(s: string): string {
 
 function topicsFromFieldIds(fieldIds: unknown): string[] {
   if (!fieldIds || typeof fieldIds !== "object") return [];
-  const raw = (fieldIds as Record<string, unknown>)["topics___dt_list_custom_newsreel_update"];
+  const fids = fieldIds as Record<string, unknown>;
+  // Check new display-name key first, fall back to old underscore key
+  const raw = fids["Topics - dt"] ?? fids["topics___dt_list_custom_newsreel_update"];
   if (!Array.isArray(raw)) return [];
   return (raw as unknown[]).map(t => String(t).trim()).filter(t => t && notNA(t));
 }
@@ -87,6 +152,36 @@ function allLibraryItemTopics(
   const seen = new Set(docTopics);
   const extra = agendaTopics.filter(t => !seen.has(t));
   return [...docTopics, ...extra];
+}
+
+// Enrich agenda item previews with live doc extraction data.
+// Used for display only — the sync/patch paths use the un-enriched bubble_action data.
+function enrichFromDocExtraction(
+  items: AgendaItemPreview[],
+  docRows: Array<Record<string, unknown>>,
+): AgendaItemPreview[] {
+  if (!docRows.length) return items;
+  const byTitle = new Map<string, Record<string, unknown>>();
+  for (const dr of docRows) {
+    const t = String(dr.agenda_item_title ?? "").trim().toLowerCase();
+    if (t && !NA_SET.has(t)) byTitle.set(t, dr);
+  }
+  return items.map(item => {
+    const key = stripStatusPrefix(item.title).toLowerCase();
+    const dr = byTitle.get(key);
+    if (!dr) return item;
+    const docTopics = Array.isArray(dr.chronicle_topics)
+      ? (dr.chronicle_topics as unknown[]).map(String).filter(t => t && notNA(t))
+      : [];
+    const offTitle = String(dr.agenda_item_title_official ?? "").trim();
+    const refId    = String(dr.agenda_item_standardized_id ?? "").trim();
+    return {
+      ...item,
+      ...(docTopics.length > 0 ? { chronicle_topics: docTopics } : {}),
+      ...(offTitle && notNA(offTitle) ? { official_title: offTitle } : {}),
+      ...(refId    && notNA(refId)    ? { reference_id: refId }      : {}),
+    };
+  });
 }
 
 function deriveEventType(alertType: string): string {
@@ -146,7 +241,7 @@ function buildEventFields(
     : safeStr(ep.group);
   const url       = safeStr(ep.url);
   const callIn    = safeStr(ep.call_in);
-  const topics    = topicsFromFieldIds(ep.field_ids);
+  const topics    = allLibraryItemTopics(ep, agendaItems);
   const eventType = deriveEventType(alertType);
 
   const mk = (label: string, value: string, opts?: Partial<FieldEntry>): FieldEntry => ({
@@ -201,6 +296,7 @@ function buildLibFields(
   agendaItems: AgendaItemPreview[],
   hasAgenda: boolean,
   changedLabels: Set<string>,
+  docMeta?: { newsreel_relevance?: string },
 ): FieldEntry[] {
   const title    = safeStr(lp.title);
   const url      = safeStr(lp.url);
@@ -244,6 +340,11 @@ function buildLibFields(
 
   if (notNA(description)) entries.push(mk("Summary", description));
   if (notNA(docType))     entries.push(mk("Doc Type", docType, { readOnly: true }));
+
+  // Newsreel relevance from live doc extraction (informational — not a Bubble write field)
+  if (docMeta?.newsreel_relevance && notNA(docMeta.newsreel_relevance)) {
+    entries.push({ label: "Newsreel Relevance", value: docMeta.newsreel_relevance, readOnly: true });
+  }
 
   // Linked Agenda Items — always shown
   entries.push({
@@ -603,6 +704,42 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     .filter((_, i) => !deletedNewIndices.has(i));
   const activeAgendaItems: AgendaItemPreview[] = [...activeNewAgendaItems, ...existingAgendaItems];
   const hasNewAgenda   = hasAgenda && activeNewAgendaItems.length > 0;
+
+  // Live doc extraction rows for this alert's library item — fetched async on open.
+  // Used to enrich agenda item display (fresher chronicle topics, official titles, ref IDs).
+  const [docExtractionRows, setDocExtractionRows] = useState<Array<Record<string, unknown>>>([]);
+
+  // Enriched agenda items — chronicle_topics, official_title, reference_id overlaid
+  // from live doc extraction rows. Used for rendering only; sync/patch still uses activeAgendaItems.
+  const enrichedNewAgendaItems     = useMemo(
+    () => enrichFromDocExtraction(newAgendaItems, docExtractionRows),
+    [newAgendaItems, docExtractionRows],
+  );
+  const displayedActiveNewAgenda: AgendaItemPreview[] = enrichedNewAgendaItems
+    .map((item, i) => agendaItemTitleEdits[i] !== undefined ? { ...item, title: agendaItemTitleEdits[i] } : item)
+    .filter((_, i) => !deletedNewIndices.has(i));
+  const displayedAgendaItems: AgendaItemPreview[] = [
+    ...displayedActiveNewAgenda,
+    ...enrichFromDocExtraction(existingAgendaItems, docExtractionRows),
+  ];
+
+  // Document-level metadata from the first doc extraction row (same for all rows per PDF).
+  const docMeta = useMemo(() => {
+    const first = docExtractionRows[0];
+    if (!first) return undefined;
+    const relevanceRaw = first.is_the_document_relevant_for_a_future_newsreel_article
+      ?? first.newsreel_relevance;
+    let relevance = "";
+    if (relevanceRaw != null) {
+      if (typeof relevanceRaw === "object" && relevanceRaw !== null) {
+        relevance = String((relevanceRaw as Record<string, unknown>).status ?? "").trim();
+      } else {
+        relevance = String(relevanceRaw).trim();
+      }
+    }
+    return { newsreel_relevance: relevance };
+  }, [docExtractionRows]);
+
   const transcriptKey = String((row.transcript_s3_key ?? row.manual_transcript_s3_key) ?? "");
   const hasTranscript = !!transcriptKey && row.alert_type === "New Meeting Transcript Available";
   const libItemUrl    = String(row.library_item_url ?? "");
@@ -621,19 +758,36 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     [libAction, libPreview],
   );
 
-  const eventFields = useMemo(
-    () => buildEventFields(eventPreview, libPreview, libAction, alertType, eventChangedLabels, activeAgendaItems),
+  const eventFields = useMemo(() => {
+    // Supplement stale/empty preview datetimes from live row fields (try both with and without _et suffix)
+    const ep = { ...eventPreview } as Record<string, unknown>;
+    const r = row as Record<string, unknown>;
+    if (!notNA(safeStr(ep.start_datetime))) ep.start_datetime = safeStr(r.event_start_date_time ?? r.event_start_date_time_et);
+    if (!notNA(safeStr(ep.end_datetime)))   ep.end_datetime   = safeStr(r.event_end_date_time   ?? r.event_end_date_time_et);
+    return buildEventFields(ep, libPreview, libAction, alertType, eventChangedLabels, displayedAgendaItems);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [eventPreview, libPreview, libAction, alertType, eventChangedLabels, activeAgendaItems],
-  );
+  }, [eventPreview, libPreview, libAction, alertType, eventChangedLabels, displayedAgendaItems]);
   const libFields = useMemo(
-    () => buildLibFields(libPreview, activeAgendaItems, hasAgenda, libChangedLabels),
+    () => buildLibFields(libPreview, displayedAgendaItems, hasAgenda, libChangedLabels, docMeta),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [libPreview, activeAgendaItems, hasAgenda, libChangedLabels],
+    [libPreview, displayedAgendaItems, hasAgenda, libChangedLabels, docMeta],
   );
 
   const [eventEdits, setEventEdits]               = useState<Record<string, string>>({});
   const [libEdits, setLibEdits]                   = useState<Record<string, string>>({});
+
+  // Pre-flight validation — runs once on open for rows with Bubble sections
+  const [validation, setValidation]               = useState<ValidationResult | null | "loading">(null);
+  const hasBubbleSections = !!(eventAction || libAction || hasAgenda);
+  useEffect(() => {
+    if (!hasBubbleSections || !agentCallId) return;
+    setValidation("loading");
+    fetch(`/api/bubble/validate?agent_call_id=${encodeURIComponent(agentCallId)}`)
+      .then(r => r.json() as Promise<ValidationResult>)
+      .then(d => setValidation(d))
+      .catch(() => setValidation(null));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentCallId]);
 
   // Live Bubble record state for UPDATE sections
   const [eventRecord, setEventRecord]               = useState<BubbleRecord | null>(null);
@@ -680,11 +834,18 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     fetch(`/api/document-extractions?agent_call_id=${encodeURIComponent(agentCallId)}`)
       .then(r => r.json())
       .then((d: { rows?: Array<Record<string, unknown>> }) => {
-        if (d.rows?.[0]?.ingest_status === "approved") {
+        const allRows = d.rows ?? [];
+        // Filter to only rows for this library item (multiple PDFs can share an agent_call_id)
+        const filtered = libItemUrl && notNA(libItemUrl)
+          ? allRows.filter(r => String(r.library_item_url ?? "") === libItemUrl)
+          : allRows;
+        setDocExtractionRows(filtered);
+        if (filtered.some(r => r.ingest_status === "approved")) {
           setSections(prev => ({ ...prev, document: { status: "done" } }));
         }
       })
       .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentCallId, hasDocument]);
 
   const [validationPopup, setValidationPopup] = useState<ValidationPopup | null>(null);
@@ -902,6 +1063,14 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
             <p className="text-sm text-gray-400 text-center py-10">No publishable actions for this row.</p>
           )}
 
+          {/* Pre-flight validation banner */}
+          {hasBubbleSections && validation === "loading" && (
+            <div className="text-[11px] text-gray-400 italic px-1">Checking field resolution…</div>
+          )}
+          {hasBubbleSections && validation !== "loading" && validation !== null && (
+            <ValidationBanner result={validation} />
+          )}
+
           {hasNewAgenda && (
             <div className="rounded-lg border border-green-200 overflow-hidden">
               {/* Header */}
@@ -925,6 +1094,8 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
                   if (deletedNewIndices.has(i)) return null;
                   const displayedTitle = agendaItemTitleEdits[i] ?? stripStatusPrefix(item.title);
                   const isDone = sections.agenda_items.status === "done";
+                  // Use enriched topics from doc extraction when available
+                  const displayedTopics = (enrichedNewAgendaItems[i]?.chronicle_topics ?? item.chronicle_topics) ?? [];
                   return (
                     <div key={i} className={`py-2.5 ${i > 0 ? "border-t border-gray-100" : ""}`}>
                       <div className="flex items-start gap-2">
@@ -940,9 +1111,9 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
                               className="w-full text-[12px] font-semibold text-gray-800 bg-transparent border-b border-gray-200 hover:border-gray-400 focus:border-indigo-400 focus:outline-none pb-0.5 transition-colors"
                             />
                           )}
-                          {(item.chronicle_topics ?? []).length > 0 && (
+                          {displayedTopics.length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-1.5">
-                              {(item.chronicle_topics ?? []).map(t => (
+                              {displayedTopics.map(t => (
                                 <span key={t} className="text-[10px] bg-violet-100 text-violet-700 rounded px-1.5 py-0.5 border border-violet-200 leading-tight">{t}</span>
                               ))}
                             </div>

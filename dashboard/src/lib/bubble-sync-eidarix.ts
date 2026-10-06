@@ -121,16 +121,32 @@ async function eidarixWfPost(
 // Name → ID resolution
 // ---------------------------------------------------------------------------
 
+function matchOrgName(name: string, nameToId: Map<string, string>): string | null {
+  const n = name.trim();
+  // 1. Exact match
+  let id = nameToId.get(n);
+  if (id) return id;
+  // 2. Strip " (NAIC XXX)" acronym suffix the agent appends and retry
+  const stripped = n.replace(/\s*\(NAIC\s+[A-Z0-9\-]+\)\s*$/, "").trim();
+  if (stripped !== n) { id = nameToId.get(stripped); if (id) return id; }
+  // 3. Prefix match: Bubble org name is a prefix of the agent-provided name
+  const entries = Array.from(nameToId.entries());
+  for (const [bubbleName, bubbleId] of entries) {
+    if (n.startsWith(bubbleName + " ") && n !== bubbleName) return bubbleId;
+  }
+  return null;
+}
+
 async function resolveOrgIds(orgNames: string[]): Promise<string[]> {
   if (!orgNames.length) return [];
   const orgs = await bubbleListAll("organization", SPACE_CONSTRAINT);
   const nameToId = new Map(orgs.map(o => [String(o.Name ?? "").trim(), String(o._id ?? "")]));
   const ids: string[] = [];
   const missing: string[] = [];
-  for (const name of orgNames) {
-    const id = nameToId.get(name);
+  for (const rawName of orgNames) {
+    const id = matchOrgName(rawName, nameToId);
     if (id) ids.push(id);
-    else missing.push(name);
+    else missing.push(rawName.trim());
   }
   if (missing.length) console.warn("[bubble-sync] org(s) not found in Bubble:", missing, `EIDARIX_VERSION=${EIDARIX_VERSION}`);
   return ids;
@@ -383,10 +399,11 @@ function getAgendaTopicNames(row: Record<string, unknown>): string[] {
   ));
 }
 
+// Bubble Data API expects ISO 8601 UTC (e.g. "2026-06-11T18:00:00.000Z").
 function toUtcIso(raw: string): string {
   if (!raw || raw.toUpperCase() === "N/A") return "";
   try {
-    const d = new Date(raw);
+    const d = new Date(raw.trim());
     return isNaN(d.getTime()) ? "" : d.toISOString();
   } catch { return ""; }
 }
@@ -406,6 +423,153 @@ function parseDate(raw: string): string {
     if (mon) return `${m[3]}-${mon}-${m[2].padStart(2, "0")}`;
   }
   return "";
+}
+
+// ---------------------------------------------------------------------------
+// Computed calendaritem fields (not auto-populated when writing via Data API)
+// ---------------------------------------------------------------------------
+
+function computeEventTimeFields(
+  startUtc: string,
+  endUtc: string,
+  isFullDay: boolean,
+): Record<string, unknown> {
+  const fields: Record<string, unknown> = { "full day": isFullDay, "datewasset": false };
+
+  if (!startUtc) return fields;
+  const start = new Date(startUtc);
+  if (isNaN(start.getTime())) return fields;
+
+  fields["datewasset"] = true;
+
+  if (!isFullDay) {
+    const h24 = start.getUTCHours();
+    const h12 = h24 % 12 || 12;
+    const min = start.getUTCMinutes();
+    fields["AMPM from"]    = h24 < 12 ? "AM" : "PM";
+    fields["Hour from"]    = String(h12).padStart(2, "0");
+    fields["Minutes from"] = String(min).padStart(2, "0");
+
+    if (endUtc) {
+      const end = new Date(endUtc);
+      if (!isNaN(end.getTime())) {
+        const eh24 = end.getUTCHours();
+        const eh12 = eh24 % 12 || 12;
+        const emin = end.getUTCMinutes();
+        fields["AMPM until"]    = eh24 < 12 ? "AM" : "PM";
+        fields["Hours until"]   = String(eh12).padStart(2, "0");
+        fields["Minutes until"] = String(emin).padStart(2, "0");
+
+        const durationMins = Math.round((end.getTime() - start.getTime()) / 60_000);
+        if (durationMins > 0) {
+          const dh = Math.floor(durationMins / 60);
+          const dm = durationMins % 60;
+          fields["length"] = `${dh}:${String(dm).padStart(2, "0")}`;
+        }
+      }
+    }
+  }
+
+  return fields;
+}
+
+// ---------------------------------------------------------------------------
+// Public validation types + pre-flight check
+// ---------------------------------------------------------------------------
+
+export interface ValidationIssue {
+  field: string;
+  message: string;
+  unresolved: string[];
+  severity: "error" | "warning";
+}
+
+export interface ValidationResult {
+  valid: boolean; // true = no errors (warnings allowed)
+  issues: ValidationIssue[];
+}
+
+export async function validateSyncPlan(
+  agentCallId: string,
+  rows: Record<string, unknown>[],
+): Promise<ValidationResult> {
+  const row = rows.find(r => r.agent_call_id === agentCallId);
+  if (!row) return { valid: false, issues: [{ field: "Row", message: `No row found for agent_call_id=${agentCallId}`, unresolved: [], severity: "error" }] };
+
+  const plan = row.bubble_action as Record<string, unknown> | undefined;
+  if (!plan) return { valid: false, issues: [{ field: "bubble_action", message: "No bubble_action on row", unresolved: [], severity: "error" }] };
+
+  const ep = (plan.event_preview  ?? {}) as Record<string, unknown>;
+  const lp = (plan.library_item_preview ?? {}) as Record<string, unknown>;
+  const epFieldIds = (ep.field_ids ?? {}) as Record<string, unknown>;
+  const lpFieldIds = (lp.field_ids ?? {}) as Record<string, unknown>;
+
+  const orgNames = ((ep.group ?? lp.group ?? []) as unknown[]).map(String).filter(Boolean);
+  const epTopicNames    = getTopicNamesFromFieldIds(epFieldIds);
+  const lpTopicNames    = getTopicNamesFromFieldIds(lpFieldIds);
+  const agendaTopicNames = getAgendaTopicNames(row);
+  const allTopicNames   = Array.from(new Set([...epTopicNames, ...lpTopicNames, ...agendaTopicNames]));
+  const libTypeName     = plan.library_item ? String((lp as Record<string, unknown>).type ?? "Agenda & Materials") : null;
+
+  // Run all lookups in parallel
+  const [unresolvedOrgs, unresolvedTopics, libTypeId, calTypeId] = await Promise.all([
+    orgNames.length
+      ? bubbleListAll("organization", SPACE_CONSTRAINT).then(orgs => {
+          const nameToId = new Map(orgs.map(o => [String(o.Name ?? "").trim(), String(o._id ?? "")]));
+          return orgNames.filter(n => !matchOrgName(n, nameToId));
+        })
+      : Promise.resolve([] as string[]),
+
+    allTopicNames.length
+      ? bubbleListAll("chronicletopic", SPACE_CONSTRAINT).then(topics => {
+          const nameToId = new Map(topics.map(t => [String(t.Title ?? "").trim(), String(t._id ?? "")]));
+          return allTopicNames.filter(n => !nameToId.has(n));
+        })
+      : Promise.resolve([] as string[]),
+
+    libTypeName ? resolveLibraryItemTypeId(libTypeName) : Promise.resolve("skip" as string | null),
+    plan.event  ? resolveCalendarItemTypeId("Meeting")  : Promise.resolve("skip" as string | null),
+  ]);
+
+  const issues: ValidationIssue[] = [];
+
+  if (unresolvedOrgs.length) {
+    issues.push({
+      field: "Organizations",
+      message: `${unresolvedOrgs.length} org name${unresolvedOrgs.length > 1 ? "s" : ""} not found in Bubble — record will publish with empty Organizations field`,
+      unresolved: unresolvedOrgs,
+      severity: "error",
+    });
+  }
+
+  if (unresolvedTopics.length) {
+    issues.push({
+      field: "Chronicle Topics",
+      message: `${unresolvedTopics.length} topic name${unresolvedTopics.length > 1 ? "s" : ""} not found — "Calendar Events with no Topic" fallback will be used`,
+      unresolved: unresolvedTopics,
+      severity: "warning",
+    });
+  }
+
+  if (libTypeId !== "skip" && !libTypeId) {
+    issues.push({
+      field: "Library Item Type",
+      message: `Type "${libTypeName}" not found in Bubble — library item will publish with no type`,
+      unresolved: libTypeName ? [libTypeName] : [],
+      severity: "error",
+    });
+  }
+
+  if (calTypeId !== "skip" && !calTypeId) {
+    issues.push({
+      field: "Calendar Item Type",
+      message: `Type "Meeting" not found in Bubble — event will publish with no type`,
+      unresolved: ["Meeting"],
+      severity: "error",
+    });
+  }
+
+  return { valid: !issues.some(i => i.severity === "error"), issues };
 }
 
 // ---------------------------------------------------------------------------
@@ -580,8 +744,9 @@ export async function syncAlert(
 
     // ── Calendar item ────────────────────────────────────────────────────────
     if (runEvent) {
-      const startDt = toUtcIso(String(ep.start_datetime ?? ""));
-      const endDt = toUtcIso(String(ep.end_datetime ?? ""));
+      const r = row as Record<string, unknown>;
+      const startDt = toUtcIso(String(ep.start_datetime || r.event_start_date_time || r.event_start_date_time_et || ""));
+      const endDt = toUtcIso(String(ep.end_datetime || r.event_end_date_time || r.event_end_date_time_et || ""));
       const locationUrl = String(ep.url ?? "").trim() || null;
       const callIn = String(ep.call_in ?? "").trim() || null;
 
@@ -599,51 +764,80 @@ export async function syncAlert(
 
       if (eventAction === "create") {
         const calTypeId = await resolveCalendarItemTypeId("Meeting");
+        const isFullDay = String(row.event_is_full_day ?? ep.is_full_day ?? "").trim() === "Full Day";
+        const timeFields = computeEventTimeFields(startDt, endDt, isFullDay);
 
+        // Use Bubble Data API directly — field names are display names (see bubble_api_reference.md)
         const eventPayload: Record<string, unknown> = {
-          alert_id: agentCallId,
-          space_id: SPACE_ID,
-          chronicle_topics: eventTopicIds,
+          "Space": SPACE_ID,
+          "Topics - dt": eventTopicIds,
+          "has topic": eventTopicIds.length > 0,
+          "Timezone Code": "America/New_York",
+          "Eiderix Ref": agentCallId,
+          ...timeFields,
         };
-        if (agendaItemIds.length) eventPayload.agenda_items = agendaItemIds;
-        if (bubbleLibraryItemId) eventPayload.agenda = [bubbleLibraryItemId];
-        if (startDt) eventPayload.start_datetime = startDt;
-        if (endDt) eventPayload.end_datetime = endDt;
-        if (locationUrl && locationUrl.toUpperCase() !== "N/A") eventPayload.location_url = locationUrl;
-        if (callIn && callIn.toUpperCase() !== "N/A") eventPayload.phone_and_access_code = callIn;
-        if (calTypeId) eventPayload.type = calTypeId;
-        if (orgIds.length) eventPayload.organizations = orgIds;
+        const evTitle = String(ep.title ?? "").trim();
+        if (evTitle && evTitle.toUpperCase() !== "N/A") {
+          eventPayload["title"] = evTitle;
+          eventPayload["name for search"] = evTitle.toLowerCase();
+        }
+        const evDescription = String(row.alert_description ?? "").trim();
+        if (evDescription && evDescription.toUpperCase() !== "N/A") eventPayload["event description"] = evDescription;
+        if (startDt) eventPayload["date"] = startDt;
+        if (endDt) eventPayload["End time"] = endDt;
+        if (calTypeId) eventPayload["type"] = calTypeId;
+        if (orgIds.length) eventPayload["Orgs "] = orgIds;
+        if (agendaItemIds.length) eventPayload["attached agenda items"] = agendaItemIds;
+        if (bubbleLibraryItemId) eventPayload["Agenda"] = [bubbleLibraryItemId];
+        if (locationUrl && locationUrl.toUpperCase() !== "N/A") eventPayload["location"] = locationUrl;
+        if (callIn && callIn.toUpperCase() !== "N/A") eventPayload["phone_number_and_access_code"] = callIn;
 
-        console.info("[bubble-sync] CREATE calendaritem via wf/create-event");
-        const eventResult = await eidarixWfPost("create-event", eventPayload);
-        bubbleEventId = String(eventResult.bubble_id ?? eventResult.id ?? eventResult._id ?? "").trim() || null;
-        if (bubbleEventId) console.info("[bubble-sync] created calendaritem", bubbleEventId);
-        else console.warn("[bubble-sync] create-event returned no id:", eventResult);
+        console.info("[bubble-sync] CREATE calendaritem via Data API", JSON.stringify(eventPayload));
+        const createRes = await fetch(`${OBJ_VERSIONED}/calendaritem`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${await getBubbleKey()}`, "Content-Type": "application/json" },
+          body: JSON.stringify(eventPayload),
+          signal: AbortSignal.timeout(30_000),
+        });
+        const createData = await createRes.json() as { status: string; id?: string };
+        if (createData.status !== "success" || !createData.id) {
+          throw new Error(`Bubble create calendaritem failed: ${JSON.stringify(createData)}`);
+        }
+        bubbleEventId = createData.id;
+        console.info("[bubble-sync] created calendaritem", bubbleEventId);
 
       } else if (eventAction === "update") {
         const matchSearch = { ...(ep.match_search ?? {}) } as Record<string, string>;
         // bubble_action may have been stamped when date was missing — supplement from live row value
         if (!matchSearch.date) {
-          const rawDate = String(row.event_start_date_time ?? "").trim();
+          const rr = row as Record<string, unknown>;
+          const rawDate = String(rr.event_start_date_time ?? rr.event_start_date_time_et ?? "").trim();
           if (rawDate && rawDate.toUpperCase() !== "N/A") matchSearch.date = rawDate.slice(0, 10);
         }
         const existingEventId = await findCalendarItem(matchSearch);
         if (!existingEventId) {
           throw new Error(`No matched calendar item found for match_search=${JSON.stringify(matchSearch)}`);
         }
-        // Trimmed payload only — event details (datetime, type, orgs) already on the record
+        // PATCH only the linking fields — datetime/type/orgs already on the record
         const updatePayload: Record<string, unknown> = {
-          id: existingEventId,
-          alert_id: agentCallId,
-          space_id: SPACE_ID,
-          chronicle_topics: eventTopicIds,
+          "Topics - dt": eventTopicIds,
+          "Eiderix Ref": agentCallId,
         };
-        if (agendaItemIds.length) updatePayload.agenda_items = agendaItemIds;
-        if (bubbleLibraryItemId) updatePayload.agenda = [bubbleLibraryItemId];
+        if (agendaItemIds.length) updatePayload["attached agenda items"] = agendaItemIds;
+        if (bubbleLibraryItemId) updatePayload["Agenda"] = [bubbleLibraryItemId];
 
-        console.info("[bubble-sync] UPDATE calendaritem via wf/update-event", existingEventId);
-        const updateResult = await eidarixWfPost("update-event", updatePayload);
-        bubbleEventId = String(updateResult.bubble_id ?? updateResult.id ?? updateResult._id ?? existingEventId).trim();
+        console.info("[bubble-sync] UPDATE calendaritem via Data API PATCH", existingEventId, JSON.stringify(updatePayload));
+        const patchRes = await fetch(`${OBJ_VERSIONED}/calendaritem/${existingEventId}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${await getBubbleKey()}`, "Content-Type": "application/json" },
+          body: JSON.stringify(updatePayload),
+          signal: AbortSignal.timeout(30_000),
+        });
+        if (!patchRes.ok) {
+          const errText = await patchRes.text();
+          throw new Error(`Bubble PATCH calendaritem ${patchRes.status}: ${errText.slice(0, 300)}`);
+        }
+        bubbleEventId = existingEventId;
         console.info("[bubble-sync] updated calendaritem", bubbleEventId);
       }
     }
