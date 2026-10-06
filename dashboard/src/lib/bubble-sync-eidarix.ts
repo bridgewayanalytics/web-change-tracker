@@ -338,11 +338,18 @@ async function resolveAgendaItems(
     if (officialTitle.toUpperCase() === "N/A") officialTitle = "";
     if (referenceId.toUpperCase() === "N/A") referenceId = "";
 
+    // If no topics, use the empty-topic fallback chronicle topic
+    let finalTopicIds = topicIds;
+    if (!finalTopicIds.length) {
+      const fallbackId = await getEmptyTopicId();
+      if (fallbackId) finalTopicIds = [fallbackId];
+    }
+
     const result = await eidarixWfPost("create-agenda-item/", {
       title,
       official_title: officialTitle,
       reference_id: referenceId,
-      chronicle_topics: topicIds,
+      chronicle_topics: finalTopicIds,
       alert_id: agentCallId,
       space_id: SPACE_ID,
     });
@@ -374,6 +381,14 @@ function getAgendaTopicNames(row: Record<string, unknown>): string[] {
       .flatMap(e => (e.chronicle_topics as string[] | undefined) ?? [])
       .filter((t): t is string => typeof t === "string" && t.toUpperCase() !== "N/A" && t !== ""),
   ));
+}
+
+function toUtcIso(raw: string): string {
+  if (!raw || raw.toUpperCase() === "N/A") return "";
+  try {
+    const d = new Date(raw);
+    return isNaN(d.getTime()) ? "" : d.toISOString();
+  } catch { return ""; }
 }
 
 function parseDate(raw: string): string {
@@ -565,8 +580,8 @@ export async function syncAlert(
 
     // ── Calendar item ────────────────────────────────────────────────────────
     if (runEvent) {
-      const startDt = String(ep.start_datetime ?? "");
-      const endDt = String(ep.end_datetime ?? "");
+      const startDt = toUtcIso(String(ep.start_datetime ?? ""));
+      const endDt = toUtcIso(String(ep.end_datetime ?? ""));
       const locationUrl = String(ep.url ?? "").trim() || null;
       const callIn = String(ep.call_in ?? "").trim() || null;
 

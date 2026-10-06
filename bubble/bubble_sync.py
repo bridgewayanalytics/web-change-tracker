@@ -33,7 +33,7 @@ _STATUS_PREFIX_RE = re.compile(r"^(New|Existing|Updated)\s*[-–]\s*", re.IGNORE
 def _strip_status_prefix(title: str) -> str:
     """Remove leading 'New - ', 'Existing - ', 'Updated - ' agent-output prefixes from a title."""
     return _STATUS_PREFIX_RE.sub("", title).strip()
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 log = logging.getLogger(__name__)
 
@@ -278,6 +278,17 @@ def _resolve_chronicle_topic_ids(topic_names: list[str], client) -> list[str]:
     return ids
 
 
+def _to_utc_iso(raw: str) -> str:
+    """Convert an ET ISO 8601 string to UTC ISO 8601. Returns '' on failure."""
+    if not raw or raw.upper() == "N/A":
+        return ""
+    try:
+        dt = datetime.fromisoformat(raw)
+        return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    except Exception:
+        return ""
+
+
 def _get_empty_topic_id(client) -> str | None:
     """
     Look up the chronicle topic designated as the fallback for events with no topics.
@@ -514,6 +525,11 @@ def _resolve_agenda_items(row: dict, agent_call_id: str, topic_name_to_id: dict[
 
         topic_names = item.get("chronicle_topics") or []
         topic_ids = [topic_name_to_id[t] for t in topic_names if t in topic_name_to_id]
+        # If no topics resolved, use the empty-topic fallback chronicle topic
+        if not topic_ids:
+            fallback_id = _get_empty_topic_id(client)
+            if fallback_id:
+                topic_ids = [fallback_id]
 
         if not is_new:
             # Existing/Updated: look up in Bubble by title
@@ -734,8 +750,8 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
                 if not cal_type_id:
                     log.warning("bubble_sync: could not resolve calendaritemtype=%r — event type will be omitted", cal_type_name)
 
-                start_dt = ep.get("start_datetime") or ""
-                end_dt = ep.get("end_datetime") or ""
+                start_dt = _to_utc_iso(ep.get("start_datetime") or "")
+                end_dt = _to_utc_iso(ep.get("end_datetime") or "")
                 location_url = ep.get("url") or None
                 if location_url and location_url.upper() == "N/A":
                     location_url = None
