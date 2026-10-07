@@ -279,12 +279,13 @@ def _resolve_chronicle_topic_ids(topic_names: list[str], client) -> list[str]:
 
 
 def _to_utc_iso(raw: str) -> str:
-    """Convert an ET ISO 8601 string to UTC ISO 8601. Returns '' on failure."""
+    """Validate and pass through an ISO 8601 datetime string.
+    Eidarix expects timezone-offset format (e.g. 2026-06-11T14:00:00-04:00), not UTC Z."""
     if not raw or raw.upper() == "N/A":
         return ""
     try:
-        dt = datetime.fromisoformat(raw)
-        return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        datetime.fromisoformat(raw.strip())  # validate parses
+        return raw.strip()
     except Exception:
         return ""
 
@@ -750,8 +751,18 @@ def sync_alert(agent_call_id: str, action: str = "all") -> dict:
                 if not cal_type_id:
                     log.warning("bubble_sync: could not resolve calendaritemtype=%r — event type will be omitted", cal_type_name)
 
-                start_dt = _to_utc_iso(ep.get("start_datetime") or "")
-                end_dt = _to_utc_iso(ep.get("end_datetime") or "")
+                start_dt = _to_utc_iso(
+                    ep.get("start_datetime")
+                    or alert.get("event_start_date_time")
+                    or alert.get("event_start_date_time_et")
+                    or ""
+                )
+                end_dt = _to_utc_iso(
+                    ep.get("end_datetime")
+                    or alert.get("event_end_date_time")
+                    or alert.get("event_end_date_time_et")
+                    or ""
+                )
                 location_url = ep.get("url") or None
                 if location_url and location_url.upper() == "N/A":
                     location_url = None

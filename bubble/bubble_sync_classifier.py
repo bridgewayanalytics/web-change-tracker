@@ -67,21 +67,22 @@ _TYPE_MAP: dict[str, tuple[str | None, str | None, bool]] = {
     "Other":                                    ("update", "create", False),
 }
 
-# Maps alert_type → human-readable Library Item type label
+# Maps alert_type → Bubble libraryitemtype Title (must match exact Title in Bubble's
+# libraryitemtype table so the sync executor can resolve the type ID without aliases).
 _LIBRARY_ITEM_TYPE: dict[str, str] = {
-    "New Agenda":                               "Agenda",
-    "New Materials":                            "Materials",
+    "New Agenda":                               "Agenda & Materials",
+    "New Materials":                            "Agenda & Materials",
     "New Agenda & Materials":                   "Agenda & Materials",
-    "Updated Agenda":                           "Agenda",
-    "Updated Materials":                        "Materials",
+    "Updated Agenda":                           "Agenda & Materials",
+    "Updated Materials":                        "Agenda & Materials",
     "Updated Agenda & Materials":               "Agenda & Materials",
-    "New Request for Comment":                  "Request for Comment",
-    "Updated Request for Comment":              "Request for Comment",
-    "New Effective Date":                       "Adopted Guideline",
-    "Updated Effective Date":                   "Adopted Guideline",
-    "New or Updated Report or Other Resource":  "Report / Resource",
-    "New Meeting Transcript Available":         "Meeting Transcript",
-    "Other":                                    "Document",
+    "New Request for Comment":                  "Proposed Guidance & Support Materials",
+    "Updated Request for Comment":              "Proposed Guidance & Support Materials",
+    "New Effective Date":                       "Existing Requirements & Guidance",
+    "Updated Effective Date":                   "Existing Requirements & Guidance",
+    "New or Updated Report or Other Resource":  "Publication",
+    "New Meeting Transcript Available":         "Other",
+    "Other":                                    "Publication",
 }
 
 # For UPDATE calendaritem, the Agenda field label to show in the modal
@@ -161,8 +162,8 @@ _LIB_UPDATE_CHANGES: dict[str, list[str]] = {
 
 def _build_event_preview(alert: dict, alert_type: str, event_action: str | None) -> dict:
     title = _str(alert.get("event_title"))
-    start = _str(alert.get("event_start_date_time"))
-    end = _str(alert.get("event_end_date_time"))
+    start = _str(alert.get("event_start_date_time") or alert.get("event_start_date_time_et"))
+    end = _str(alert.get("event_end_date_time") or alert.get("event_end_date_time_et"))
     org = _org_list(alert)
     url = _str(alert.get("event_url"))
     call_in = _str(alert.get("event_call_in_number_access_code"))
@@ -568,7 +569,7 @@ def classify_alert(alert: dict) -> BubbleSyncPlan:
 
     # Suppress event action if the agent reported no associated event
     if ev_action is not None:
-        if _is_na(alert.get("event_title")) and _is_na(alert.get("event_start_date_time")):
+        if _is_na(alert.get("event_title")) and _is_na(alert.get("event_start_date_time") or alert.get("event_start_date_time_et")):
             ev_action = None
 
     # Override agenda=True if the alert has real agenda items the type map doesn't expect
