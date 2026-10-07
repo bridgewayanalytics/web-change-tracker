@@ -21,7 +21,7 @@ resource "aws_lambda_function" "bubble_sync" {
   environment {
     variables = {
       CHANGELOG_BUCKET = aws_s3_bucket.artifacts.id
-      EIDARIX_VERSION  = "test"
+      EIDARIX_VERSION  = "live"
     }
   }
 }

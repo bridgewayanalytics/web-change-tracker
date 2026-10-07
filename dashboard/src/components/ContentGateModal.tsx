@@ -157,6 +157,12 @@ function allLibraryItemTopics(
 // Enrich agenda item previews with live doc extraction data.
 // Used for display only — the sync/patch paths use the un-enriched bubble_action data.
 //
+// Matching strategy:
+//   1. Title match: doc extraction agenda_item_title (stripped) vs preview title (stripped).
+//      Fails when the two agents use different phrasings for the same item.
+//   2. Positional fallback: if title matching produces 0 hits, match by index order.
+//      Doc rows sorted by agenda_number; row[i] → preview[i].
+//
 // Doc extraction rows use this structure (field name: agenda_item_bridgeway_title_chronicle_topic):
 //   [{ agenda_item_title: "...", chronicle_topics: ["..."], status: "New|Existing" }, ...]
 // Official titles: agenda_item_title_official: [{ official_title: "...", status: "..." }, ...]
@@ -167,20 +173,54 @@ function enrichFromDocExtraction(
 ): AgendaItemPreview[] {
   if (!docRows.length) return items;
 
-  // Build title → enrichment map from all doc extraction rows.
-  // Each row typically covers one agenda item (arrays of length 1).
   type DocEntry = { chronicle_topics: string[]; official_title: string; reference_id: string };
-  const byTitle = new Map<string, DocEntry>();
 
-  for (const dr of docRows) {
-    // Support new field name (bridgeway) and legacy field name
+  // Sort rows by agenda_number so positional matching is deterministic
+  const sorted = [...docRows].sort(
+    (a, b) => Number(a.agenda_number ?? 999) - Number(b.agenda_number ?? 999),
+  );
+
+  function extractEntries(rows: Array<Record<string, unknown>>): DocEntry[] {
+    const entries: DocEntry[] = [];
+    for (const dr of rows) {
+      const bridgewayItems = (
+        dr.agenda_item_bridgeway_title_chronicle_topic ??
+        dr.agenda_item_title_chronicle_topic
+      ) as Array<Record<string, unknown>> | undefined;
+      const officialArr     = (dr.agenda_item_title_official    as Array<Record<string, unknown>> | undefined) ?? [];
+      const standardizedArr = (dr.agenda_item_standardized_id  as Array<Record<string, unknown>> | undefined) ?? [];
+      if (!Array.isArray(bridgewayItems)) continue;
+      bridgewayItems.forEach((entry, i) => {
+        const docTopics = Array.isArray(entry.chronicle_topics)
+          ? (entry.chronicle_topics as unknown[]).map(String).filter(t => t && notNA(t))
+          : [];
+        const offTitle = String(officialArr[i]?.official_title ?? "").trim();
+        const refId    = String(standardizedArr[i]?.standardized_id ?? "").trim();
+        entries.push({ chronicle_topics: docTopics, official_title: offTitle, reference_id: refId });
+      });
+    }
+    return entries;
+  }
+
+  function applyEntry(item: AgendaItemPreview, data: DocEntry): AgendaItemPreview {
+    return {
+      ...item,
+      ...(data.chronicle_topics.length > 0                 ? { chronicle_topics: data.chronicle_topics } : {}),
+      ...(data.official_title && notNA(data.official_title) ? { official_title: data.official_title }   : {}),
+      ...(data.reference_id   && notNA(data.reference_id)   ? { reference_id: data.reference_id }       : {}),
+    };
+  }
+
+  // Build title → entry map for title-based matching
+  const byTitle = new Map<string, DocEntry>();
+  const positional = extractEntries(sorted);
+  for (const dr of sorted) {
     const bridgewayItems = (
       dr.agenda_item_bridgeway_title_chronicle_topic ??
       dr.agenda_item_title_chronicle_topic
     ) as Array<Record<string, unknown>> | undefined;
-    const officialArr    = (dr.agenda_item_title_official    as Array<Record<string, unknown>> | undefined) ?? [];
-    const standardizedArr = (dr.agenda_item_standardized_id as Array<Record<string, unknown>> | undefined) ?? [];
-
+    const officialArr     = (dr.agenda_item_title_official    as Array<Record<string, unknown>> | undefined) ?? [];
+    const standardizedArr = (dr.agenda_item_standardized_id  as Array<Record<string, unknown>> | undefined) ?? [];
     if (!Array.isArray(bridgewayItems)) continue;
     bridgewayItems.forEach((entry, i) => {
       const titleRaw = String(entry.agenda_item_title ?? "").trim();
@@ -194,19 +234,34 @@ function enrichFromDocExtraction(
     });
   }
 
-  if (!byTitle.size) return items;
-
-  return items.map(item => {
+  // Attempt title matching
+  let titleMatchCount = 0;
+  const titleMatched = items.map(item => {
     const key  = stripStatusPrefix(item.title).toLowerCase();
     const data = byTitle.get(key);
-    if (!data) return item;
-    return {
-      ...item,
-      ...(data.chronicle_topics.length > 0               ? { chronicle_topics: data.chronicle_topics } : {}),
-      ...(data.official_title && notNA(data.official_title) ? { official_title: data.official_title }   : {}),
-      ...(data.reference_id   && notNA(data.reference_id)   ? { reference_id: data.reference_id }       : {}),
-    };
+    if (!data) return null;
+    titleMatchCount++;
+    return applyEntry(item, data);
   });
+
+  if (titleMatchCount > 0) {
+    // At least one title matched — use title results (unmatched items keep original data)
+    return titleMatched.map((enriched, i) => enriched ?? items[i]);
+  }
+
+  // Positional fallback — match ith preview to ith doc extraction entry
+  if (!positional.length) return items;
+  return items.map((item, idx) => {
+    const data = positional[idx];
+    return data ? applyEntry(item, data) : item;
+  });
+}
+
+function cleanDate(raw: string): string {
+  if (!raw) return "";
+  // Strip trailing parenthetical annotations (e.g. "(HTML document link title)")
+  const stripped = raw.replace(/\s*\(.*$/, "").trim();
+  return stripped || raw;
 }
 
 function deriveEventType(alertType: string): string {
@@ -280,12 +335,11 @@ function buildEventFields(
     mk("Type",            eventType,             { readOnly: true }),
     mk("Start Date/Time", notNA(start) ? start : "—"),
     mk("End Date/Time",   notNA(end)   ? end   : "—"),
-    mk("Full Day",        isFullDay ? "Yes" : "No", { readOnly: true }),
     mk("Organizations",   group || "—"),
-    mk("Location URL",    notNA(url)    ? url    : "—"),
+    mk("Location",        notNA(url)    ? url    : "—"),
     mk("Call-In",         notNA(callIn) ? callIn : "—"),
-    mk("Timezone",        "America/New_York",    { readOnly: true }),
   ];
+  if (isFullDay) entries.splice(3, 0, mk("Full Day", "Yes", { readOnly: true }));
 
   // Chronicle Topics — always shown
   entries.push({
@@ -315,13 +369,12 @@ function buildEventFields(
 
 /**
  * Build the full library item field list from preview data.
+ * Only includes fields that are actually written to Bubble.
  */
 function buildLibFields(
   lp: Record<string, unknown>,
   agendaItems: AgendaItemPreview[],
-  hasAgenda: boolean,
   changedLabels: Set<string>,
-  docMeta?: { newsreel_relevance?: string },
 ): FieldEntry[] {
   const title    = safeStr(lp.title);
   const url      = safeStr(lp.url);
@@ -335,7 +388,7 @@ function buildLibFields(
 
   const fd = (lp.fields ?? {}) as Record<string, string>;
   const description = fd["Description"] ?? "";
-  const date        = fd["Date"] ?? "";
+  const date        = cleanDate(fd["Date"] ?? "");
   const docType     = fd["Doc Type"] ?? "";
 
   const mk = (label: string, value: string, opts?: Partial<FieldEntry>): FieldEntry => ({
@@ -347,12 +400,10 @@ function buildLibFields(
   const entries: FieldEntry[] = [
     mk("Name",          notNA(title)    ? title    : "—"),
     mk("URL",           notNA(url)      ? url      : "—"),
-    mk("File",          notNA(filename) ? filename : "—"),
+    mk("File Name",     notNA(filename) ? filename : "—"),
     mk("Type",          notNA(type)     ? type     : "—", { readOnly: true }),
     mk("Organizations", group || "—"),
     mk("Date",          notNA(date)     ? date     : "—"),
-    mk("Date Display",  "Full date",                { readOnly: true }),
-    mk("Status",        "Active",                   { readOnly: true }),
   ];
 
   // Chronicle Topics — always shown
@@ -363,19 +414,14 @@ function buildLibFields(
     changed: changedLabels.size > 0 ? changedLabels.has("Chronicle Topics") : undefined,
   });
 
-  if (notNA(description)) entries.push(mk("Summary", description));
+  if (notNA(description)) entries.push(mk("Description", description));
   if (notNA(docType))     entries.push(mk("Doc Type", docType, { readOnly: true }));
 
-  // Newsreel relevance from live doc extraction (informational — not a Bubble write field)
-  if (docMeta?.newsreel_relevance && notNA(docMeta.newsreel_relevance)) {
-    entries.push({ label: "Newsreel Relevance", value: docMeta.newsreel_relevance, readOnly: true });
-  }
-
-  // Linked Agenda Items — always shown
+  // Linked Agenda Items — shown when items exist
   entries.push({
     label: "Linked Agenda Items",
-    ...(hasAgenda && agendaItems.length > 0
-      ? { list: agendaItems.map(item => item.title) }
+    ...(agendaItems.length > 0
+      ? { list: agendaItems.map(item => stripStatusPrefix(item.title)) }
       : { value: "—" }),
     readOnly: true,
   });
@@ -434,10 +480,10 @@ const EVENT_EDIT_MAP: Record<string, { previewKey: string; fieldIdsKey?: string;
 const LIB_EDIT_MAP: Record<string, { previewKey?: string; fieldIdsKey?: string; isList?: boolean }> = {
   "Name":          { previewKey: "title",    fieldIdsKey: "name_text" },
   "URL":           { previewKey: "url",      fieldIdsKey: "url_text" },
-  "File":          { previewKey: "filename", fieldIdsKey: "file_name_text" },
+  "File Name":     { previewKey: "filename", fieldIdsKey: "file_name_text" },
   "Organizations": { previewKey: "group",    fieldIdsKey: "organizations_list_custom_organization", isList: true },
   "Date":          { fieldIdsKey: "date_date" },
-  "Summary":       { fieldIdsKey: "description_text" },
+  "Description":   { fieldIdsKey: "description_text" },
 };
 
 function applyEditsToPreview(
@@ -468,7 +514,9 @@ function applyEditsToPreview(
 // ─── Section card component ───────────────────────────────────────────────────
 
 interface SectionProps {
-  title: string;
+  title: string;         // button label
+  subtitle?: string;     // actual content title shown prominently under the header bar
+  objectType?: string;   // "Library Item" | "Calendar Event" | "Meeting Transcript" | "Library Document"
   system: "Bubble" | "Newsreel";
   action: BubbleAction;
   fields: FieldEntry[];
@@ -548,7 +596,7 @@ function FieldTable({
 }
 
 function Section({
-  title, system, action, fields, editState, onEdit,
+  title, subtitle, objectType, system, action, fields, editState, onEdit,
   sectionState, onPublish, currentRecord, isLoadingRecord, agendaItems,
 }: SectionProps) {
   const isDone    = sectionState.status === "done";
@@ -562,10 +610,46 @@ function Section({
     : "bg-purple-50";
   const systemColor = system === "Bubble" ? "text-indigo-600" : "text-purple-600";
 
-  // Button label = action-specific title for Bubble sections
-  const publishLabel = system === "Bubble" ? title
-    : title === "Publish Transcript" ? "Publish Transcript"
-    : "Publish to Newsreel";
+  const actionBadge = action === "create"
+    ? <span className="text-[9px] font-bold uppercase tracking-wider bg-green-100 text-green-700 rounded px-1.5 py-0.5">Create</span>
+    : action === "update"
+    ? <span className="text-[9px] font-bold uppercase tracking-wider bg-blue-100 text-blue-700 rounded px-1.5 py-0.5">Update</span>
+    : <span className="text-[9px] font-bold uppercase tracking-wider bg-purple-100 text-purple-700 rounded px-1.5 py-0.5">Publish</span>;
+
+  const publishLabel = system === "Newsreel"
+    ? "Publish to Newsreel"
+    : action === "create" ? "Create in Bubble"
+    : "Update in Bubble";
+
+  const SectionHeader = ({ showSubtitle }: { showSubtitle?: boolean }) => (
+    <div className={`${headerBg} px-4 pt-3 pb-2.5`}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className={`text-[10px] font-bold uppercase tracking-wider shrink-0 ${systemColor}`}>{system}</span>
+          {objectType && (
+            <>
+              <span className="text-[10px] text-gray-300 shrink-0">·</span>
+              <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wider shrink-0">{objectType}</span>
+            </>
+          )}
+          <span className="ml-0.5 shrink-0">{actionBadge}</span>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {action === "update" && isLoadingRecord && (
+            <span className="text-[10px] text-gray-400 italic">Loading…</span>
+          )}
+          {isDone ? (
+            <span className="text-[11px] text-green-600 font-semibold">✓ Done</span>
+          ) : sectionState.status === "error" ? (
+            <span className="text-[11px] text-red-500 font-medium" title={sectionState.error}>✕ Failed</span>
+          ) : null}
+        </div>
+      </div>
+      {showSubtitle && subtitle && (
+        <p className="text-[13px] font-semibold text-gray-800 mt-1.5 leading-snug line-clamp-2">{subtitle}</p>
+      )}
+    </div>
+  );
 
   // For UPDATE: if loading finished and record not found → minimal card
   const recordNotFound = action === "update" && !isLoadingRecord && currentRecord != null && !currentRecord.found;
@@ -573,13 +657,7 @@ function Section({
   if (recordNotFound) {
     return (
       <div className={`rounded-lg border ${borderColor} overflow-hidden`}>
-        <div className={`flex items-center justify-between px-4 py-2.5 ${headerBg}`}>
-          <div className="flex items-center gap-2">
-            <span className={`text-[10px] font-bold uppercase tracking-wider ${systemColor}`}>{system}</span>
-            <span className="text-[11px] text-gray-400">›</span>
-            <span className="text-[12px] font-semibold text-gray-700">{title}</span>
-          </div>
-        </div>
+        <SectionHeader showSubtitle />
         <div className="px-4 py-2.5 flex items-center justify-between">
           <p className="text-[12px] text-amber-700 font-medium">
             Record not found in Bubble — does not exist yet
@@ -606,23 +684,7 @@ function Section({
   return (
     <div className={`rounded-lg border ${borderColor} overflow-hidden`}>
       {/* Header */}
-      <div className={`flex items-center justify-between px-4 py-2.5 ${headerBg}`}>
-        <div className="flex items-center gap-2">
-          <span className={`text-[10px] font-bold uppercase tracking-wider ${systemColor}`}>{system}</span>
-          <span className="text-[11px] text-gray-400">›</span>
-          <span className="text-[12px] font-semibold text-gray-700">{title}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          {action === "update" && isLoadingRecord && (
-            <span className="text-[10px] text-gray-400 italic">Loading current record…</span>
-          )}
-          {isDone ? (
-            <span className="text-[11px] text-green-600 font-semibold">✓ Done</span>
-          ) : sectionState.status === "error" ? (
-            <span className="text-[11px] text-red-500 font-medium" title={sectionState.error}>✕ Failed</span>
-          ) : null}
-        </div>
-      </div>
+      <SectionHeader showSubtitle />
 
       {/* Fields */}
       {displayFields.length > 0 && (
@@ -716,8 +778,61 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
   const alertType     = String(bubbleAction?.notes ?? row.alert_type ?? "");
 
   const agentCallId   = String(row.agent_call_id ?? "");
-  const agendaItems    = ((bubbleAction?.agenda_item_previews ?? []) as AgendaItemPreview[]);
-  const hasAgenda      = !!bubbleAction?.agenda_items && agendaItems.length > 0;
+  const storedAgendaItems = ((bubbleAction?.agenda_item_previews ?? []) as AgendaItemPreview[]);
+
+  // Live doc extraction rows for this alert's library item — fetched async on open.
+  // When bubble_action.agenda_item_previews is empty (page_change_agent returned N/A from HTML),
+  // doc extraction rows are used as the authoritative source of agenda items instead.
+  const [docExtractionRows, setDocExtractionRows] = useState<Array<Record<string, unknown>>>([]);
+
+  // Synthesize AgendaItemPreview[] from doc extraction rows when stored previews are all empty/N/A.
+  // This covers the common case where the page_change_agent couldn't read agenda items from HTML
+  // but the document_agent extracted them from the PDF.
+  // Synthesize agenda items from doc extraction rows.
+  // Doc extraction (PDF-based) is always more accurate than page_change_agent HTML extraction,
+  // which often captures the document title or file name rather than actual agenda items.
+  const synthesizedAgendaItems = useMemo((): AgendaItemPreview[] => {
+    if (!docExtractionRows.length) return [];
+    const sorted = [...docExtractionRows].sort(
+      (a, b) => Number(a.agenda_number ?? 999) - Number(b.agenda_number ?? 999),
+    );
+    const result: AgendaItemPreview[] = [];
+    for (const dr of sorted) {
+      const bridgewayItems = (
+        dr.agenda_item_bridgeway_title_chronicle_topic ??
+        dr.agenda_item_title_chronicle_topic
+      ) as Array<Record<string, unknown>> | undefined;
+      const officialArr     = (dr.agenda_item_title_official    as Array<Record<string, unknown>> | undefined) ?? [];
+      const standardizedArr = (dr.agenda_item_standardized_id  as Array<Record<string, unknown>> | undefined) ?? [];
+      if (!Array.isArray(bridgewayItems)) continue;
+      bridgewayItems.forEach((entry, i) => {
+        const title = String(entry.agenda_item_title ?? "").trim();
+        if (!title || NA_SET.has(title.toLowerCase())) return;
+        const topics = Array.isArray(entry.chronicle_topics)
+          ? (entry.chronicle_topics as unknown[]).map(String).filter(t => t && notNA(t))
+          : [];
+        const offTitle = String(officialArr[i]?.official_title ?? "").trim();
+        const refId    = String(standardizedArr[i]?.standardized_id ?? "").trim();
+        result.push({
+          title,
+          status: String(entry.status ?? "New").trim(),
+          chronicle_topics: topics,
+          ...(offTitle && notNA(offTitle) ? { official_title: offTitle } : {}),
+          ...(refId    && notNA(refId)    ? { reference_id:  refId }     : {}),
+        });
+      });
+    }
+    return result;
+  }, [docExtractionRows]);
+
+  // Prefer doc extraction synthesis (authoritative PDF data) over stored page_change_agent previews.
+  // Fall back to stored only when no doc extraction rows are available for this document.
+  const agendaItems     = synthesizedAgendaItems.length > 0 ? synthesizedAgendaItems : storedAgendaItems;
+  const isAgendaSynthesized = synthesizedAgendaItems.length > 0;
+
+  // Use agendaItems.length directly — bubble_action.agenda_items may be false when the
+  // page_change_agent returned N/A for all agenda items, but doc extraction synthesized real ones.
+  const hasAgenda      = agendaItems.length > 0;
   const newAgendaItems = agendaItems.filter(a => !a.status || a.status.toLowerCase() === "new");
   const existingAgendaItems = agendaItems.filter(a => a.status && a.status.toLowerCase() !== "new");
   // These must be declared before the derived activeNewAgendaItems that use them
@@ -730,45 +845,29 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
   const activeAgendaItems: AgendaItemPreview[] = [...activeNewAgendaItems, ...existingAgendaItems];
   const hasNewAgenda   = hasAgenda && activeNewAgendaItems.length > 0;
 
-  // Live doc extraction rows for this alert's library item — fetched async on open.
-  // Used to enrich agenda item display (fresher chronicle topics, official titles, ref IDs).
-  const [docExtractionRows, setDocExtractionRows] = useState<Array<Record<string, unknown>>>([]);
-
   // Enriched agenda items — chronicle_topics, official_title, reference_id overlaid
   // from live doc extraction rows. Used for rendering only; sync/patch still uses activeAgendaItems.
-  const enrichedNewAgendaItems     = useMemo(
-    () => enrichFromDocExtraction(newAgendaItems, docExtractionRows),
-    [newAgendaItems, docExtractionRows],
+  // When items were synthesized from doc extraction, they're already enriched — skip double-enrichment.
+  const enrichedNewAgendaItems = useMemo(
+    () => isAgendaSynthesized ? newAgendaItems : enrichFromDocExtraction(newAgendaItems, docExtractionRows),
+    [isAgendaSynthesized, newAgendaItems, docExtractionRows],
   );
   const displayedActiveNewAgenda: AgendaItemPreview[] = enrichedNewAgendaItems
     .map((item, i) => agendaItemTitleEdits[i] !== undefined ? { ...item, title: agendaItemTitleEdits[i] } : item)
     .filter((_, i) => !deletedNewIndices.has(i));
   const displayedAgendaItems: AgendaItemPreview[] = [
     ...displayedActiveNewAgenda,
-    ...enrichFromDocExtraction(existingAgendaItems, docExtractionRows),
+    ...(isAgendaSynthesized ? existingAgendaItems : enrichFromDocExtraction(existingAgendaItems, docExtractionRows)),
   ];
-
-  // Document-level metadata from the first doc extraction row (same for all rows per PDF).
-  const docMeta = useMemo(() => {
-    const first = docExtractionRows[0];
-    if (!first) return undefined;
-    const relevanceRaw = first.is_the_document_relevant_for_a_future_newsreel_article
-      ?? first.newsreel_relevance;
-    let relevance = "";
-    if (relevanceRaw != null) {
-      if (typeof relevanceRaw === "object" && relevanceRaw !== null) {
-        relevance = String((relevanceRaw as Record<string, unknown>).status ?? "").trim();
-      } else {
-        relevance = String(relevanceRaw).trim();
-      }
-    }
-    return { newsreel_relevance: relevance };
-  }, [docExtractionRows]);
 
   const transcriptKey = String((row.transcript_s3_key ?? row.manual_transcript_s3_key) ?? "");
   const hasTranscript = !!transcriptKey && row.alert_type === "New Meeting Transcript Available";
   const libItemUrl    = String(row.library_item_url ?? "");
-  const hasDocument   = !!(libItemUrl && libItemUrl !== "N/A" && libItemUrl.startsWith("http"));
+  // Also trigger doc extraction fetch when library_item_preview has a URL (covers Meeting rows
+  // where the alert's library_item_url is N/A but a sibling PDF was extracted in the same call).
+  const lpUrl         = String((libPreview as Record<string, unknown>).url ?? "");
+  const docFetchUrl   = [libItemUrl, lpUrl].find(u => u && u !== "N/A" && u.startsWith("http")) ?? "";
+  const hasDocument   = !!docFetchUrl;
 
   const eventChangedLabels = useMemo(() =>
     eventAction === "update"
@@ -793,9 +892,9 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventPreview, libPreview, libAction, alertType, eventChangedLabels, displayedAgendaItems]);
   const libFields = useMemo(
-    () => buildLibFields(libPreview, displayedAgendaItems, hasAgenda, libChangedLabels, docMeta),
+    () => buildLibFields(libPreview, displayedAgendaItems, libChangedLabels),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [libPreview, displayedAgendaItems, hasAgenda, libChangedLabels, docMeta],
+    [libPreview, displayedAgendaItems, libChangedLabels],
   );
 
   const [eventEdits, setEventEdits]               = useState<Record<string, string>>({});
@@ -860,9 +959,10 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
       .then(r => r.json())
       .then((d: { rows?: Array<Record<string, unknown>> }) => {
         const allRows = d.rows ?? [];
-        // Filter to only rows for this library item (multiple PDFs can share an agent_call_id)
-        const filtered = libItemUrl && notNA(libItemUrl)
-          ? allRows.filter(r => String(r.library_item_url ?? "") === libItemUrl)
+        // Filter to rows matching the effective library URL. When multiple PDFs share an
+        // agent_call_id the URL discriminates which rows belong to this alert's document.
+        const filtered = docFetchUrl
+          ? allRows.filter(r => String(r.library_item_url ?? "") === docFetchUrl)
           : allRows;
         setDocExtractionRows(filtered);
         if (filtered.some(r => r.ingest_status === "approved")) {
@@ -948,10 +1048,18 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
   async function handleCreateAgendaItems(skipValidation = false) {
     setSectionState("agenda_items", "loading");
     try {
-      // Patch stored bubble_action with the active item list (respects deletions + title edits)
-      if (deletedNewIndices.size > 0 || Object.keys(agendaItemTitleEdits).length > 0) {
+      // Patch stored bubble_action with the active item list.
+      // Always patch when items were synthesized from doc extraction (previews were empty on the row).
+      const needsPatch = isAgendaSynthesized || deletedNewIndices.size > 0 || Object.keys(agendaItemTitleEdits).length > 0;
+      if (needsPatch) {
         const patchedPreviews = [...activeNewAgendaItems, ...existingAgendaItems];
-        const updated = { ...(bubbleAction ?? {}), agenda_item_previews: patchedPreviews as unknown[] };
+        const updated = {
+          ...(bubbleAction ?? {}),
+          agenda_item_previews: patchedPreviews as unknown[],
+          // agenda_items may be false when page_change_agent returned N/A — set true so the
+          // sync executor (which checks plan.agenda_items) processes the synthesized previews.
+          ...(isAgendaSynthesized ? { agenda_items: true } : {}),
+        };
         await fetch("/api/alerts/patch-row", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -1052,11 +1160,15 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     return String(raw);
   })();
 
-  const documentFields: FieldEntry[] = [];
+  const documentFields: FieldEntry[] = [
+    { label: "Destination", value: "Newsreel Knowledge Base", readOnly: true },
+  ];
   if (libItemTitle && libItemTitle !== "N/A") documentFields.push({ label: "Title", value: libItemTitle, readOnly: true });
   if (libItemUrl) documentFields.push({ label: "URL", value: libItemUrl, readOnly: true });
 
-  const transcriptFields: FieldEntry[] = [];
+  const transcriptFields: FieldEntry[] = [
+    { label: "Destination", value: "Newsreel Knowledge Base", readOnly: true },
+  ];
   if (transcriptKey) transcriptFields.push({ label: "File", value: transcriptKey.split("/").pop() ?? transcriptKey, readOnly: true });
 
   const hasAnySection = !!(eventAction || libAction || hasAgenda || hasTranscript || hasDocument);
@@ -1104,7 +1216,7 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
                   <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Bubble</span>
                   <span className="text-[11px] text-gray-400">›</span>
                   <span className="text-[12px] font-semibold text-gray-700">
-                    Create {activeNewAgendaItems.length} Agenda Item{activeNewAgendaItems.length !== 1 ? "s" : ""}
+                    Create {activeNewAgendaItems.length} Agenda Item{activeNewAgendaItems.length !== 1 ? "s" : ""} in Bubble
                   </span>
                 </div>
                 {sections.agenda_items.status === "done" ? (
@@ -1186,6 +1298,8 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
               )}
               <Section
                 title={libAction === "create" ? "Create Library Item" : "Update Library Item"}
+                subtitle={safeStr(libPreview.title) || libItemTitle || undefined}
+                objectType="Library Item"
                 system="Bubble"
                 action={libAction}
                 fields={libFields}
@@ -1208,6 +1322,8 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
               )}
               <Section
                 title={eventAction === "create" ? "Create Event" : "Update Event"}
+                subtitle={safeStr(eventPreview.title) || safeStr((row as Record<string, unknown>).event_title) || undefined}
+                objectType="Calendar Event"
                 system="Bubble"
                 action={eventAction}
                 fields={eventFields}
@@ -1224,6 +1340,8 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
           {hasTranscript && (
             <Section
               title="Publish Transcript"
+              subtitle={transcriptKey.split("/").pop() || undefined}
+              objectType="Meeting Transcript"
               system="Newsreel"
               action={null}
               fields={transcriptFields}
@@ -1237,6 +1355,8 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
           {hasDocument && (
             <Section
               title="Publish Document"
+              subtitle={libItemTitle || undefined}
+              objectType="Library Document"
               system="Newsreel"
               action={null}
               fields={documentFields}

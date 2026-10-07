@@ -14,6 +14,11 @@ const SPACE_IDS: Record<string, string> = {
 const SPACE_ID = SPACE_IDS[EIDARIX_VERSION] ?? SPACE_IDS.test;
 const SPACE_CONSTRAINT = [{ key: "space", constraint_type: "equals", value: SPACE_ID }];
 
+// Reference data (organizations, chronicle topics) lives in the content/test space regardless
+// of which output space (test vs live) we're writing to.
+const CONTENT_SPACE_ID = SPACE_IDS.test;
+const CONTENT_SPACE_CONSTRAINT = [{ key: "space", constraint_type: "equals", value: CONTENT_SPACE_ID }];
+
 const OBJ_BASE = "https://eidarix.bridgewayanalytics.com/api/1.1/obj";
 // calendaritemtype requires the versioned URL — returns 404 at the non-versioned base
 const OBJ_VERSIONED = `https://eidarix.bridgewayanalytics.com/version-${EIDARIX_VERSION}/api/1.1/obj`;
@@ -139,7 +144,7 @@ function matchOrgName(name: string, nameToId: Map<string, string>): string | nul
 
 async function resolveOrgIds(orgNames: string[]): Promise<string[]> {
   if (!orgNames.length) return [];
-  const orgs = await bubbleListAll("organization", SPACE_CONSTRAINT);
+  const orgs = await bubbleListAll("organization", CONTENT_SPACE_CONSTRAINT);
   const nameToId = new Map(orgs.map(o => [String(o.Name ?? "").trim(), String(o._id ?? "")]));
   const ids: string[] = [];
   const missing: string[] = [];
@@ -156,7 +161,7 @@ async function resolveTopicIds(
   topicNames: string[],
 ): Promise<{ ids: string[]; nameToId: Map<string, string> }> {
   if (!topicNames.length) return { ids: [], nameToId: new Map() };
-  const topics = await bubbleListAll("chronicletopic", SPACE_CONSTRAINT);
+  const topics = await bubbleListAll("chronicletopic", CONTENT_SPACE_CONSTRAINT);
   const nameToId = new Map(topics.map(t => [String(t.Title ?? "").trim(), String(t._id ?? "")]));
   const ids: string[] = [];
   for (const name of topicNames) {
@@ -167,25 +172,40 @@ async function resolveTopicIds(
   return { ids, nameToId };
 }
 
+// Maps classifier-generated type names (in bubble_action.library_item_preview.type)
+// to the exact Title values present in the Bubble libraryitemtype table.
+// Necessary because the classifier uses human-readable internal names that predate
+// the Bubble taxonomy.
+const LIB_TYPE_ALIASES: Record<string, string> = {
+  "agenda":                      "Agenda & Materials",
+  "materials":                   "Agenda & Materials",
+  "request for comment":         "Proposed Guidance & Support Materials",
+  "adopted guideline":           "Existing Requirements & Guidance",
+  "report / resource":           "Publication",
+  "document":                    "Publication",
+  "meeting transcript":          "Other",
+};
+
 async function resolveLibraryItemTypeId(typeName: string): Promise<string | null> {
   try {
-    const types = await bubbleSearch("libraryitemtype", SPACE_CONSTRAINT, 50);
+    // Use versioned URL (no space constraint — versioned URL already scopes to the correct space)
+    const types = await bubbleListAll("libraryitemtype", [], true);
     const needle = typeName.trim().toLowerCase();
+    // Resolve alias first (classifier name → Bubble name)
+    const resolved = (LIB_TYPE_ALIASES[needle] ?? typeName).trim().toLowerCase();
     for (const t of types) {
-      // Check display name first (Bubble option sets), then Title field
-      if (String(t.display ?? t.Title ?? "").trim().toLowerCase() === needle) return String(t._id);
+      const title = String(t.display ?? t.Title ?? "").trim().toLowerCase();
+      if (title === resolved || title === needle) return String(t._id);
     }
-    console.warn("[bubble-sync] libraryitemtype not found:", typeName, "available:", types.map(t => t.display ?? t.Title));
+    console.warn("[bubble-sync] libraryitemtype not found:", typeName, "→", resolved, "available:", types.map(t => t.display ?? t.Title));
   } catch (e) { console.warn("[bubble-sync] libraryitemtype lookup failed:", e); }
   return null;
 }
 
 async function resolveCalendarItemTypeId(typeName: string): Promise<string | null> {
   try {
-    const params = new URLSearchParams({
-      constraints: JSON.stringify(SPACE_CONSTRAINT),
-      limit: "50",
-    });
+    // No space constraint — versioned URL already scopes to the correct space
+    const params = new URLSearchParams({ limit: "50" });
     const res = await bubbleGet(`${OBJ_VERSIONED}/calendaritemtype?${params}`);
     if (!res.ok) { console.warn("[bubble-sync] calendaritemtype GET failed:", res.status); return null; }
     const data = await res.json() as { response?: { results?: Record<string, unknown>[] } };
@@ -200,7 +220,7 @@ async function resolveCalendarItemTypeId(typeName: string): Promise<string | nul
 async function getEmptyTopicId(): Promise<string | null> {
   try {
     const results = await bubbleSearch("chronicletopic", [
-      ...SPACE_CONSTRAINT,
+      ...CONTENT_SPACE_CONSTRAINT,
       { key: "empty topic", constraint_type: "equals", value: true },
     ], 5);
     return results[0]?._id ? String(results[0]._id) : null;
@@ -261,7 +281,7 @@ async function findCalendarItem(matchSearch: Record<string, string>): Promise<st
 
     if (matchSearch.org) {
       try {
-        const orgs = await bubbleListAll("organization", SPACE_CONSTRAINT);
+        const orgs = await bubbleListAll("organization", CONTENT_SPACE_CONSTRAINT);
         const org = orgs.find(o => String(o.Name ?? "").trim() === matchSearch.org);
         if (org?._id) constraints.push({ key: "orgs", constraint_type: "contains", value: org._id });
       } catch { /* skip org constraint on failure */ }
@@ -276,7 +296,7 @@ async function findCalendarItem(matchSearch: Record<string, string>): Promise<st
   if (!matchSearch.org) return null;
   console.warn("[bubble-sync] no date in match_search — falling back to org-only calendaritem search for:", matchSearch.org);
   try {
-    const orgs = await bubbleListAll("organization", SPACE_CONSTRAINT);
+    const orgs = await bubbleListAll("organization", CONTENT_SPACE_CONSTRAINT);
     const org = orgs.find(o => String(o.Name ?? "").trim() === matchSearch.org);
     if (!org?._id) return null;
     const results = await bubbleSearch("calendaritem", [
@@ -412,14 +432,16 @@ function toUtcIso(raw: string): string {
 
 function parseDate(raw: string): string {
   if (!raw) return "";
-  raw = raw.trim();
+  // Strip trailing parenthetical annotations like "(HTML document link title)"
+  raw = raw.trim().replace(/\s*\(.*$/, "").trim();
   if (raw.length >= 10 && raw[4] === "-") return raw.slice(0, 10);
   const months: Record<string, string> = {
     January: "01", February: "02", March: "03", April: "04",
     May: "05", June: "06", July: "07", August: "08",
     September: "09", October: "10", November: "11", December: "12",
   };
-  const m = raw.match(/^([A-Z][a-z]+)\s+(\d{1,2}),\s+(\d{4})$/);
+  // No $ anchor — allow trailing text after the date pattern
+  const m = raw.match(/^([A-Z][a-z]+)\s+(\d{1,2}),\s+(\d{4})/);
   if (m) {
     const mon = months[m[1]];
     if (mon) return `${m[3]}-${mon}-${m[2].padStart(2, "0")}`;
@@ -516,14 +538,14 @@ export async function validateSyncPlan(
   // Run all lookups in parallel
   const [unresolvedOrgs, unresolvedTopics, libTypeId, calTypeId] = await Promise.all([
     orgNames.length
-      ? bubbleListAll("organization", SPACE_CONSTRAINT).then(orgs => {
+      ? bubbleListAll("organization", CONTENT_SPACE_CONSTRAINT).then(orgs => {
           const nameToId = new Map(orgs.map(o => [String(o.Name ?? "").trim(), String(o._id ?? "")]));
           return orgNames.filter(n => !matchOrgName(n, nameToId));
         })
       : Promise.resolve([] as string[]),
 
     allTopicNames.length
-      ? bubbleListAll("chronicletopic", SPACE_CONSTRAINT).then(topics => {
+      ? bubbleListAll("chronicletopic", CONTENT_SPACE_CONSTRAINT).then(topics => {
           const nameToId = new Map(topics.map(t => [String(t.Title ?? "").trim(), String(t._id ?? "")]));
           return allTopicNames.filter(n => !nameToId.has(n));
         })
