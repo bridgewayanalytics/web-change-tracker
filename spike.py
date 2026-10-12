@@ -2514,7 +2514,7 @@ def _extract_doc_in_subprocess(
         for attempt in range(_MAX_RETRIES + 1):
             proc = subprocess.run(
                 [_sys.executable, "spike.py", "--rerun-doc-subprocess-file", input_path],
-                timeout=300,
+                timeout=720,
             )
             if proc.returncode == 0:
                 break
