@@ -328,17 +328,14 @@ def _fetch_single_pdf(url: str) -> str | None:
         log.info("document_agent: requests failed for %s (%s) — trying Playwright", url[:80], e)
 
     # --- Playwright fallback (handles Cloudflare-protected PDFs) ---
+    # Uses expect_download() so the PDF bytes are captured after the full download
+    # completes, rather than trying to read response.body() which fails once the
+    # page navigates away on "Download is starting".
     try:
+        import os
+        import tempfile
         from playwright.sync_api import sync_playwright
         pdf_bytes: bytes | None = None
-
-        def _capture(response) -> None:
-            nonlocal pdf_bytes
-            if url in response.url and response.status == 200:
-                try:
-                    pdf_bytes = response.body()
-                except Exception:
-                    pass
 
         with sync_playwright() as pw:
             browser = pw.chromium.launch(
@@ -357,12 +354,22 @@ def _fetch_single_pdf(url: str) -> str | None:
                 accept_downloads=True,
             )
             page = ctx.new_page()
-            page.on("response", _capture)
+            tmp_path = None
             try:
-                page.goto(url, timeout=30000)
-            except Exception:
-                pass  # PDF navigation raises "Download is starting" — that's fine
-            browser.close()
+                with page.expect_download(timeout=60000) as dl_info:
+                    try:
+                        page.goto(url, timeout=30000)
+                    except Exception:
+                        pass  # "Download is starting" exception is expected for PDFs
+                download = dl_info.value
+                tmp_path = tempfile.mktemp(suffix=".pdf")
+                download.save_as(tmp_path)
+                with open(tmp_path, "rb") as fh:
+                    pdf_bytes = fh.read()
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                browser.close()
 
         if pdf_bytes:
             text = _extract_plain_text(pdf_bytes)

@@ -60,6 +60,10 @@ def test_playwright(url: str):
         def on_request(request):
             log.info("  request: %s %s", request.method, request.url[:100])
 
+        import os, tempfile
+        pdf_bytes = None
+        tmp_path = None
+
         with sync_playwright() as pw:
             browser = pw.chromium.launch(
                 headless=True,
@@ -77,29 +81,28 @@ def test_playwright(url: str):
                 accept_downloads=True,
             )
             page = ctx.new_page()
-            page.on("response", on_response)
-            page.on("request", on_request)
-
-            log.info("  navigating to %s", url)
             try:
-                page.goto(url, timeout=30000, wait_until="networkidle")
-            except Exception as e:
-                log.info("  goto raised: %s", e)
-                # Wait a moment for any in-flight response.body() calls
-                page.wait_for_timeout(3000)
+                with page.expect_download(timeout=60000) as dl_info:
+                    try:
+                        page.goto(url, timeout=30000)
+                    except Exception as e:
+                        log.info("  goto raised (expected): %s", str(e)[:80])
+                download = dl_info.value
+                tmp_path = tempfile.mktemp(suffix=".pdf")
+                download.save_as(tmp_path)
+                with open(tmp_path, "rb") as fh:
+                    pdf_bytes = fh.read()
+                log.info("  download saved: %d bytes", len(pdf_bytes))
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                browser.close()
 
-            log.info("  final URL after navigation: %s", page.url)
-            log.info("  page title: %s", page.title())
-            log.info("  page content[:300]: %s", repr(page.content()[:300]))
-            browser.close()
-
-        if captured:
-            log.info("  SUCCESS — captured %d bytes", len(captured[0]))
-            # Try to extract text
+        if pdf_bytes:
+            log.info("  SUCCESS — captured %d bytes", len(pdf_bytes))
             try:
-                import io
-                import pypdf
-                reader = pypdf.PdfReader(io.BytesIO(captured[0]))
+                import io, pypdf
+                reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
                 text = " ".join(p.extract_text() or "" for p in reader.pages[:2])
                 log.info("  PDF text sample: %s", text[:200])
             except Exception as e:
