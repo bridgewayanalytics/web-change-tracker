@@ -1,7 +1,11 @@
 "use client";
 
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo, useRef } from "react";
 import type { AlertRow } from "@/app/alerts/AlertsTable";
+import { SearchableCombobox, type BubbleOption } from "@/components/SearchableCombobox";
+
+type BubbleOptionsType = "organization" | "chronicletopic" | "libraryitemtype" | "calendaritemtype";
+type BubbleOptionsMap = Record<BubbleOptionsType, BubbleOption[] | undefined>;
 
 interface ContentGateModalProps {
   row: AlertRow;
@@ -103,12 +107,54 @@ interface AgendaItemPreview {
 
 // A structured display field
 interface FieldEntry {
-  label: string;
-  value?: string;     // plain text value
-  topics?: string[];  // rendered as chips
-  list?: string[];    // rendered as a numbered list
-  changed?: boolean;  // highlight row amber for UPDATE
-  readOnly?: boolean; // no input shown
+  label: string;        // Bubble field name (what the sync writes to)
+  agentField?: string;  // Agent output field key — resolved to its human-readable label at render time
+  value?: string;       // plain text value
+  topics?: string[];    // rendered as chips (or combobox selections when combobox is set)
+  list?: string[];      // rendered as a numbered list
+  changed?: boolean;    // highlight row amber for UPDATE
+  readOnly?: boolean;   // no input shown
+  // When set, renders a searchable dropdown of pre-existing Bubble values instead of free-text.
+  combobox?: {
+    type: BubbleOptionsType;
+    mode: "single" | "multi";  // multi: edit `topics`; single: edit `value`
+  };
+}
+
+// Fallback labels for internal/derived fields that aren't in the agent's output schema
+// (e.g. doc extraction fields merged in, derived values).
+const AGENT_FIELD_LABEL_FALLBACKS: Record<string, string> = {
+  "alert_type (derived)":              "Alert Type (derived)",
+  "alert_type (classifier)":           "Alert Type (classifier)",
+  "doc_extraction.date_published":     "Document Publication Date",
+  "doc_extraction.description":        "Document Description",
+  "doc_extraction.document_type":      "Document Type",
+  "transcript_s3_key":                 "Transcript File",
+  "library_item_preliminary_title.title": "Library Item Preliminary Title",
+  "agenda_item_title_chronicle_topics[].chronicle_topics": "Agenda Item Chronicle Topics",
+  "agenda_item_title_chronicle_topics[].agenda_item_title": "Agenda Item Title",
+  "agenda_item_title_official[].official_title":           "Agenda Item Official Title",
+  "agenda_item_standardized_id[].standardized_id":         "Agenda Item Reference ID",
+};
+
+function resolveAgentFieldLabel(
+  agentField: string | undefined,
+  schemaLabels: Record<string, string> | null,
+): string {
+  if (!agentField || agentField === "—") return "—";
+  // Try schema labels first (strip array/dot suffix for lookup)
+  if (schemaLabels) {
+    const base = agentField.replace(/\[.*?\]|\..*$/g, "");
+    if (schemaLabels[base]) return schemaLabels[base];
+    if (schemaLabels[agentField]) return schemaLabels[agentField];
+  }
+  // Fall back to known internal/derived labels
+  if (AGENT_FIELD_LABEL_FALLBACKS[agentField]) return AGENT_FIELD_LABEL_FALLBACKS[agentField];
+  // Final fallback: title-case the field name
+  return agentField
+    .replace(/\[.*?\]/g, "")
+    .replace(/[._]/g, " ")
+    .replace(/\b\w/g, c => c.toUpperCase());
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -127,6 +173,15 @@ function notNA(s: string): boolean {
 const STATUS_PREFIXES = /^(New|Existing|Updated|Revised):\s*/i;
 function stripStatusPrefix(s: string): string {
   return s.replace(STATUS_PREFIXES, "").trim();
+}
+
+// Multi-select combobox values are stored in editState as "|"-joined strings so the
+// edit-state map can stay Record<string, string>. These helpers convert both ways.
+const MULTI_SEP = ""; // non-visible delimiter — won't collide with option names
+function multiToEditValue(names: string[]): string { return names.join(MULTI_SEP); }
+function multiFromEditValue(v: string | undefined): string[] | null {
+  if (v == null) return null;
+  return v === "" ? [] : v.split(MULTI_SEP);
 }
 
 function topicsFromFieldIds(fieldIds: unknown): string[] {
@@ -264,6 +319,58 @@ function cleanDate(raw: string): string {
   return stripped || raw;
 }
 
+// Normalize a datetime/date string to YYYY-MM-DD for display.
+// Accepts ISO datetimes ("2026-06-11T14:00:00-04:00"), ISO dates, and
+// "Month DD, YYYY" format. Returns "" on failure.
+function toIsoDate(raw: string): string {
+  if (!raw) return "";
+  const s = cleanDate(raw);
+  if (!s || /^n\/a\.?$/i.test(s)) return "";
+  // Already YYYY-MM-DD-ish
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  // Month DD, YYYY
+  const months: Record<string, string> = {
+    january:"01", february:"02", march:"03", april:"04", may:"05", june:"06",
+    july:"07", august:"08", september:"09", october:"10", november:"11", december:"12",
+  };
+  const m = s.match(/^([A-Z][a-z]+)\s+(\d{1,2}),?\s+(\d{4})/i);
+  if (m) {
+    const mon = months[m[1].toLowerCase()];
+    if (mon) return `${m[3]}-${mon}-${m[2].padStart(2, "0")}`;
+  }
+  return "";
+}
+
+// Business rule: library item Date field is derived from the item's type:
+//   Agenda & Materials                       → event_start_date_time (meeting date)
+//   Proposed Guidance & Support Materials    → event_start_date_time (last comment date)
+//   Existing Requirements & Guidance         → event_start_date_time (effective date)
+//   Publication                              → doc_extraction.date_published
+//   Meeting Transcript / Other               → event_start_date_time (meeting date) if present
+// Fallback: whatever date was in the preview, else "".
+function deriveLibraryItemDate(
+  libPreview: Record<string, unknown>,
+  row: Record<string, unknown>,
+  docExtractionRow: Record<string, unknown> | undefined,
+): string {
+  const typeName = String(libPreview.type ?? "").toLowerCase();
+  const eventDate = toIsoDate(
+    String(row.event_start_date_time ?? row.event_start_date_time_et ?? ""),
+  );
+  const docDate = toIsoDate(String(docExtractionRow?.date_published ?? ""));
+  const previewDate = toIsoDate(String((libPreview.fields as Record<string, unknown> | undefined)?.["Date"] ?? ""));
+
+  const isAgenda       = typeName.includes("agenda");
+  const isRfc          = typeName.includes("proposed guidance");
+  const isEffective    = typeName.includes("existing requirements");
+  const isPublication  = typeName.includes("publication");
+  const isTranscriptLi = typeName === "meeting transcript" || /transcript/i.test(String(row.alert_type ?? ""));
+
+  if (isAgenda || isRfc || isEffective || isTranscriptLi) return eventDate || docDate || previewDate;
+  if (isPublication) return docDate || previewDate || eventDate;
+  return previewDate || docDate || eventDate;
+}
+
 function deriveEventType(alertType: string): string {
   const lc = alertType.toLowerCase();
   if (lc.includes("request for comment")) return "RFC";
@@ -324,34 +431,44 @@ function buildEventFields(
   const topics    = allLibraryItemTopics(ep, agendaItems);
   const eventType = deriveEventType(alertType);
 
-  const mk = (label: string, value: string, opts?: Partial<FieldEntry>): FieldEntry => ({
-    label, value,
+  const mk = (label: string, agentField: string, value: string, opts?: Partial<FieldEntry>): FieldEntry => ({
+    label, agentField, value,
     changed: changedLabels.size > 0 ? changedLabels.has(label) : undefined,
     ...opts,
   });
 
-  const entries: FieldEntry[] = [
-    mk("Title",           notNA(title) ? title : "—"),
-    mk("Type",            eventType,             { readOnly: true }),
-    mk("Start Date/Time", notNA(start) ? start : "—"),
-    mk("End Date/Time",   notNA(end)   ? end   : "—"),
-    mk("Organizations",   group || "—"),
-    mk("Location",        notNA(url)    ? url    : "—"),
-    mk("Call-In",         notNA(callIn) ? callIn : "—"),
-  ];
-  if (isFullDay) entries.splice(3, 0, mk("Full Day", "Yes", { readOnly: true }));
+  const orgList = Array.isArray(ep.group) ? (ep.group as string[]).filter(Boolean) : (notNA(group) ? [group] : []);
 
-  // Chronicle Topics — always shown
+  const entries: FieldEntry[] = [
+    mk("Title",           "event_title",                       notNA(title) ? title : "—"),
+    mk("Type",            "alert_type (derived)",              eventType, { combobox: { type: "calendaritemtype", mode: "single" } }),
+    mk("Start Date/Time", "event_start_date_time",             notNA(start) ? start : "—"),
+    mk("End Date/Time",   "event_end_date_time",               notNA(end)   ? end   : "—"),
+    {
+      label: "Organizations",
+      agentField: "organization",
+      topics: orgList,
+      combobox: { type: "organization", mode: "multi" },
+      changed: changedLabels.size > 0 ? changedLabels.has("Organizations") : undefined,
+    },
+    mk("Location",        "event_url",                         notNA(url)    ? url    : "—"),
+    mk("Call-In",         "event_call_in_number_access_code",  notNA(callIn) ? callIn : "—"),
+  ];
+  if (isFullDay) entries.splice(3, 0, mk("Full Day", "event_is_full_day", "Yes", { readOnly: true }));
+
+  // Chronicle Topics — searchable multi-select dropdown
   entries.push({
     label: "Chronicle Topics",
-    ...(topics.length > 0 ? { topics } : { value: "—" }),
-    readOnly: true,
+    agentField: "agenda_item_title_chronicle_topics[].chronicle_topics",
+    topics,
+    combobox: { type: "chronicletopic", mode: "multi" },
     changed: changedLabels.size > 0 ? changedLabels.has("Chronicle Topics") : undefined,
   });
 
   // Linked Agenda Items — always shown (agenda items linked to this event)
   entries.push({
     label: "Linked Agenda Items",
+    agentField: "agenda_item_title_chronicle_topics[].agenda_item_title",
     ...(agendaItems.length > 0
       ? { list: agendaItems.map(item => stripStatusPrefix(item.title)) }
       : { value: "—" }),
@@ -361,7 +478,7 @@ function buildEventFields(
   // Agenda — always shown when there's a library item being linked (Bubble field name)
   if (libAction) {
     const libTitle = safeStr(lp.title);
-    entries.push(mk("Agenda", notNA(libTitle) ? libTitle : "—", { readOnly: true }));
+    entries.push(mk("Agenda", "library_item_preliminary_title.title", notNA(libTitle) ? libTitle : "—", { readOnly: true }));
   }
 
   return entries;
@@ -375,6 +492,7 @@ function buildLibFields(
   lp: Record<string, unknown>,
   agendaItems: AgendaItemPreview[],
   changedLabels: Set<string>,
+  derivedDate: string,
 ): FieldEntry[] {
   const title    = safeStr(lp.title);
   const url      = safeStr(lp.url);
@@ -388,38 +506,48 @@ function buildLibFields(
 
   const fd = (lp.fields ?? {}) as Record<string, string>;
   const description = fd["Description"] ?? "";
-  const date        = cleanDate(fd["Date"] ?? "");
+  const date        = derivedDate || cleanDate(fd["Date"] ?? "");
   const docType     = fd["Doc Type"] ?? "";
 
-  const mk = (label: string, value: string, opts?: Partial<FieldEntry>): FieldEntry => ({
-    label, value,
+  const mk = (label: string, agentField: string, value: string, opts?: Partial<FieldEntry>): FieldEntry => ({
+    label, agentField, value,
     changed: changedLabels.size > 0 ? changedLabels.has(label) : undefined,
     ...opts,
   });
 
+  const orgList = Array.isArray(lp.group) ? (lp.group as string[]).filter(Boolean) : (notNA(group) ? [group] : []);
+
   const entries: FieldEntry[] = [
-    mk("Name",          notNA(title)    ? title    : "—"),
-    mk("URL",           notNA(url)      ? url      : "—"),
-    mk("File Name",     notNA(filename) ? filename : "—"),
-    mk("Type",          notNA(type)     ? type     : "—", { readOnly: true }),
-    mk("Organizations", group || "—"),
-    mk("Date",          notNA(date)     ? date     : "—"),
+    mk("Name",          "library_item_preliminary_title.title", notNA(title)    ? title    : "—"),
+    mk("URL",           "library_item_url",                     notNA(url)      ? url      : "—"),
+    mk("File Name",     "library_items_file_name",              notNA(filename) ? filename : "—"),
+    mk("Type",          "alert_type (classifier)",              notNA(type)     ? type     : "—", { combobox: { type: "libraryitemtype", mode: "single" } }),
+    {
+      label: "Organizations",
+      agentField: "organization",
+      topics: orgList,
+      combobox: { type: "organization", mode: "multi" },
+      changed: changedLabels.size > 0 ? changedLabels.has("Organizations") : undefined,
+    },
+    mk("Date",          "doc_extraction.date_published",        notNA(date)     ? date     : "—"),
   ];
 
-  // Chronicle Topics — always shown
+  // Chronicle Topics — searchable multi-select dropdown
   entries.push({
     label: "Chronicle Topics",
-    ...(topics.length > 0 ? { topics } : { value: "—" }),
-    readOnly: true,
+    agentField: "agenda_item_title_chronicle_topics[].chronicle_topics",
+    topics,
+    combobox: { type: "chronicletopic", mode: "multi" },
     changed: changedLabels.size > 0 ? changedLabels.has("Chronicle Topics") : undefined,
   });
 
-  if (notNA(description)) entries.push(mk("Description", description));
-  if (notNA(docType))     entries.push(mk("Doc Type", docType, { readOnly: true }));
+  if (notNA(description)) entries.push(mk("Description", "doc_extraction.description", description));
+  if (notNA(docType))     entries.push(mk("Doc Type",    "doc_extraction.document_type", docType, { readOnly: true }));
 
   // Linked Agenda Items — shown when items exist
   entries.push({
     label: "Linked Agenda Items",
+    agentField: "agenda_item_title_chronicle_topics[].agenda_item_title",
     ...(agendaItems.length > 0
       ? { list: agendaItems.map(item => stripStatusPrefix(item.title)) }
       : { value: "—" }),
@@ -468,43 +596,61 @@ function mergeWithCurrentRecord(
 
 // ─── Field mapping for persisting edits back to bubble_action ─────────────────
 
-const EVENT_EDIT_MAP: Record<string, { previewKey: string; fieldIdsKey?: string; isList?: boolean }> = {
-  "Title":           { previewKey: "title",          fieldIdsKey: "title_text" },
-  "Start Date/Time": { previewKey: "start_datetime", fieldIdsKey: "date_date" },
-  "End Date/Time":   { previewKey: "end_datetime",   fieldIdsKey: "length_end_time_date" },
-  "Organizations":   { previewKey: "group",          fieldIdsKey: "orgs__list_custom_organization", isList: true },
-  "Location URL":    { previewKey: "url" },
-  "Call-In":         { previewKey: "call_in",        fieldIdsKey: "phone_number_and_access_code_text" },
+type EditSpec = { previewKey?: string; fieldIdsKey?: string; isList?: boolean; isMulti?: boolean };
+
+const EVENT_EDIT_MAP: Record<string, EditSpec> = {
+  "Title":            { previewKey: "title",          fieldIdsKey: "title_text" },
+  "Start Date/Time":  { previewKey: "start_datetime", fieldIdsKey: "date_date" },
+  "End Date/Time":    { previewKey: "end_datetime",   fieldIdsKey: "length_end_time_date" },
+  "Organizations":    { previewKey: "group",          fieldIdsKey: "orgs__list_custom_organization", isList: true, isMulti: true },
+  "Location":         { previewKey: "url" },
+  "Call-In":          { previewKey: "call_in",        fieldIdsKey: "phone_number_and_access_code_text" },
+  "Type":             { previewKey: "type" },
+  "Chronicle Topics": { fieldIdsKey: "topics___dt_list_custom_newsreel_update", isList: true, isMulti: true },
 };
 
-const LIB_EDIT_MAP: Record<string, { previewKey?: string; fieldIdsKey?: string; isList?: boolean }> = {
-  "Name":          { previewKey: "title",    fieldIdsKey: "name_text" },
-  "URL":           { previewKey: "url",      fieldIdsKey: "url_text" },
-  "File Name":     { previewKey: "filename", fieldIdsKey: "file_name_text" },
-  "Organizations": { previewKey: "group",    fieldIdsKey: "organizations_list_custom_organization", isList: true },
-  "Date":          { fieldIdsKey: "date_date" },
-  "Description":   { fieldIdsKey: "description_text" },
+const LIB_EDIT_MAP: Record<string, EditSpec> = {
+  "Name":             { previewKey: "title",    fieldIdsKey: "name_text" },
+  "URL":              { previewKey: "url",      fieldIdsKey: "url_text" },
+  "File Name":        { previewKey: "filename", fieldIdsKey: "file_name_text" },
+  "Organizations":    { previewKey: "group",    fieldIdsKey: "organizations_list_custom_organization", isList: true, isMulti: true },
+  "Date":             { fieldIdsKey: "date_date" },
+  "Description":      { fieldIdsKey: "description_text" },
+  "Type":             { previewKey: "type" },
+  "Chronicle Topics": { fieldIdsKey: "topics___dt_list_custom_newsreel_update", isList: true, isMulti: true },
 };
 
 function applyEditsToPreview(
   preview: Record<string, unknown>,
   edits: Record<string, string>,
-  editMap: Record<string, { previewKey?: string; fieldIdsKey?: string; isList?: boolean }>,
+  editMap: Record<string, EditSpec>,
 ): Record<string, unknown> {
   const out = { ...preview };
   const outFieldIds = { ...((preview.field_ids as Record<string, unknown>) ?? {}) };
   const outFields   = { ...((preview.fields as Record<string, unknown>) ?? {}) };
 
   for (const [label, value] of Object.entries(edits)) {
-    if (!value) continue;
+    if (value == null) continue;
     const map = editMap[label];
     if (!map) continue;
-    const coerced: unknown = map.isList
-      ? value.split(",").map(s => s.trim()).filter(Boolean)
-      : value;
+    let coerced: unknown;
+    let display: string;
+    if (map.isMulti) {
+      // Multi-select combobox: value is MULTI_SEP-joined
+      const names = multiFromEditValue(value) ?? [];
+      coerced = names;
+      display = names.join(", ");
+    } else if (map.isList) {
+      coerced = value.split(",").map(s => s.trim()).filter(Boolean);
+      display = value;
+    } else {
+      if (!value) continue;
+      coerced = value;
+      display = value;
+    }
     if (map.previewKey)  out[map.previewKey] = coerced;
     if (map.fieldIdsKey) outFieldIds[map.fieldIdsKey] = coerced;
-    outFields[label] = value;
+    outFields[label] = display;
   }
   out.field_ids = outFieldIds;
   out.fields    = outFields;
@@ -512,6 +658,15 @@ function applyEditsToPreview(
 }
 
 // ─── Section card component ───────────────────────────────────────────────────
+
+interface VectorStoreOption {
+  value: string;         // internal identifier
+  label: string;         // display name (e.g. "Newsreel Knowledge Base")
+  onSelect: () => void;  // fires the ingest
+  state: SectionState;   // per-type section state
+  disabled?: boolean;
+  disabledReason?: string;
+}
 
 interface SectionProps {
   title: string;         // button label
@@ -523,38 +678,88 @@ interface SectionProps {
   editState: Record<string, string>;
   onEdit: (label: string, value: string) => void;
   sectionState: SectionState;
-  onPublish: () => void;
+  onPublish?: () => void;              // optional — when omitted no primary Bubble button is shown
   currentRecord?: BubbleRecord | null;
   isLoadingRecord?: boolean;
   agendaItems?: AgendaItemPreview[];
+  schemaLabels: Record<string, string> | null;
+  bubbleOptions: BubbleOptionsMap;
+  vectorStoreOptions?: VectorStoreOption[];  // when set, renders "Add to Library Vector Store ▼"
 }
 
 function FieldTable({
   fields,
   editState,
   onEdit,
+  schemaLabels,
+  bubbleOptions,
 }: {
   fields: FieldEntry[];
   editState: Record<string, string>;
   onEdit: (label: string, value: string) => void;
+  schemaLabels: Record<string, string> | null;
+  bubbleOptions: BubbleOptionsMap;
 }) {
   return (
-    <table className="w-full">
+    <table className="w-full table-fixed border-collapse">
+      <colgroup>
+        <col style={{ width: "30%" }} />
+        <col style={{ width: "22%" }} />
+        <col style={{ width: "48%" }} />
+      </colgroup>
+      <thead>
+        <tr className="border-b-2 border-gray-200 bg-gray-50/60">
+          <th className="py-2 px-2.5 text-left text-[9px] font-semibold text-gray-500 uppercase tracking-wider border-r border-gray-200">Agent Field</th>
+          <th className="py-2 px-2.5 text-left text-[9px] font-semibold text-gray-500 uppercase tracking-wider border-r border-gray-200">Bubble Field</th>
+          <th className="py-2 px-2.5 text-left text-[9px] font-semibold text-gray-500 uppercase tracking-wider">Value</th>
+        </tr>
+      </thead>
       <tbody>
         {fields.map((f, i) => {
           const isChanged = !!f.changed;
-          const rowClass = `${isChanged ? "bg-amber-50" : ""} border-b border-gray-50 last:border-0`;
+          const rowClass = `${isChanged ? "bg-amber-50" : ""} border-b border-gray-100 last:border-0`;
 
           return (
             <tr key={i} className={rowClass}>
+              <td className="py-2 px-2.5 text-[11px] text-gray-700 align-top break-words leading-snug border-r border-gray-100">
+                {resolveAgentFieldLabel(f.agentField, schemaLabels)}
+              </td>
               <td
-                className={`py-1.5 pr-3 text-[11px] font-medium whitespace-nowrap align-top ${isChanged ? "text-amber-700" : "text-gray-400"}`}
-                style={{ width: "32%" }}
+                className={`py-2 px-2.5 text-[11px] font-medium align-top break-words leading-snug border-r border-gray-100 ${isChanged ? "text-amber-700" : "text-gray-800"}`}
               >
                 {f.label}
               </td>
-              <td className="py-1.5">
-                {f.topics !== undefined ? (
+              <td className="py-2 px-2.5 align-top">
+                {f.combobox ? (() => {
+                  const opts = bubbleOptions[f.combobox.type] ?? [];
+                  const loading = bubbleOptions[f.combobox.type] === undefined;
+                  if (f.combobox.mode === "multi") {
+                    const edited = multiFromEditValue(editState[f.label]);
+                    const values = edited !== null ? edited : (f.topics ?? []);
+                    return (
+                      <SearchableCombobox
+                        mode="multi"
+                        options={opts}
+                        loading={loading}
+                        values={values}
+                        onChange={names => onEdit(f.label, multiToEditValue(names))}
+                        placeholder="Select…"
+                      />
+                    );
+                  }
+                  // single
+                  const value = editState[f.label] ?? f.value ?? "";
+                  return (
+                    <SearchableCombobox
+                      mode="single"
+                      options={opts}
+                      loading={loading}
+                      value={value}
+                      onChange={name => onEdit(f.label, name)}
+                      placeholder="Select…"
+                    />
+                  );
+                })() : f.topics !== undefined ? (
                   f.topics.length > 0 ? (
                     <div className="flex flex-wrap gap-1 py-0.5">
                       {f.topics.map(t => (
@@ -595,9 +800,66 @@ function FieldTable({
   );
 }
 
+function AddToVectorStoreButton({ options }: { options: VectorStoreOption[] }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  const anyLoading = options.some(o => o.state.status === "loading");
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        onClick={() => !anyLoading && setOpen(v => !v)}
+        disabled={anyLoading}
+        className="text-[11px] font-medium text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50 rounded-md pl-3 pr-2.5 py-1.5 transition-colors whitespace-nowrap inline-flex items-center gap-1.5"
+      >
+        {anyLoading ? "Working…" : "Add to Library Vector Store"}
+        <svg className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute right-0 bottom-full mb-1 w-64 bg-white border border-gray-200 rounded-md shadow-lg z-30 overflow-hidden">
+          {options.map(opt => {
+            const isDone     = opt.state.status === "done";
+            const isLoading  = opt.state.status === "loading";
+            const isError    = opt.state.status === "error";
+            const isDisabled = opt.disabled || isDone || isLoading;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                disabled={isDisabled}
+                title={opt.disabledReason}
+                onClick={() => { setOpen(false); opt.onSelect(); }}
+                className={`w-full text-left px-3 py-2 flex items-center justify-between gap-2 border-b border-gray-100 last:border-0 ${isDisabled ? "opacity-60 cursor-not-allowed" : "hover:bg-gray-50"}`}
+              >
+                <span className="text-[12px] text-gray-800 flex-1">{opt.label}</span>
+                {isDone     && <span className="text-[10px] text-green-600 font-semibold">✓ Added</span>}
+                {isLoading  && <span className="text-[10px] text-gray-400 italic">Working…</span>}
+                {isError    && <span className="text-[10px] text-red-500 font-medium" title={opt.state.error}>Failed</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Section({
   title, subtitle, objectType, system, action, fields, editState, onEdit,
-  sectionState, onPublish, currentRecord, isLoadingRecord, agendaItems,
+  sectionState, onPublish, currentRecord, isLoadingRecord, agendaItems, schemaLabels, bubbleOptions,
+  vectorStoreOptions,
 }: SectionProps) {
   const isDone    = sectionState.status === "done";
   const isLoading = sectionState.status === "loading";
@@ -658,19 +920,24 @@ function Section({
     return (
       <div className={`rounded-lg border ${borderColor} overflow-hidden`}>
         <SectionHeader showSubtitle />
-        <div className="px-4 py-2.5 flex items-center justify-between">
+        <div className="px-4 py-2.5 flex items-center justify-between gap-2">
           <p className="text-[12px] text-amber-700 font-medium">
             Record not found in Bubble — does not exist yet
           </p>
-          {!isDone && (
-            <button
-              onClick={onPublish}
-              disabled={isLoading}
-              className="ml-4 text-[11px] font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-md px-3 py-1.5 transition-colors whitespace-nowrap"
-            >
-              {isLoading ? "Working…" : publishLabel}
-            </button>
-          )}
+          <div className="flex items-center gap-2 shrink-0">
+            {vectorStoreOptions && vectorStoreOptions.length > 0 && (
+              <AddToVectorStoreButton options={vectorStoreOptions} />
+            )}
+            {!isDone && onPublish && (
+              <button
+                onClick={onPublish}
+                disabled={isLoading}
+                className="text-[11px] font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-md px-3 py-1.5 transition-colors whitespace-nowrap"
+              >
+                {isLoading ? "Working…" : publishLabel}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -689,7 +956,13 @@ function Section({
       {/* Fields */}
       {displayFields.length > 0 && (
         <div className="px-4 py-3">
-          <FieldTable fields={displayFields} editState={editState} onEdit={onEdit} />
+          <FieldTable
+            fields={displayFields}
+            editState={editState}
+            onEdit={onEdit}
+            schemaLabels={schemaLabels}
+            bubbleOptions={bubbleOptions}
+          />
         </div>
       )}
 
@@ -751,16 +1024,21 @@ function Section({
         );
       })()}
 
-      {/* Footer */}
-      {!isDone && (
-        <div className="flex justify-end px-4 py-2.5 border-t border-gray-100 bg-gray-50/50">
-          <button
-            onClick={onPublish}
-            disabled={isLoading}
-            className="text-[11px] font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-md px-3 py-1.5 transition-colors whitespace-nowrap"
-          >
-            {isLoading ? "Working…" : publishLabel}
-          </button>
+      {/* Footer — primary Bubble publish button + optional vector store dropdown */}
+      {((!isDone && onPublish) || (vectorStoreOptions && vectorStoreOptions.length > 0)) && (
+        <div className="flex justify-end gap-2 px-4 py-2.5 border-t border-gray-100 bg-gray-50/50">
+          {vectorStoreOptions && vectorStoreOptions.length > 0 && (
+            <AddToVectorStoreButton options={vectorStoreOptions} />
+          )}
+          {!isDone && onPublish && (
+            <button
+              onClick={onPublish}
+              disabled={isLoading}
+              className="text-[11px] font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-md px-3 py-1.5 transition-colors whitespace-nowrap"
+            >
+              {isLoading ? "Working…" : publishLabel}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -784,6 +1062,32 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
   // When bubble_action.agenda_item_previews is empty (page_change_agent returned N/A from HTML),
   // doc extraction rows are used as the authoritative source of agenda items instead.
   const [docExtractionRows, setDocExtractionRows] = useState<Array<Record<string, unknown>>>([]);
+
+  // Human-readable agent output field labels (from DynamoDB output_requested_values)
+  const [schemaLabels, setSchemaLabels] = useState<Record<string, string> | null>(null);
+  useEffect(() => {
+    fetch("/api/schema", { cache: "no-store" })
+      .then(r => r.json())
+      .then((d: { labels?: Record<string, string> | null }) => setSchemaLabels(d.labels ?? null))
+      .catch(() => {});
+  }, []);
+
+  // Live Bubble reference data for the searchable dropdowns
+  const [bubbleOptions, setBubbleOptions] = useState<BubbleOptionsMap>({
+    organization: undefined, chronicletopic: undefined,
+    libraryitemtype: undefined, calendaritemtype: undefined,
+  });
+  useEffect(() => {
+    const types: BubbleOptionsType[] = ["organization", "chronicletopic", "libraryitemtype", "calendaritemtype"];
+    for (const t of types) {
+      fetch(`/api/bubble/options?type=${t}`)
+        .then(r => r.json())
+        .then((d: { options?: BubbleOption[] }) => {
+          setBubbleOptions(prev => ({ ...prev, [t]: d.options ?? [] }));
+        })
+        .catch(() => setBubbleOptions(prev => ({ ...prev, [t]: [] })));
+    }
+  }, []);
 
   // Synthesize AgendaItemPreview[] from doc extraction rows when stored previews are all empty/N/A.
   // This covers the common case where the page_change_agent couldn't read agenda items from HTML
@@ -837,10 +1141,33 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
   const existingAgendaItems = agendaItems.filter(a => a.status && a.status.toLowerCase() !== "new");
   // These must be declared before the derived activeNewAgendaItems that use them
   const [deletedNewIndices, setDeletedNewIndices] = useState<Set<number>>(new Set());
-  const [agendaItemTitleEdits, setAgendaItemTitleEdits] = useState<Record<number, string>>({});
-  // Apply title edits and deletions — these drive the UI and what gets patched to the API
+  // Per-item edit state: index → { Bubble field label → value }
+  const [agendaItemEdits, setAgendaItemEdits] = useState<Record<number, Record<string, string>>>({});
+  // Backwards compat: title shortcut (reads from the structured map)
+  const agendaItemTitleEdits: Record<number, string> = useMemo(() => {
+    const out: Record<number, string> = {};
+    for (const [idx, m] of Object.entries(agendaItemEdits)) {
+      if (m["Title"] !== undefined) out[Number(idx)] = m["Title"];
+    }
+    return out;
+  }, [agendaItemEdits]);
+  function updateAgendaItemField(idx: number, label: string, value: string) {
+    setAgendaItemEdits(prev => ({ ...prev, [idx]: { ...(prev[idx] ?? {}), [label]: value } }));
+  }
+  // Apply per-field edits and deletions — these drive the UI and what gets patched to the API
+  function applyAgendaEdits(item: AgendaItemPreview, i: number): AgendaItemPreview {
+    const edits = agendaItemEdits[i] ?? {};
+    const out: AgendaItemPreview = { ...item };
+    if (edits["Title"] !== undefined) out.title = edits["Title"];
+    if (edits["Official Title"] !== undefined) out.official_title = edits["Official Title"];
+    if (edits["Reference ID"] !== undefined) out.reference_id = edits["Reference ID"];
+    if (edits["Chronicle Topics"] !== undefined) {
+      out.chronicle_topics = multiFromEditValue(edits["Chronicle Topics"]) ?? [];
+    }
+    return out;
+  }
   const activeNewAgendaItems: AgendaItemPreview[] = newAgendaItems
-    .map((item, i) => agendaItemTitleEdits[i] !== undefined ? { ...item, title: agendaItemTitleEdits[i] } : item)
+    .map((item, i) => applyAgendaEdits(item, i))
     .filter((_, i) => !deletedNewIndices.has(i));
   const activeAgendaItems: AgendaItemPreview[] = [...activeNewAgendaItems, ...existingAgendaItems];
   const hasNewAgenda   = hasAgenda && activeNewAgendaItems.length > 0;
@@ -853,7 +1180,7 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     [isAgendaSynthesized, newAgendaItems, docExtractionRows],
   );
   const displayedActiveNewAgenda: AgendaItemPreview[] = enrichedNewAgendaItems
-    .map((item, i) => agendaItemTitleEdits[i] !== undefined ? { ...item, title: agendaItemTitleEdits[i] } : item)
+    .map((item, i) => applyAgendaEdits(item, i))
     .filter((_, i) => !deletedNewIndices.has(i));
   const displayedAgendaItems: AgendaItemPreview[] = [
     ...displayedActiveNewAgenda,
@@ -891,10 +1218,18 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     return buildEventFields(ep, libPreview, libAction, alertType, eventChangedLabels, displayedAgendaItems);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventPreview, libPreview, libAction, alertType, eventChangedLabels, displayedAgendaItems]);
+  // Date for the library item is derived from its Bubble type per project convention.
+  // Meeting materials / RFC / Effective Date / Transcript → event start date.
+  // Publication (reports) → doc extraction's publication date.
+  const derivedDate = useMemo(
+    () => libAction ? deriveLibraryItemDate(libPreview, row as unknown as Record<string, unknown>, docExtractionRows[0]) : "",
+    [libAction, libPreview, row, docExtractionRows],
+  );
+
   const libFields = useMemo(
-    () => buildLibFields(libPreview, displayedAgendaItems, libChangedLabels),
+    () => buildLibFields(libPreview, displayedAgendaItems, libChangedLabels, derivedDate),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [libPreview, displayedAgendaItems, libChangedLabels],
+    [libPreview, displayedAgendaItems, libChangedLabels, derivedDate],
   );
 
   const [eventEdits, setEventEdits]               = useState<Record<string, string>>({});
@@ -1050,7 +1385,7 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     try {
       // Patch stored bubble_action with the active item list.
       // Always patch when items were synthesized from doc extraction (previews were empty on the row).
-      const needsPatch = isAgendaSynthesized || deletedNewIndices.size > 0 || Object.keys(agendaItemTitleEdits).length > 0;
+      const needsPatch = isAgendaSynthesized || deletedNewIndices.size > 0 || Object.keys(agendaItemEdits).length > 0;
       if (needsPatch) {
         const patchedPreviews = [...activeNewAgendaItems, ...existingAgendaItems];
         const updated = {
@@ -1094,8 +1429,15 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     }
     setSectionState("library_item", "loading");
     try {
-      if (Object.keys(libEdits).length > 0) {
-        const updated = applyEditsToPreview(libPreview, libEdits, LIB_EDIT_MAP);
+      // Inject the type-derived Date (meeting date / comment date / publication date) if the
+      // user didn't type anything in the Date field. This ensures the correct date reaches
+      // Bubble even when the agent-provided date was wrong for the given type.
+      const effectiveEdits = { ...libEdits };
+      if (effectiveEdits["Date"] === undefined && derivedDate) {
+        effectiveEdits["Date"] = derivedDate;
+      }
+      if (Object.keys(effectiveEdits).length > 0) {
+        const updated = applyEditsToPreview(libPreview, effectiveEdits, LIB_EDIT_MAP);
         await patchBubbleAction("library_item_preview", updated);
       }
       let result: Record<string, unknown>;
@@ -1160,16 +1502,40 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     return String(raw);
   })();
 
+  // Vector store destinations (dropdown shown on the Library Item card).
+  // When a row has both a transcript AND a document URL, transcript ingest takes priority
+  // (the transcript IS the authoritative text to vectorize).
+  const libraryVectorStoreOptions = useMemo((): VectorStoreOption[] => {
+    const opts: VectorStoreOption[] = [];
+    if (hasTranscript) {
+      opts.push({
+        value: "newsreel",
+        label: "Newsreel Knowledge Base",
+        onSelect: () => void handlePublishTranscript(),
+        state: sections.transcript,
+      });
+    } else if (hasDocument) {
+      opts.push({
+        value: "newsreel",
+        label: "Newsreel Knowledge Base",
+        onSelect: () => void handlePublishDocument(),
+        state: sections.document,
+      });
+    }
+    return opts;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasTranscript, hasDocument, sections.transcript, sections.document]);
+
   const documentFields: FieldEntry[] = [
-    { label: "Destination", value: "Newsreel Knowledge Base", readOnly: true },
+    { label: "Destination", agentField: "—", value: "Newsreel Knowledge Base", readOnly: true },
   ];
-  if (libItemTitle && libItemTitle !== "N/A") documentFields.push({ label: "Title", value: libItemTitle, readOnly: true });
-  if (libItemUrl) documentFields.push({ label: "URL", value: libItemUrl, readOnly: true });
+  if (libItemTitle && libItemTitle !== "N/A") documentFields.push({ label: "Title", agentField: "library_item_preliminary_title.title", value: libItemTitle, readOnly: true });
+  if (libItemUrl) documentFields.push({ label: "URL", agentField: "library_item_url", value: libItemUrl, readOnly: true });
 
   const transcriptFields: FieldEntry[] = [
-    { label: "Destination", value: "Newsreel Knowledge Base", readOnly: true },
+    { label: "Destination", agentField: "—", value: "Newsreel Knowledge Base", readOnly: true },
   ];
-  if (transcriptKey) transcriptFields.push({ label: "File", value: transcriptKey.split("/").pop() ?? transcriptKey, readOnly: true });
+  if (transcriptKey) transcriptFields.push({ label: "File", agentField: "transcript_s3_key", value: transcriptKey.split("/").pop() ?? transcriptKey, readOnly: true });
 
   const hasAnySection = !!(eventAction || libAction || hasAgenda || hasTranscript || hasDocument);
 
@@ -1225,35 +1591,49 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
                   <span className="text-[11px] text-red-500 font-medium">✕ Failed</span>
                 ) : null}
               </div>
-              {/* Item list — each item is editable + deletable */}
+              {/* Item list — compact: title input + chronicle topics searchable combobox */}
               <div className="px-4 py-3 space-y-0">
                 {newAgendaItems.map((item, i) => {
                   if (deletedNewIndices.has(i)) return null;
-                  const displayedTitle = agendaItemTitleEdits[i] ?? stripStatusPrefix(item.title);
                   const isDone = sections.agenda_items.status === "done";
-                  // Use enriched topics from doc extraction when available
-                  const displayedTopics = (enrichedNewAgendaItems[i]?.chronicle_topics ?? item.chronicle_topics) ?? [];
+                  const activeIndex = newAgendaItems.slice(0, i + 1).filter((_, j) => !deletedNewIndices.has(j)).length;
+                  const itemEdits = agendaItemEdits[i] ?? {};
+                  const displayedTitle = itemEdits["Title"] ?? stripStatusPrefix(item.title);
+                  // Topics: user-edited > enriched-from-doc-extraction > raw preview
+                  const editedTopics = multiFromEditValue(itemEdits["Chronicle Topics"]);
+                  const displayedTopics = editedTopics ?? (enrichedNewAgendaItems[i]?.chronicle_topics ?? item.chronicle_topics) ?? [];
                   return (
                     <div key={i} className={`py-2.5 ${i > 0 ? "border-t border-gray-100" : ""}`}>
                       <div className="flex items-start gap-2">
-                        <span className="text-[11px] text-gray-400 pt-1.5 flex-shrink-0">{newAgendaItems.slice(0, i + 1).filter((_, j) => !deletedNewIndices.has(j)).length}.</span>
-                        <div className="flex-1 min-w-0">
+                        <span className="text-[11px] text-gray-400 pt-1.5 flex-shrink-0">{activeIndex}.</span>
+                        <div className="flex-1 min-w-0 space-y-1.5">
                           {isDone ? (
                             <p className="text-[12px] font-semibold text-gray-800">{displayedTitle}</p>
                           ) : (
                             <input
                               type="text"
                               value={displayedTitle}
-                              onChange={e => setAgendaItemTitleEdits(prev => ({ ...prev, [i]: e.target.value }))}
+                              onChange={e => updateAgendaItemField(i, "Title", e.target.value)}
                               className="w-full text-[12px] font-semibold text-gray-800 bg-transparent border-b border-gray-200 hover:border-gray-400 focus:border-indigo-400 focus:outline-none pb-0.5 transition-colors"
                             />
                           )}
-                          {displayedTopics.length > 0 && (
-                            <div className="flex flex-wrap gap-1 mt-1.5">
-                              {displayedTopics.map(t => (
-                                <span key={t} className="text-[10px] bg-violet-100 text-violet-700 rounded px-1.5 py-0.5 border border-violet-200 leading-tight">{t}</span>
-                              ))}
-                            </div>
+                          {isDone ? (
+                            displayedTopics.length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                {displayedTopics.map(t => (
+                                  <span key={t} className="text-[10px] bg-violet-100 text-violet-700 rounded px-1.5 py-0.5 border border-violet-200 leading-tight">{t}</span>
+                                ))}
+                              </div>
+                            )
+                          ) : (
+                            <SearchableCombobox
+                              mode="multi"
+                              options={bubbleOptions.chronicletopic ?? []}
+                              loading={bubbleOptions.chronicletopic === undefined}
+                              values={displayedTopics}
+                              onChange={names => updateAgendaItemField(i, "Chronicle Topics", multiToEditValue(names))}
+                              placeholder="Add chronicle topics…"
+                            />
                           )}
                         </div>
                         {!isDone && (
@@ -1309,6 +1689,9 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
                 onPublish={() => handlePublishLibItem()}
                 currentRecord={libRecord}
                 isLoadingRecord={loadingLibRecord}
+                schemaLabels={schemaLabels}
+                bubbleOptions={bubbleOptions}
+                vectorStoreOptions={libraryVectorStoreOptions}
               />
             </div>
           )}
@@ -1333,11 +1716,14 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
                 onPublish={() => handlePublishEvent()}
                 currentRecord={eventRecord}
                 isLoadingRecord={loadingEventRecord}
+                schemaLabels={schemaLabels}
+                bubbleOptions={bubbleOptions}
               />
             </div>
           )}
 
-          {hasTranscript && (
+          {/* Standalone vector-store section — only renders when there's no Library Item card to attach to */}
+          {!libAction && hasTranscript && (
             <Section
               title="Publish Transcript"
               subtitle={transcriptKey.split("/").pop() || undefined}
@@ -1348,11 +1734,13 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
               editState={{}}
               onEdit={() => {}}
               sectionState={sections.transcript}
-              onPublish={handlePublishTranscript}
+              schemaLabels={schemaLabels}
+              bubbleOptions={bubbleOptions}
+              vectorStoreOptions={libraryVectorStoreOptions}
             />
           )}
 
-          {hasDocument && (
+          {!libAction && !hasTranscript && hasDocument && (
             <Section
               title="Publish Document"
               subtitle={libItemTitle || undefined}
@@ -1363,7 +1751,9 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
               editState={{}}
               onEdit={() => {}}
               sectionState={sections.document}
-              onPublish={handlePublishDocument}
+              schemaLabels={schemaLabels}
+              bubbleOptions={bubbleOptions}
+              vectorStoreOptions={libraryVectorStoreOptions}
             />
           )}
         </div>

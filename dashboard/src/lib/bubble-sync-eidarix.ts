@@ -389,7 +389,7 @@ async function resolveAgendaItems(
       reference_id: referenceId,
       chronicle_topics: finalTopicIds,
       alert_id: agentCallId,
-      space_id: SPACE_ID,
+      space_id: CONTENT_SPACE_ID,
     });
 
     const itemId = result.bubble_id ?? result.id ?? result._id;
@@ -725,7 +725,7 @@ export async function syncAlert(
         const payload: Record<string, unknown> = {
           title,
           alert_id: agentCallId,
-          space_id: SPACE_ID,
+          space_id: CONTENT_SPACE_ID,
           chronicle_topics: libTopicIds,
         };
         if (agendaItemIds.length) payload.agenda_items = agendaItemIds;
@@ -793,7 +793,7 @@ export async function syncAlert(
 
         // Use Bubble Data API directly — field names are display names (see bubble_api_reference.md)
         const eventPayload: Record<string, unknown> = {
-          "Space": SPACE_ID,
+          "Space": CONTENT_SPACE_ID,
           "Topics - dt": eventTopicIds,
           "has topic": eventTopicIds.length > 0,
           "Timezone Code": "America/New_York",
