@@ -298,26 +298,81 @@ def _parse_output(raw: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def _fetch_single_pdf(url: str) -> str | None:
-    """Fetch and extract text from a single PDF URL. Returns None on any failure."""
+    """Fetch and extract text from a single PDF URL. Returns None on any failure.
+
+    Tries requests first (fast). If blocked (403/non-200), falls back to Playwright
+    so that Cloudflare-protected NAIC PDF links are handled the same way as HTML pages.
+    """
     url = url.strip()
     if not url or not url.lower().split("?")[0].endswith(".pdf"):
         return None
+    from scrape.pdf_meeting_meta import _extract_plain_text
+
+    # --- requests path (fast, works for unprotected PDFs) ---
     try:
-        import requests
-        resp = requests.get(url, timeout=30, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        import requests as _requests
+        resp = _requests.get(url, timeout=30, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             "Referer": "https://content.naic.org/",
             "Accept": "application/pdf,*/*",
         })
-        resp.raise_for_status()
-        from scrape.pdf_meeting_meta import _extract_plain_text
-        text = _extract_plain_text(resp.content)
-        if text and text.strip():
-            log.info("document_agent: fetched PDF text (%d chars) from %s", len(text), url[:80])
-            return text.strip()
-        log.warning("document_agent: PDF fetched but extracted no text from %s", url[:80])
+        if resp.status_code == 200:
+            text = _extract_plain_text(resp.content)
+            if text and text.strip():
+                log.info("document_agent: fetched PDF text (%d chars) from %s", len(text), url[:80])
+                return text.strip()
+            log.warning("document_agent: PDF fetched but extracted no text from %s", url[:80])
+            return None
+        log.info("document_agent: requests got %s for %s — trying Playwright", resp.status_code, url[:80])
     except Exception as e:
-        log.warning("document_agent: could not fetch PDF text from %s: %s", url[:80], e)
+        log.info("document_agent: requests failed for %s (%s) — trying Playwright", url[:80], e)
+
+    # --- Playwright fallback (handles Cloudflare-protected PDFs) ---
+    try:
+        from playwright.sync_api import sync_playwright
+        pdf_bytes: bytes | None = None
+
+        def _capture(response) -> None:
+            nonlocal pdf_bytes
+            if url in response.url and response.status == 200:
+                try:
+                    pdf_bytes = response.body()
+                except Exception:
+                    pass
+
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+            )
+            ctx = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                extra_http_headers={
+                    "Accept": "application/pdf,*/*",
+                    "Referer": "https://content.naic.org/",
+                    "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+                    "sec-ch-ua-mobile": "?0",
+                    "sec-ch-ua-platform": '"Windows"',
+                },
+                accept_downloads=True,
+            )
+            page = ctx.new_page()
+            page.on("response", _capture)
+            try:
+                page.goto(url, timeout=30000)
+            except Exception:
+                pass  # PDF navigation raises "Download is starting" — that's fine
+            browser.close()
+
+        if pdf_bytes:
+            text = _extract_plain_text(pdf_bytes)
+            if text and text.strip():
+                log.info("document_agent: fetched PDF via Playwright (%d chars) from %s", len(text), url[:80])
+                return text.strip()
+            log.warning("document_agent: Playwright PDF extracted no text from %s", url[:80])
+    except Exception as e:
+        log.warning("document_agent: Playwright PDF fetch failed for %s: %s", url[:80], e)
+
     return None
 
 
@@ -547,6 +602,13 @@ def extract_document_data(
             doc_namespace = ingest_and_arm(document_url, pdf_text, document_name)
             if doc_namespace:
                 pgvector_namespaces = list(pgvector_namespaces) + [doc_namespace]
+            else:
+                log.warning(
+                    "document_agent: skipping extraction for %s — PDF could not be fetched or indexed "
+                    "(running without document namespace risks cross-contamination from shared knowledge base)",
+                    document_name[:80],
+                )
+                return []
 
         log.info("document_agent: running with pgvector (model=%s) for: %s", model, document_name[:80])
         result = asyncio.run(_run_with_pgvector(
