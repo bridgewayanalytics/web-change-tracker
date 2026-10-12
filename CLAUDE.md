@@ -94,7 +94,7 @@ Full spec: `docs/rerun-feature.md`
 - `bubble/newsreel_ingest.py` — `ingest_for_newsreel(document_url, filename)` pushes documents and transcripts (via presigned URL) to ChatKit newsreel-generation knowledge base
 - `bubble/org_tree.py` — `get_org_tree()` fetches the live Bubble org hierarchy (143 orgs) and formats it as dash-depth text for injection into agent context. 30-min in-process cache; falls back to `prompts/org_tree.txt`.
 - `bubble/bubble_sync_classifier.py` — `classify_alert(alert) → BubbleSyncPlan` pure classifier; stamps `bubble_action` on applicable alerts. `enrich_with_doc_extraction(bubble_action, extraction)` merges doc extraction fields (description, date, type, chronicle topics) into previews. No I/O. `_build_agenda_previews()` reads flat-schema `agenda_item_title_chronicle_topics` first, falls back to old nested-schema `agenda_item_title_and_chronicle_topics` for backward compatibility. Includes `status` field on each agenda item preview: `"New"` = create a new Bubble agendaitem object, `"Existing"`/`"Updated"` = look up by title and link. `_parse_doc_extraction_agenda_items()` parses the doc extraction `agenda_items` string — handles both `; ` and `|` as entry separators. See `bubble_action` field docs below.
-- `bubble/bubble_sync.py` — `sync_alert(agent_call_id, action="all")` real Bubble sync executor. `action` parameter controls which step runs: `"all"` = full sequence, `"agenda_items"` = create/link agenda items only (patches `eidarix_agenda_item_ids` onto row then returns), `"library_item"` = create/update library item only (picks up `eidarix_agenda_item_ids` from already-patched row), `"event"` = create/update event only. Processing order: (1) `_resolve_agenda_items()` — reads from `bubble_action.agenda_item_previews` as primary source (falls back to flat alert fields for old rows without previews); strips "New - "/"Existing - "/"Updated - " status prefixes from titles via `_strip_status_prefix()` before all Bubble API calls; status-aware: `"New"` items POST to `wf/create-agenda-item/`; `"Existing"`/`"Updated"` items call `_find_agenda_item_by_title()` (searches Bubble `/obj/agendaitem` by "BA title" field); failures raise `RuntimeError` (no longer silently swallowed — the whole sync errors if any agenda item fails). (2) library item via `wf/create-library-item/`. (3) event via `wf/create-event` or `wf/update-event`; UPDATE payload contains only linking fields (`id, alert_id, space_id, chronicle_topics, agenda_items, agenda`) — NOT datetime/type/orgs which are already on the record. All writes go through Mori's Eidarix workflow endpoints, NOT the Bubble Data API directly. Resolves org names → IDs and chronicle topic names → IDs; resolves library item type name → ID via `libraryitemtype` endpoint. Stamps `eidarix_agenda_item_ids`, `bubble_library_item_id`, `bubble_event_id` on the alert row. Triggered via synchronous Lambda invocation from the dashboard route (`InvocationType: RequestResponse`). `EIDARIX_VERSION` env var controls test vs live (default: `"test"`). Full payload spec: `docs/bubble_sync_payload_spec.json`. **Error handling:** org resolution runs inside a try/except — missing orgs log a warning and continue with empty org list (do not raise). Chronicle topic resolution similarly warns on misses. UPDATE lookup raises `RuntimeError` on not-found (previously silently skipped). When an event has no chronicle topics, falls back to empty topic list rather than erroring.
+- `bubble/bubble_sync.py` — Python Bubble sync executor used by the pipeline. **The dashboard does not call this module** — the dashboard runs the TypeScript executor `dashboard/src/lib/bubble-sync-eidarix.ts` in-process in the Next.js ECS task. Both implementations mirror each other. `sync_alert(agent_call_id, action="all")` with `action` ∈ `{"all", "agenda_items", "library_item", "event"}`. Processing order: (1) resolve agenda items — status-aware (`"New"` creates via `wf/create-agenda-item/`; `"Existing"`/`"Updated"` looks up by title); failures raise `RuntimeError`. (2) library item via `wf/create-library-item/`. (3) event via `wf/create-event` or `wf/update-event`; UPDATE payload contains only linking fields (`id, alert_id, space_id, chronicle_topics, agenda_items, agenda`). All writes go through Eidarix workflow endpoints with `space_id = CONTENT_SPACE_ID`. `EIDARIX_VERSION` env var controls Bubble database (`version-test` vs `version-live`; prod defaults to `"live"`). Payload spec: `docs/bubble_sync_payload_spec.json`.
 - `storage/alert_s3.py` — Alert storage, flat/nested schema detection, Excel export, `patch_jsonl_row()` utility
 - `storage/ingest_actions.py` — Ingest gate: `approve_transcript_ingest()`, `approve_document_ingest()`, `ingest_manual_document_url()`, `reject_ingest()`, `generate_presigned_url()`, `generate_presigned_upload_url()`
 - `infra/lambda/validate_config_sync/handler.py` — DynamoDB Streams Lambda; auto-corrects `chatkit_production_config` on every Bubble sync (label count, garbage keys, schema normalization, column registry)
@@ -344,7 +344,9 @@ The `match_search` dict is used by the executor to find existing records before 
 | `"synced"` | Successful Bubble API call |
 | `"error"` | Executor raised an exception (`bubble_sync_error` has details) |
 
-Dashboard shows "Sync to Bubble" button on rows with `bubble_action` set and no `bubble_sync_status`. Clicking opens a preview modal. After confirm, `/api/bubble/sync` invokes the `web-change-tracker-prod-bubble-sync` Lambda **synchronously** and returns the result directly — no polling.
+Dashboard shows the **Actions** button on rows with `bubble_action` set, which opens the Content Gate modal (`ContentGateModal.tsx`). The modal publishes to Bubble by hitting `POST /api/bubble/sync` which runs the TypeScript executor `src/lib/bubble-sync-eidarix.ts` **in-process** inside the dashboard ECS task — no Lambda, no ECS RunTask, no polling. Full technical reference: `dashboard/src/components/docs/content-gate.md`.
+
+The Python `bubble/bubble_sync.py` module is the equivalent executor for the pipeline-side use case (not reached from the dashboard today). The TypeScript executor is the current source of truth for all dashboard-triggered writes.
 
 **Executor sequence in `bubble_sync.py`:**
 1. Resolve org display names → Bubble `_id` values (via `/obj/organization`, space-constrained); resolve chronicle topic names → `_id` values (via `/obj/chronicletopic`, space-constrained)
@@ -357,45 +359,31 @@ Dashboard shows "Sync to Bubble" button on rows with `bubble_action` set and no 
 
 **Eidarix API:**
 - Workflow base URL (writes): `https://eidarix.bridgewayanalytics.com/version-{version}/api/1.1/wf/`
-- Data API base URL (reads/lookups): `https://eidarix.bridgewayanalytics.com/api/1.1/obj/` (no version — use space constraint to target correct space)
+- Data API base URL (reads/lookups):
+  - Reference data (orgs, topics): non-versioned `https://eidarix.bridgewayanalytics.com/api/1.1/obj/` with `space` constraint = content space ID
+  - Type lookups (`libraryitemtype`, `calendaritemtype`): versioned `https://eidarix.bridgewayanalytics.com/version-{version}/api/1.1/obj/` with no space constraint (versioned URL is already space-scoped)
 - Auth: `Authorization: Bearer <BUBBLE_API_KEY>` (from `bubble/bridgemind.py`)
-- Space IDs: test = `1768998437948x865417918648382000`, live = `1770642377799x775210694699370900`
-- `EIDARIX_VERSION` env var switches test/live (default: `"test"`)
+- **Space model:** there is one real data space — the **content space** `1768998437948x865417918648382000` — where all organizations, chronicle topics, library item types, and calendar item types live. Both the TS and Python executors scope reference lookups to it. Workflow payloads also set `space_id` to this value (Eidarix workflows resolve linked topic IDs against the payload's `space_id`). The `EIDARIX_VERSION` env var only controls which Bubble database/version receives the writes (`version-test` vs `version-live`).
+- Current production setting: `EIDARIX_VERSION=live` (writes land in the live Bubble database).
 - **File upload** (transcripts): `POST https://eidarix.bridgewayanalytics.com/version-{version}/fileupload` — multipart/form-data with `private=false`, `name=filename`, `contents=file_binary`
 - Full payload spec and examples: `docs/bubble_sync_payload_spec.json`
 - Agenda item field mapping: `title` ← `agenda_item_title_chronicle_topics[i].agenda_item_title`, `official_title` ← `agenda_item_title_official[i].official_title`, `reference_id` ← `agenda_item_standardized_id[i].standardized_id` (skips N/A)
 - **`organizations` in workflow payloads** = Bubble `_id` strings (executor resolves names→IDs before calling workflow). **`chronicle_topics`** = Bubble `_id` strings. **`type`** (library item and event) = Bubble `_id` from type lookup endpoint.
 
-**Eidarix workflow endpoints (confirmed working as of 2026-07-08):**
+**Eidarix workflow endpoints:**
+
 | Endpoint | Method | Purpose | Status |
 |----------|--------|---------|--------|
 | `wf/create-agenda-item/` | POST | Create agenda item | ✅ Working |
 | `wf/create-library-item/` | POST | Create library item | ✅ Working |
-| `wf/create-event` | POST | Create calendar event | 🔲 Pending test (blocked on calendaritemtype) |
-| `obj/libraryitemtype` | GET | Resolve library item type name → ID | ✅ Working |
-| `obj/calendaritemtype` | GET | Resolve event type name → ID | ✅ Fixed — must use versioned URL `/version-{version}/api/1.1/obj/calendaritemtype` with space constraint (non-versioned `/api/1.1/obj/` returns 404) |
-| `obj/chronicletopic` | GET | Resolve chronicle topic name → ID | ✅ Working |
-| `obj/organization` | GET | Resolve org name → ID | ✅ Working (test space only has 3 placeholder orgs — real NAIC orgs only in live) |
+| `wf/create-event` | POST | Create calendar event | ✅ Working |
+| `wf/update-event` | POST | Update calendar event (trimmed payload) | ✅ Working |
+| `obj/libraryitemtype` | GET | Resolve library item type name → ID | ✅ Working (versioned URL, no space constraint) |
+| `obj/calendaritemtype` | GET | Resolve event type name → ID | ✅ Working (versioned URL, no space constraint) |
+| `obj/chronicletopic` | GET | Resolve chronicle topic name → ID | ✅ Working (non-versioned URL + content-space constraint) |
+| `obj/organization` | GET | Resolve org name → ID | ✅ Working (non-versioned URL + content-space constraint) |
 
-**Test run results (2026-07-08, version-test space):**
-- Row 1: Reinsurance (E) Task Force — June 22, 2026 meeting (`agent_call_id: bdbb5a95-68fa-4052-8d67-c0938a750b9d`)
-  - Agenda item created: `1783443783207x526404831658494850` — "Reinsurance collateral treatment of derecognized net negative IMR"
-  - Library item created: `1783443784335x202353868930715620` — "Agenda and Materials for June 22, 2026 Reinsurance (E) Task Force Meeting"
-  - Chronicle topics sent: `1772364054767x145757227501820640` (Negative Interest Maintenance Reserves), `1772364053949x539517646942305700` (Credit for Reinsurance)
-  - Organizations: empty — "Reinsurance (E) Task Force (NAIC RTF)" not in test space
-- Row 2: RBC Investment Risk & Evaluation WG — June 23, 2026 meeting (`agent_call_id: c986df63-5b93-48ab-9e18-987e9f963324`)
-  - Agenda item created: `1783443787240x479948023981900740` — "CLO RBC factor proposal"
-  - Library item created: `1783443788905x770165781732295300` — "RBCIREWG 06-23-26 Agenda & Materials"
-  - Chronicle topics sent: `1772364051422x161004932788948450` (Collateralized Loan Obligations)
-  - Missing topic: "RBC Covariance & Asset Concentration Risk" — not found in test space; correct name is "Life RBC Covariance & Asset Concentration Risk"
-  - Organizations: empty — "Risk Based Capital Investment Risk & Evaluation (E) Working Group (NAIC RBC-IRE-WG)" not in test space
-- Event creation: not yet tested — blocked on `calendaritemtype` endpoint being 404
-
-**Known issues / gaps in Eidarix integration (as of 2026-07-15):**
-1. **Organizations empty in test space** — test space has only 3 placeholder orgs. Real NAIC org names only exist in live space. Organization field will be empty in all test-space syncs.
-2. **Chronicle topic name mismatch** — agent outputs "RBC Covariance & Asset Concentration Risk" but the correct Bubble name is "Life RBC Covariance & Asset Concentration Risk". Executor does exact-match lookup; fix is to normalize/fuzzy-match or update the agent instructions to use the full name.
-3. **Event creation not yet end-to-end tested** — `calendaritemtype` URL fix deployed 2026-07-15. First end-to-end test of `create-event` / `update-event` pending.
-4. **Orphan agenda item** — `1783442800085x...` created during a failed first test run (before library item fix). Left in test space; Mori aware.
+**Verified end-to-end against the live database (October 2026)** — agenda item + library item creation with topic/org/type resolution confirmed. See CloudWatch log group `/ecs/naic-dashboard` filter `[bubble-sync]` for live traffic.
 
 ## Conventions
 

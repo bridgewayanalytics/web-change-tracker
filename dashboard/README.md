@@ -108,15 +108,22 @@ Approval routes: `/api/ingest/approve-transcript` (transcripts), `/api/ingest/ap
 
 ### Content Gate Modal
 
-`ContentGateModal.tsx` is the unified UI for publishing content to Bubble (Eidarix). Opens from the **Actions** button on rows with `bubble_action` or `transcript_s3_key`. Sections appear in creation-dependency order:
+`ContentGateModal.tsx` is the unified UI for publishing content to Bubble (Eidarix) and the Newsreel Knowledge Base. Opens from the **Actions** button on rows with `bubble_action` or `transcript_s3_key`. Full technical reference: `src/components/docs/content-gate.md`.
 
-1. **Create Agenda Items** — editable titles, chronicle topic chips, × delete. Must complete before Library Item step.
-2. **Bubble Library Item** — shows existing Bubble values alongside proposed values (UPDATE), or proposed-only (CREATE). Blocked until agenda items done (when lib action present).
-3. **Bubble Event** — blocked until Library Item card done (when lib action present).
-4. **Transcript → Newsreel** — only for `alert_type === "New Meeting Transcript Available"`.
-5. **Document → Newsreel** — only when `library_item_url` is valid.
+Sections appear in creation-dependency order:
 
-Bubble steps fire `/api/bubble/sync` with an `action` param; newsreel steps call the ingest approve routes. Org pre-validation calls `GET /api/bubble/record` before confirming library item or event sync, and shows a popup listing any unresolved org names.
+1. **Create Agenda Items** — editable titles + searchable chronicle-topic multi-select; × to remove. Must complete before Library Item.
+2. **Library Item (Bubble)** — 3-column field table showing agent field → Bubble field → value. Reference fields (Type, Organizations, Chronicle Topics) use `SearchableCombobox` with options loaded from Bubble via `/api/bubble/options`. Footer has two buttons:
+    - **Create / Update in Bubble** (primary)
+    - **Add to Library Vector Store ▼** — dropdown with target KBs (currently Newsreel; room for future types). Fires the Newsreel ingest route for the row's transcript or document.
+3. **Calendar Event (Bubble)** — same 3-column table + comboboxes. Blocked until Library Item done (when lib action present).
+4. **Transcript / Document → Newsreel (standalone)** — only renders when there is no Library Item card to attach to.
+
+Writes execute in-process from the dashboard ECS task via `src/lib/bubble-sync-eidarix.ts` (no Lambda intermediary). The Content Gate hits five endpoints on open: `/api/schema`, `/api/bubble/options` × 4, `/api/bubble/validate`, `/api/document-extractions`, and `/api/bubble/record` (UPDATE only).
+
+**Date derivation (library item):** the Date value shown and sent is derived from the Bubble library item type — meeting materials and RFC use `event_start_date_time`; publications use `date_published` from doc extraction. User can override by typing.
+
+**Bubble space model:** reference data (organizations, chronicle topics, library/calendar item types) always lives in the content space (`1768998437948x...`), regardless of `EIDARIX_VERSION`. Lookups and workflow payloads scope by this space.
 
 ### HTML Snapshots
 
@@ -156,8 +163,10 @@ Auth0 protects all pages. Unauthenticated requests redirect to `/auth/login`. Th
 | `/api/eval/documents` | DELETE | Removes eval results for a given `agent_call_id` from `doc_eval_results_table.jsonl`. Body: `{ agent_call_id }`. |
 | `/api/eval/documents/[taskId]` | GET | Polls ECS task status for document eval runs. Same response shape as `/api/eval/[taskId]`. |
 | `/api/bubble/sync` | GET | Returns `bubble_action` preview for a given `agent_call_id` (query param). Used by modal before confirm. |
-| `/api/bubble/sync` | POST | Invokes the `web-change-tracker-prod-bubble-sync` Lambda synchronously (`InvocationType: RequestResponse`). Body: `{ agent_call_id, action? }`. `action` values: `"all"`, `"agenda_items"`, `"library_item"`, `"event"`. Returns `{ ok, bubble_library_item_id?, bubble_event_id?, eidarix_agenda_item_ids? }`. |
-| `/api/bubble/record` | GET | Fetches current field values from Bubble for a given `agent_call_id` and `object_type`. Returns `{ found, id, fields }`. Used by `ContentGateModal` for org pre-validation and UPDATE previews. |
+| `/api/bubble/sync` | POST | Runs `syncAlert()` in-process via `src/lib/bubble-sync-eidarix.ts` (no Lambda intermediary). Body: `{ agent_call_id, action?, skip_validation? }`. `action` values: `"all"`, `"agenda_items"`, `"library_item"`, `"event"`. Returns `{ ok, bubble_library_item_id?, bubble_event_id?, eidarix_agenda_item_ids? }`. |
+| `/api/bubble/validate` | GET | Pre-flight check for the Content Gate: returns `{ valid, issues }` where issues cover unresolved orgs/topics/types. Query: `agent_call_id`. |
+| `/api/bubble/record` | GET | Fetches current field values from Bubble for a given `agent_call_id` and `object_type`. Returns `{ found, id, fields }`. Used by `ContentGateModal` for UPDATE previews. |
+| `/api/bubble/options` | GET | Returns `{ options: [{ id, name }] }` from Bubble for `type=organization\|chronicletopic\|libraryitemtype\|calendaritemtype`. 10-minute in-memory cache. Powers the `SearchableCombobox` dropdowns in the Content Gate. |
 | `/api/ingest/approve-transcript` | POST | Generates presigned S3 GET URL for `transcript_s3_key`, calls the newsreel ingest API, patches alert row to `ingest_status: "approved"`. Body: `{ agent_call_id }`. |
 | `/api/ingest/approve-document` | POST | Calls doc ingest API, patches doc extraction row to `ingest_status: "approved"`. Body: `{ agent_call_id, library_item_url }`. |
 | `/api/ingest/reject` | POST | Patches row to `ingest_status: "rejected"`. Body: `{ table: "alerts"\|"docs", agent_call_id, library_item_url? }`. |
@@ -216,33 +225,45 @@ src/
 │   ├── document-extractions/
 │   │   ├── page.tsx                    # Document Extractions page (filter bar)
 │   │   └── DocExtractionsTable.tsx     # Mirrors AlertsTable; DOC_IDENTITY_COLS, re-evaluate UI
-│   ├── auth/
-│   │   └── [auth0]/route.ts           # Auth0 login/logout/callback handler
+│   ├── auth/[auth0]/route.ts           # Auth0 login/logout/callback handler
 │   ├── api/
-│   │   ├── alerts/route.ts             # Alerts data from S3
-│   │   ├── schema/route.ts             # Dynamic column order from DynamoDB (alerts)
-│   │   │                               #   + alerts array unwrapping
-│   │   ├── config/route.ts             # Agent config hash
-│   │   ├── rerun/route.ts              # Start ECS rerun task (alerts)
-│   │   ├── rerun/[taskId]/             # Poll task + fetch alert result
-│   │   ├── rerun/accept/               # Patch alerts_table.jsonl
-│   │   ├── rerun/discard/              # Delete alert rerun result
+│   │   ├── alerts/                     # Alerts data from S3 + patch-row
+│   │   ├── schema/                     # Dynamic column order (alerts) + alerts-array unwrap
+│   │   ├── config/                     # Agent config hash
+│   │   ├── rerun{,/[taskId],/accept,/discard}/
+│   │   │                               # Alert rerun lifecycle
 │   │   ├── snapshot/                   # Proxy S3 HTML snapshots
-│   │   ├── pages/route.ts              # Tracked pages list
-│   │   ├── document-extractions/       # Document extractions data from S3
-│   │   ├── doc-schema/route.ts         # Dynamic column order (document extractions)
-│   │   │                               #   + array wrapper unwrapping
-│   │   ├── doc-rerun/route.ts          # Start ECS rerun task (doc extractions)
-│   │   ├── doc-rerun/[taskId]/         # Poll task + fetch doc result
-│   │   ├── doc-rerun/accept/           # Patch document_extractions_table.jsonl
-│   │   └── doc-rerun/discard/          # Delete doc rerun result
+│   │   ├── pages/                      # Tracked pages list
+│   │   ├── document-extractions/       # Doc extraction data from S3
+│   │   ├── doc-schema/                 # Dynamic column order (doc extractions)
+│   │   ├── doc-rerun{,/[taskId],/accept,/discard}/
+│   │   │                               # Doc rerun lifecycle
+│   │   ├── eval{,/[taskId],/documents,...}/
+│   │   │                               # QA eval ECS triggers + results
+│   │   ├── bubble/
+│   │   │   ├── sync/                   # Content Gate sync entry point
+│   │   │   ├── validate/               # Pre-flight resolution check
+│   │   │   ├── record/                 # Fetches current Bubble values for UPDATE
+│   │   │   └── options/                # Reference-data dropdown options (orgs, topics, types)
+│   │   ├── ingest/                     # Newsreel KB approve/reject routes
+│   │   └── presigned-url/              # Recording / transcript S3 presign
 │   ├── layout.tsx                      # Root layout
-│   └── page.tsx                        # Root page (redirects to /alerts)
+│   └── page.tsx                        # Redirects to /alerts
+├── components/
+│   ├── ContentGateModal.tsx            # Unified publish modal (Bubble + Newsreel)
+│   ├── SearchableCombobox.tsx          # Reusable single/multi dropdown with search
+│   ├── IngestGateCell.tsx              # Approve/reject cell for doc extraction KB ingest
+│   └── docs/
+│       └── content-gate.md             # Content Gate technical reference
 ├── lib/
-│   ├── alerts-cache.ts                 # In-memory cache for alerts (60s TTL)
-│   ├── doc-extractions-cache.ts        # In-memory cache for doc extractions (60s TTL)
+│   ├── alerts-cache.ts                 # 60s in-memory cache for alerts
+│   ├── doc-extractions-cache.ts        # 60s in-memory cache for doc extractions
+│   ├── bubble-sync-eidarix.ts          # In-process Bubble sync executor
+│   ├── chatkit-api-key.ts              # SSM helper for the newsreel ingest API key
+│   ├── patch-jsonl.ts                  # Download/patch/upload a JSONL row
+│   ├── ssm.ts                          # Shared SSM parameter helper
 │   └── auth0.ts                        # Auth0 client instance
-├── middleware.ts                        # Auth0 session check, route protection
+├── middleware.ts                       # Auth0 session check, route protection
 infra/terraform/                        # ECS, ALB, IAM, CloudWatch, ECR, security groups
 scripts/
 └── deploy.sh                           # Build + push + terraform + ECS redeploy
