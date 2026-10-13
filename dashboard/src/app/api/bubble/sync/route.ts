@@ -9,12 +9,8 @@ const BUCKET = process.env.BUBBLE_ARTIFACT_BUCKET ?? "web-change-tracker-prod-ar
 const ALERTS_KEY = "alerts/alerts_table.jsonl";
 const REGION = process.env.AWS_REGION ?? "us-east-1";
 
-const EIDARIX_VERSION = process.env.EIDARIX_VERSION ?? "test";
-const SPACE_IDS: Record<string, string> = {
-  test: "1768998437948x865417918648382000",
-  live: "1770642377799x775210694699370900",
-};
-const SPACE_ID = SPACE_IDS[EIDARIX_VERSION] ?? SPACE_IDS.test;
+// All Bubble records are tagged with the content space — see bubble-sync-eidarix.ts.
+const CONTENT_SPACE_ID = "1768998437948x865417918648382000";
 const BUBBLE_API_BASE = "https://eidarix.bridgewayanalytics.com/api/1.1/obj";
 const BUBBLE_API_KEY = process.env.BUBBLE_API_KEY ?? "";
 
@@ -28,7 +24,7 @@ async function findMissingOrgs(orgNames: string[]): Promise<string[]> {
   if (!orgNames.length) return [];
   try {
     const params = new URLSearchParams({
-      constraints: JSON.stringify([{ key: "space", constraint_type: "equals", value: SPACE_ID }]),
+      constraints: JSON.stringify([{ key: "space", constraint_type: "equals", value: CONTENT_SPACE_ID }]),
       limit: "200",
     });
     const res = await fetch(`${BUBBLE_API_BASE}/organization?${params}`, {
@@ -113,7 +109,7 @@ export async function POST(request: NextRequest) {
       const missingOrgs = await findMissingOrgs(orgNames);
       if (missingOrgs.length > 0) {
         return NextResponse.json({
-          error: `Organization(s) not found in Bubble: ${JSON.stringify(missingOrgs)}. Check that org names match exactly and EIDARIX_VERSION=${EIDARIX_VERSION} is correct.`,
+          error: `Organization(s) not found in Bubble: ${JSON.stringify(missingOrgs)}. Check that org names match exactly.`,
         }, { status: 400 });
       }
     }

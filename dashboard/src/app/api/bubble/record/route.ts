@@ -7,15 +7,20 @@ const BUCKET = process.env.BUBBLE_ARTIFACT_BUCKET ?? "web-change-tracker-prod-ar
 const ALERTS_KEY = "alerts/alerts_table.jsonl";
 
 const EIDARIX_VERSION = process.env.EIDARIX_VERSION ?? "test";
-const SPACE_IDS: Record<string, string> = {
-  test: "1768998437948x865417918648382000",
-  live: "1770642377799x775210694699370900",
-};
-const SPACE_ID = SPACE_IDS[EIDARIX_VERSION] ?? SPACE_IDS.test;
+// All Bubble records are tagged with the content space — see bubble-sync-eidarix.ts
+// for the full rationale. Lookups must scope by this space to find existing records.
+const CONTENT_SPACE_ID = "1768998437948x865417918648382000";
 const BUBBLE_API_BASE = "https://eidarix.bridgewayanalytics.com/api/1.1/obj";
 // calendaritemtype requires versioned URL — returns 404 at the non-versioned base
 const BUBBLE_API_VERSIONED = `https://eidarix.bridgewayanalytics.com/version-${EIDARIX_VERSION}/api/1.1/obj`;
 const BUBBLE_API_KEY = process.env.BUBBLE_API_KEY ?? "0a951ec86c08a59e274411913ce6aec3";
+
+// Status prefixes the classifier stamps on library/event titles ("Updated — ",
+// "Existing - ", etc.). Must be stripped before matching the Bubble record.
+const STATUS_PREFIX_RE = /^(New|Existing|Updated|Revised)\s*[-–—:]\s*/i;
+function stripStatusPrefix(s: string): string {
+  return s.replace(STATUS_PREFIX_RE, "").trim();
+}
 
 // Fields to drop entirely from display
 const DROP_FIELDS = new Set([
@@ -202,7 +207,7 @@ export async function GET(request: NextRequest) {
     const plan = row.bubble_action as Record<string, unknown> | null;
     if (!plan) return NextResponse.json({ found: false, fields: {} });
 
-    const spaceConstraint = { key: "space", constraint_type: "equals", value: SPACE_ID };
+    const spaceConstraint = { key: "space", constraint_type: "equals", value: CONTENT_SPACE_ID };
 
     if (object_type === "calendaritem") {
       const ep = (plan.event_preview ?? {}) as Record<string, unknown>;
@@ -225,16 +230,24 @@ export async function GET(request: NextRequest) {
     } else if (object_type === "libraryitem") {
       const lp = (plan.library_item_preview ?? {}) as Record<string, unknown>;
       const matchSearch = (lp.match_search ?? {}) as Record<string, string>;
+      // Strip status prefix before matching since the Bubble record never has it.
+      const url   = matchSearch.url   ? stripStatusPrefix(matchSearch.url)   : "";
+      const title = matchSearch.title ? stripStatusPrefix(matchSearch.title) : "";
 
-      const constraints: Record<string, unknown>[] = [spaceConstraint];
-      if (matchSearch.url) {
-        constraints.push({ key: "url_text", constraint_type: "equals", value: matchSearch.url });
-      } else if (matchSearch.title) {
-        constraints.push({ key: "name_text", constraint_type: "equals", value: matchSearch.title });
-      } else {
-        return NextResponse.json({ found: false, fields: {} });
+      // Try URL first, then title. Return the first match from either.
+      let results: Record<string, unknown>[] = [];
+      if (url) {
+        results = await bubbleSearch("libraryitem", [
+          spaceConstraint,
+          { key: "url_text", constraint_type: "equals", value: url },
+        ]);
       }
-      const results = await bubbleSearch("libraryitem", constraints);
+      if (!results.length && title) {
+        results = await bubbleSearch("libraryitem", [
+          spaceConstraint,
+          { key: "name_text", constraint_type: "equals", value: title },
+        ]);
+      }
       if (!results.length) return NextResponse.json({ found: false, fields: {} });
 
       const record = results[0];

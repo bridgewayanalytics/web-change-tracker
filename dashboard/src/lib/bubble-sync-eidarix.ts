@@ -7,16 +7,14 @@
  */
 
 const EIDARIX_VERSION = process.env.EIDARIX_VERSION ?? "test";
-const SPACE_IDS: Record<string, string> = {
-  test: "1768998437948x865417918648382000",
-  live: "1770642377799x775210694699370900",
-};
-const SPACE_ID = SPACE_IDS[EIDARIX_VERSION] ?? SPACE_IDS.test;
-const SPACE_CONSTRAINT = [{ key: "space", constraint_type: "equals", value: SPACE_ID }];
 
-// Reference data (organizations, chronicle topics) lives in the content/test space regardless
-// of which output space (test vs live) we're writing to.
-const CONTENT_SPACE_ID = SPACE_IDS.test;
+// All Bubble records (organizations, chronicle topics, library items, agenda items,
+// calendar items, library/calendar item types) live in the content space. Every data-
+// API lookup must scope by this space, and every workflow payload must set `space_id`
+// to this value so Eidarix workflows can resolve linked chronicle topics / orgs.
+// EIDARIX_VERSION only controls which Bubble database version receives writes
+// (`version-test` vs `version-live`), NOT which space records are tagged with.
+const CONTENT_SPACE_ID = "1768998437948x865417918648382000";
 const CONTENT_SPACE_CONSTRAINT = [{ key: "space", constraint_type: "equals", value: CONTENT_SPACE_ID }];
 
 const OBJ_BASE = "https://eidarix.bridgewayanalytics.com/api/1.1/obj";
@@ -39,7 +37,9 @@ async function getBubbleKey(): Promise<string> {
   return _cachedKey ?? "";
 }
 
-const STATUS_PREFIX_RE = /^(New|Existing|Updated)\s*[-–]\s*/i;
+// Matches: "New - ", "Existing — ", "Updated – ", "Revised: " etc. Accepts hyphen (-),
+// en-dash (–), em-dash (—), and colon as the separator.
+const STATUS_PREFIX_RE = /^(New|Existing|Updated|Revised)\s*[-–—:]\s*/i;
 function stripStatusPrefix(s: string): string {
   return s.replace(STATUS_PREFIX_RE, "").trim();
 }
@@ -235,7 +235,7 @@ async function findAgendaItemByTitle(title: string): Promise<string | null> {
   for (const key of ["title", "BA title"]) {
     try {
       const results = await bubbleSearch("agendaitem", [
-        ...SPACE_CONSTRAINT,
+        ...CONTENT_SPACE_CONSTRAINT,
         { key, constraint_type: "equals", value: title },
       ], 5);
       if (results.length) {
@@ -249,17 +249,21 @@ async function findAgendaItemByTitle(title: string): Promise<string | null> {
 }
 
 async function findLibraryItem(matchSearch: Record<string, string>): Promise<string | null> {
-  if (matchSearch.url) {
+  // Classifier may stamp status prefixes ("Updated — ", "Existing - ") on title; strip
+  // before searching since the Bubble record never has them.
+  const url   = matchSearch.url ? stripStatusPrefix(matchSearch.url) : "";
+  const title = matchSearch.title ? stripStatusPrefix(matchSearch.title) : "";
+  if (url) {
     const results = await bubbleSearch("libraryitem", [
-      ...SPACE_CONSTRAINT,
-      { key: "url_text", constraint_type: "equals", value: matchSearch.url },
+      ...CONTENT_SPACE_CONSTRAINT,
+      { key: "url_text", constraint_type: "equals", value: url },
     ], 5);
     if (results.length) return String(results[0]._id);
   }
-  if (matchSearch.title) {
+  if (title) {
     const results = await bubbleSearch("libraryitem", [
-      ...SPACE_CONSTRAINT,
-      { key: "name_text", constraint_type: "equals", value: matchSearch.title },
+      ...CONTENT_SPACE_CONSTRAINT,
+      { key: "name_text", constraint_type: "equals", value: title },
     ], 5);
     if (results.length) return String(results[0]._id);
   }
@@ -274,7 +278,7 @@ async function findCalendarItem(matchSearch: Record<string, string>): Promise<st
     nextDay.setUTCDate(nextDay.getUTCDate() + 1);
 
     const constraints: object[] = [
-      ...SPACE_CONSTRAINT,
+      ...CONTENT_SPACE_CONSTRAINT,
       { key: "date", constraint_type: "greater than", value: `${dateStr}T00:00:00.000Z` },
       { key: "date", constraint_type: "less than", value: nextDay.toISOString().slice(0, 10) + "T00:00:00.000Z" },
     ];
@@ -300,7 +304,7 @@ async function findCalendarItem(matchSearch: Record<string, string>): Promise<st
     const org = orgs.find(o => String(o.Name ?? "").trim() === matchSearch.org);
     if (!org?._id) return null;
     const results = await bubbleSearch("calendaritem", [
-      ...SPACE_CONSTRAINT,
+      ...CONTENT_SPACE_CONSTRAINT,
       { key: "orgs", constraint_type: "contains", value: String(org._id) },
     ], 10);
     if (results.length === 1) {
@@ -372,9 +376,11 @@ async function resolveAgendaItems(
     }
 
     let officialTitle = stripStatusPrefix(String(item.official_title ?? "").trim());
-    let referenceId = stripStatusPrefix(String(item.reference_id ?? "").trim());
+    let referenceId   = stripStatusPrefix(String(item.reference_id ?? "").trim());
+    let officialId    = stripStatusPrefix(String(item.official_id ?? "").trim());
     if (officialTitle.toUpperCase() === "N/A") officialTitle = "";
-    if (referenceId.toUpperCase() === "N/A") referenceId = "";
+    if (referenceId.toUpperCase()   === "N/A") referenceId   = "";
+    if (officialId.toUpperCase()    === "N/A") officialId    = "";
 
     // If no topics, use the empty-topic fallback chronicle topic
     let finalTopicIds = topicIds;
@@ -383,10 +389,15 @@ async function resolveAgendaItems(
       if (fallbackId) finalTopicIds = [fallbackId];
     }
 
+    // Bubble field mapping:
+    //   reference_id → BA Ref #    (Bridgeway's standardized identifier)
+    //   official_id  → Ref #       (NAIC's official identifier)
+    //   official_title → NAIC Title
     const result = await eidarixWfPost("create-agenda-item/", {
       title,
       official_title: officialTitle,
       reference_id: referenceId,
+      official_id:  officialId,
       chronicle_topics: finalTopicIds,
       alert_id: agentCallId,
       space_id: CONTENT_SPACE_ID,
