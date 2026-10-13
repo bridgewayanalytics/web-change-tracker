@@ -101,8 +101,9 @@ interface AgendaItemPreview {
   title: string;
   status?: string;  // "New" → create in Bubble; "Existing"/"Updated" → look up and link
   chronicle_topics?: string[];
-  official_title?: string;
-  reference_id?: string;
+  official_title?: string;  // from agenda_item_title_official.official_title     → Bubble "NAIC Title"
+  reference_id?: string;    // from agenda_item_standardized_id.standardized_id   → Bubble "BA Ref #"
+  official_id?: string;     // from agenda_item_official_id.official_id            → Bubble "Ref #"
 }
 
 // A structured display field
@@ -132,9 +133,10 @@ const AGENT_FIELD_LABEL_FALLBACKS: Record<string, string> = {
   "transcript_s3_key":                 "Transcript File",
   "library_item_preliminary_title.title": "Library Item Preliminary Title",
   "agenda_item_title_chronicle_topics[].chronicle_topics": "Agenda Item Chronicle Topics",
-  "agenda_item_title_chronicle_topics[].agenda_item_title": "Agenda Item Title",
+  "agenda_item_title_chronicle_topics[].agenda_item_title": "Agenda Item Bridgeway Title",
   "agenda_item_title_official[].official_title":           "Agenda Item Official Title",
-  "agenda_item_standardized_id[].standardized_id":         "Agenda Item Reference ID",
+  "agenda_item_standardized_id[].standardized_id":         "Agenda Item Standardized ID",
+  "agenda_item_official_id[].official_id":                 "Agenda Item Official ID",
 };
 
 function resolveAgentFieldLabel(
@@ -170,7 +172,8 @@ function notNA(s: string): boolean {
   return !NA_SET.has(s.toLowerCase().trim());
 }
 
-const STATUS_PREFIXES = /^(New|Existing|Updated|Revised):\s*/i;
+// Accepts hyphen (-), en-dash (–), em-dash (—), and colon as the separator.
+const STATUS_PREFIXES = /^(New|Existing|Updated|Revised)\s*[-–—:]\s*/i;
 function stripStatusPrefix(s: string): string {
   return s.replace(STATUS_PREFIXES, "").trim();
 }
@@ -228,7 +231,7 @@ function enrichFromDocExtraction(
 ): AgendaItemPreview[] {
   if (!docRows.length) return items;
 
-  type DocEntry = { chronicle_topics: string[]; official_title: string; reference_id: string };
+  type DocEntry = { chronicle_topics: string[]; official_title: string; reference_id: string; official_id: string };
 
   // Sort rows by agenda_number so positional matching is deterministic
   const sorted = [...docRows].sort(
@@ -244,6 +247,7 @@ function enrichFromDocExtraction(
       ) as Array<Record<string, unknown>> | undefined;
       const officialArr     = (dr.agenda_item_title_official    as Array<Record<string, unknown>> | undefined) ?? [];
       const standardizedArr = (dr.agenda_item_standardized_id  as Array<Record<string, unknown>> | undefined) ?? [];
+      const officialIdArr   = (dr.agenda_item_official_id       as Array<Record<string, unknown>> | undefined) ?? [];
       if (!Array.isArray(bridgewayItems)) continue;
       bridgewayItems.forEach((entry, i) => {
         const docTopics = Array.isArray(entry.chronicle_topics)
@@ -251,7 +255,8 @@ function enrichFromDocExtraction(
           : [];
         const offTitle = String(officialArr[i]?.official_title ?? "").trim();
         const refId    = String(standardizedArr[i]?.standardized_id ?? "").trim();
-        entries.push({ chronicle_topics: docTopics, official_title: offTitle, reference_id: refId });
+        const offId    = String(officialIdArr[i]?.official_id ?? "").trim();
+        entries.push({ chronicle_topics: docTopics, official_title: offTitle, reference_id: refId, official_id: offId });
       });
     }
     return entries;
@@ -263,6 +268,7 @@ function enrichFromDocExtraction(
       ...(data.chronicle_topics.length > 0                 ? { chronicle_topics: data.chronicle_topics } : {}),
       ...(data.official_title && notNA(data.official_title) ? { official_title: data.official_title }   : {}),
       ...(data.reference_id   && notNA(data.reference_id)   ? { reference_id: data.reference_id }       : {}),
+      ...(data.official_id    && notNA(data.official_id)    ? { official_id: data.official_id }         : {}),
     };
   }
 
@@ -276,6 +282,7 @@ function enrichFromDocExtraction(
     ) as Array<Record<string, unknown>> | undefined;
     const officialArr     = (dr.agenda_item_title_official    as Array<Record<string, unknown>> | undefined) ?? [];
     const standardizedArr = (dr.agenda_item_standardized_id  as Array<Record<string, unknown>> | undefined) ?? [];
+    const officialIdArr   = (dr.agenda_item_official_id       as Array<Record<string, unknown>> | undefined) ?? [];
     if (!Array.isArray(bridgewayItems)) continue;
     bridgewayItems.forEach((entry, i) => {
       const titleRaw = String(entry.agenda_item_title ?? "").trim();
@@ -285,7 +292,8 @@ function enrichFromDocExtraction(
         : [];
       const offTitle = String(officialArr[i]?.official_title ?? "").trim();
       const refId    = String(standardizedArr[i]?.standardized_id ?? "").trim();
-      byTitle.set(titleRaw.toLowerCase(), { chronicle_topics: docTopics, official_title: offTitle, reference_id: refId });
+      const offId    = String(officialIdArr[i]?.official_id ?? "").trim();
+      byTitle.set(titleRaw.toLowerCase(), { chronicle_topics: docTopics, official_title: offTitle, reference_id: refId, official_id: offId });
     });
   }
 
@@ -685,6 +693,7 @@ interface SectionProps {
   schemaLabels: Record<string, string> | null;
   bubbleOptions: BubbleOptionsMap;
   vectorStoreOptions?: VectorStoreOption[];  // when set, renders "Add to Library Vector Store ▼"
+  fallbackNotice?: string;             // shown as amber banner above the field table
 }
 
 function FieldTable({
@@ -859,7 +868,7 @@ function AddToVectorStoreButton({ options }: { options: VectorStoreOption[] }) {
 function Section({
   title, subtitle, objectType, system, action, fields, editState, onEdit,
   sectionState, onPublish, currentRecord, isLoadingRecord, agendaItems, schemaLabels, bubbleOptions,
-  vectorStoreOptions,
+  vectorStoreOptions, fallbackNotice,
 }: SectionProps) {
   const isDone    = sectionState.status === "done";
   const isLoading = sectionState.status === "loading";
@@ -913,8 +922,10 @@ function Section({
     </div>
   );
 
-  // For UPDATE: if loading finished and record not found → minimal card
-  const recordNotFound = action === "update" && !isLoadingRecord && currentRecord != null && !currentRecord.found;
+  // For UPDATE: if loading finished and record not found → minimal card.
+  // When fallbackNotice is set, the parent has already downgraded to CREATE —
+  // show the full card instead of the minimal missing-record screen.
+  const recordNotFound = action === "update" && !isLoadingRecord && currentRecord != null && !currentRecord.found && !fallbackNotice;
 
   if (recordNotFound) {
     return (
@@ -952,6 +963,14 @@ function Section({
     <div className={`rounded-lg border ${borderColor} overflow-hidden`}>
       {/* Header */}
       <SectionHeader showSubtitle />
+
+      {/* Fallback notice — shown when original UPDATE action was downgraded to CREATE */}
+      {fallbackNotice && (
+        <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 flex items-start gap-1.5">
+          <span className="text-amber-500 mt-0.5">⚠</span>
+          <p className="text-[11px] text-amber-700 leading-snug">{fallbackNotice}</p>
+        </div>
+      )}
 
       {/* Fields */}
       {displayFields.length > 0 && (
@@ -1108,6 +1127,7 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
       ) as Array<Record<string, unknown>> | undefined;
       const officialArr     = (dr.agenda_item_title_official    as Array<Record<string, unknown>> | undefined) ?? [];
       const standardizedArr = (dr.agenda_item_standardized_id  as Array<Record<string, unknown>> | undefined) ?? [];
+      const officialIdArr   = (dr.agenda_item_official_id       as Array<Record<string, unknown>> | undefined) ?? [];
       if (!Array.isArray(bridgewayItems)) continue;
       bridgewayItems.forEach((entry, i) => {
         const title = String(entry.agenda_item_title ?? "").trim();
@@ -1117,12 +1137,14 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
           : [];
         const offTitle = String(officialArr[i]?.official_title ?? "").trim();
         const refId    = String(standardizedArr[i]?.standardized_id ?? "").trim();
+        const offId    = String(officialIdArr[i]?.official_id ?? "").trim();
         result.push({
           title,
           status: String(entry.status ?? "New").trim(),
           chronicle_topics: topics,
           ...(offTitle && notNA(offTitle) ? { official_title: offTitle } : {}),
           ...(refId    && notNA(refId)    ? { reference_id:  refId }     : {}),
+          ...(offId    && notNA(offId)    ? { official_id:   offId }     : {}),
         });
       });
     }
@@ -1158,9 +1180,10 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
   function applyAgendaEdits(item: AgendaItemPreview, i: number): AgendaItemPreview {
     const edits = agendaItemEdits[i] ?? {};
     const out: AgendaItemPreview = { ...item };
-    if (edits["Title"] !== undefined) out.title = edits["Title"];
-    if (edits["Official Title"] !== undefined) out.official_title = edits["Official Title"];
-    if (edits["Reference ID"] !== undefined) out.reference_id = edits["Reference ID"];
+    if (edits["BA title"]       !== undefined) out.title          = edits["BA title"];
+    if (edits["NAIC Title"]     !== undefined) out.official_title = edits["NAIC Title"];
+    if (edits["BA Ref #"]       !== undefined) out.reference_id   = edits["BA Ref #"];
+    if (edits["Ref #"]          !== undefined) out.official_id    = edits["Ref #"];
     if (edits["Chronicle Topics"] !== undefined) {
       out.chronicle_topics = multiFromEditValue(edits["Chronicle Topics"]) ?? [];
     }
@@ -1280,6 +1303,14 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
 
   const agendaDone = !!(row.eidarix_agenda_item_ids as unknown[] | undefined)?.length;
 
+  // UPDATE → CREATE fallback: when the classifier said "update" but no matching record
+  // exists in Bubble, downgrade the action to "create" so the modal lets the user
+  // publish instead of showing a dead-end "Record not found" screen.
+  const libFallbackToCreate   = libAction   === "update" && !loadingLibRecord   && libRecord   != null && !libRecord.found;
+  const eventFallbackToCreate = eventAction === "update" && !loadingEventRecord && eventRecord != null && !eventRecord.found;
+  const effectiveLibAction    = libFallbackToCreate   ? "create" : libAction;
+  const effectiveEventAction  = eventFallbackToCreate ? "create" : eventAction;
+
   const [sections, setSections] = useState<Record<string, SectionState>>({
     event:        { status: eventDone  ? "done" : "idle" },
     library_item: { status: libDone   ? "done" : "idle" },
@@ -1346,7 +1377,7 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
   async function handlePublishEvent(skipValidation = false) {
     if (libAction && sections.library_item.status !== "done") {
       setSectionState("event", "error",
-        libAction === "create"
+        effectiveLibAction === "create"
           ? "Create Library Item first — the event must link to it."
           : "Update Library Item first — the event must link to it."
       );
@@ -1354,6 +1385,16 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     }
     setSectionState("event", "loading");
     try {
+      // UPDATE → CREATE fallback for event: patch bubble_action.event to "create".
+      if (eventFallbackToCreate) {
+        const updatedAction = { ...(bubbleAction ?? {}), event: "create" as const };
+        await fetch("/api/alerts/patch-row", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agent_call_id: agentCallId, fields: { bubble_action: updatedAction } }),
+        });
+        onFieldPatched({ bubble_action: updatedAction } as Partial<AlertRow>);
+      }
       if (Object.keys(eventEdits).length > 0) {
         const updated = applyEditsToPreview(eventPreview, eventEdits, EVENT_EDIT_MAP);
         await patchBubbleAction("event_preview", updated);
@@ -1435,6 +1476,17 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
       const effectiveEdits = { ...libEdits };
       if (effectiveEdits["Date"] === undefined && derivedDate) {
         effectiveEdits["Date"] = derivedDate;
+      }
+      // UPDATE → CREATE fallback: patch bubble_action.library_item so the sync executor
+      // runs the create path instead of searching for a non-existent record.
+      if (libFallbackToCreate) {
+        const updatedAction = { ...(bubbleAction ?? {}), library_item: "create" as const };
+        await fetch("/api/alerts/patch-row", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agent_call_id: agentCallId, fields: { bubble_action: updatedAction } }),
+        });
+        onFieldPatched({ bubble_action: updatedAction } as Partial<AlertRow>);
       }
       if (Object.keys(effectiveEdits).length > 0) {
         const updated = applyEditsToPreview(libPreview, effectiveEdits, LIB_EDIT_MAP);
@@ -1591,58 +1643,62 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
                   <span className="text-[11px] text-red-500 font-medium">✕ Failed</span>
                 ) : null}
               </div>
-              {/* Item list — compact: title input + chronicle topics searchable combobox */}
-              <div className="px-4 py-3 space-y-0">
+              {/* Item list — one FieldTable per agenda item (same 3-column layout as library item / event cards) */}
+              <div className="px-4 py-3 space-y-3">
                 {newAgendaItems.map((item, i) => {
                   if (deletedNewIndices.has(i)) return null;
                   const isDone = sections.agenda_items.status === "done";
                   const activeIndex = newAgendaItems.slice(0, i + 1).filter((_, j) => !deletedNewIndices.has(j)).length;
                   const itemEdits = agendaItemEdits[i] ?? {};
-                  const displayedTitle = itemEdits["Title"] ?? stripStatusPrefix(item.title);
-                  // Topics: user-edited > enriched-from-doc-extraction > raw preview
+                  // Current values: user-edited > enriched-from-doc-extraction > raw preview
+                  const enriched = enrichedNewAgendaItems[i] ?? item;
+                  const baTitle    = stripStatusPrefix(item.title);
+                  const naicTitle  = enriched.official_title ? stripStatusPrefix(enriched.official_title) : "";
+                  const baRef      = enriched.reference_id ? stripStatusPrefix(enriched.reference_id) : "";
+                  const officialId = enriched.official_id ?? "";
                   const editedTopics = multiFromEditValue(itemEdits["Chronicle Topics"]);
-                  const displayedTopics = editedTopics ?? (enrichedNewAgendaItems[i]?.chronicle_topics ?? item.chronicle_topics) ?? [];
+                  const topics = editedTopics ?? (enriched.chronicle_topics ?? []);
+
+                  const itemFields: FieldEntry[] = [
+                    { label: "BA title",   agentField: "agenda_item_title_chronicle_topics[].agenda_item_title", value: baTitle,    readOnly: isDone },
+                    { label: "NAIC Title", agentField: "agenda_item_title_official[].official_title",            value: naicTitle,  readOnly: isDone },
+                    { label: "BA Ref #",   agentField: "agenda_item_standardized_id[].standardized_id",          value: baRef,      readOnly: isDone },
+                    { label: "Ref #",      agentField: "agenda_item_official_id[].official_id",                  value: officialId, readOnly: isDone },
+                    {
+                      label: "Topics - dt",
+                      agentField: "agenda_item_title_chronicle_topics[].chronicle_topics",
+                      topics,
+                      ...(isDone ? { readOnly: true as const } : { combobox: { type: "chronicletopic" as const, mode: "multi" as const } }),
+                    },
+                  ];
+
                   return (
-                    <div key={i} className={`py-2.5 ${i > 0 ? "border-t border-gray-100" : ""}`}>
-                      <div className="flex items-start gap-2">
-                        <span className="text-[11px] text-gray-400 pt-1.5 flex-shrink-0">{activeIndex}.</span>
-                        <div className="flex-1 min-w-0 space-y-1.5">
-                          {isDone ? (
-                            <p className="text-[12px] font-semibold text-gray-800">{displayedTitle}</p>
-                          ) : (
-                            <input
-                              type="text"
-                              value={displayedTitle}
-                              onChange={e => updateAgendaItemField(i, "Title", e.target.value)}
-                              className="w-full text-[12px] font-semibold text-gray-800 bg-transparent border-b border-gray-200 hover:border-gray-400 focus:border-indigo-400 focus:outline-none pb-0.5 transition-colors"
-                            />
+                    <div key={i} className="rounded-md border border-gray-200 overflow-hidden">
+                      <div className="flex items-center justify-between px-3 py-1.5 bg-gray-50 border-b border-gray-200">
+                        <span className="text-[11px] font-semibold text-gray-600">
+                          Agenda Item {activeIndex}
+                          {item.status && item.status.toLowerCase() !== "new" && (
+                            <span className="ml-1.5 text-[9px] font-medium bg-blue-100 text-blue-700 rounded px-1.5 py-0.5 uppercase tracking-wider">
+                              {item.status}
+                            </span>
                           )}
-                          {isDone ? (
-                            displayedTopics.length > 0 && (
-                              <div className="flex flex-wrap gap-1">
-                                {displayedTopics.map(t => (
-                                  <span key={t} className="text-[10px] bg-violet-100 text-violet-700 rounded px-1.5 py-0.5 border border-violet-200 leading-tight">{t}</span>
-                                ))}
-                              </div>
-                            )
-                          ) : (
-                            <SearchableCombobox
-                              mode="multi"
-                              options={bubbleOptions.chronicletopic ?? []}
-                              loading={bubbleOptions.chronicletopic === undefined}
-                              values={displayedTopics}
-                              onChange={names => updateAgendaItemField(i, "Chronicle Topics", multiToEditValue(names))}
-                              placeholder="Add chronicle topics…"
-                            />
-                          )}
-                        </div>
+                        </span>
                         {!isDone && (
                           <button
                             onClick={() => setDeletedNewIndices(prev => { const s = new Set(Array.from(prev)); s.add(i); return s; })}
-                            className="flex-shrink-0 text-gray-300 hover:text-red-400 transition-colors text-[16px] leading-none pt-1"
+                            className="text-gray-300 hover:text-red-500 transition-colors text-[16px] leading-none"
                             title="Remove this agenda item"
                           >×</button>
                         )}
+                      </div>
+                      <div className="px-3 py-2">
+                        <FieldTable
+                          fields={itemFields}
+                          editState={itemEdits}
+                          onEdit={(label, value) => updateAgendaItemField(i, label, value)}
+                          schemaLabels={schemaLabels}
+                          bubbleOptions={bubbleOptions}
+                        />
                       </div>
                     </div>
                   );
@@ -1677,11 +1733,11 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
                 </div>
               )}
               <Section
-                title={libAction === "create" ? "Create Library Item" : "Update Library Item"}
+                title={effectiveLibAction === "create" ? "Create Library Item" : "Update Library Item"}
                 subtitle={safeStr(libPreview.title) || libItemTitle || undefined}
                 objectType="Library Item"
                 system="Bubble"
-                action={libAction}
+                action={effectiveLibAction}
                 fields={libFields}
                 editState={libEdits}
                 onEdit={(label, value) => setLibEdits(prev => ({ ...prev, [label]: value }))}
@@ -1692,6 +1748,9 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
                 schemaLabels={schemaLabels}
                 bubbleOptions={bubbleOptions}
                 vectorStoreOptions={libraryVectorStoreOptions}
+                fallbackNotice={libFallbackToCreate
+                  ? "No matching record found in Bubble — a new library item will be created."
+                  : undefined}
               />
             </div>
           )}
@@ -1704,11 +1763,11 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
                 </div>
               )}
               <Section
-                title={eventAction === "create" ? "Create Event" : "Update Event"}
+                title={effectiveEventAction === "create" ? "Create Event" : "Update Event"}
                 subtitle={safeStr(eventPreview.title) || safeStr((row as Record<string, unknown>).event_title) || undefined}
                 objectType="Calendar Event"
                 system="Bubble"
-                action={eventAction}
+                action={effectiveEventAction}
                 fields={eventFields}
                 editState={eventEdits}
                 onEdit={(label, value) => setEventEdits(prev => ({ ...prev, [label]: value }))}
@@ -1718,6 +1777,9 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
                 isLoadingRecord={loadingEventRecord}
                 schemaLabels={schemaLabels}
                 bubbleOptions={bubbleOptions}
+                fallbackNotice={eventFallbackToCreate
+                  ? "No matching event found in Bubble — a new calendar event will be created."
+                  : undefined}
               />
             </div>
           )}
