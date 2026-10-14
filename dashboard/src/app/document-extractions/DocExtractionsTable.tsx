@@ -1499,23 +1499,14 @@ export function DocExtractionsTable({ rows, onAccepted, schemaVersion = 0, hasQa
                               </button>
                             )
                           )}
-                          {callId && (
-                            isQaRunning ? (
-                              <div className="flex items-center gap-1 text-[11px] text-gray-400">
-                                <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
-                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                                </svg>
-                                QA Running…
-                              </div>
-                            ) : !evalResult ? (
-                              <button
-                                onClick={() => startQa(callId, libUrl || undefined)}
-                                className="text-[11px] font-medium text-violet-600 hover:text-violet-800 hover:underline whitespace-nowrap"
-                              >
-                                Run QA
-                              </button>
-                            ) : null
+                          {callId && isQaRunning && (
+                            <div className="flex items-center gap-1 text-[11px] text-gray-400">
+                              <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                              </svg>
+                              QA Running…
+                            </div>
                           )}
                         </div>
                       </td>

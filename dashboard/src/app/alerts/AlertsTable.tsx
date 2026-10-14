@@ -1601,11 +1601,8 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
                           })()}
                           {(() => {
                             const callId = String(row.agent_call_id ?? "");
-                            if (!callId) return null;
-                            const hasEval = !!lookupEvalResult(row, evalResults);
-                            if (hasEval) return null;
-                            const isQaRunning = qaRunning.has(callId);
-                            if (isQaRunning) return (
+                            if (!callId || !qaRunning.has(callId)) return null;
+                            return (
                               <div className="flex items-center gap-1 text-[11px] text-gray-400">
                                 <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
                                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -1613,14 +1610,6 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
                                 </svg>
                                 QA Running…
                               </div>
-                            );
-                            return (
-                              <button
-                                onClick={() => startQa(callId)}
-                                className="text-[11px] font-medium text-violet-600 hover:text-violet-800 hover:underline whitespace-nowrap"
-                              >
-                                Run QA
-                              </button>
                             );
                           })()}
                           {(() => {
@@ -1648,15 +1637,12 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
                             const hasSyncRecord = !!effectiveRow.bubble_sync_status;
 
                             const hasAnyAction = !!(bubbleAction || transcriptKey || hasSyncRecord);
-                            if (!hasAnyAction) return null;
 
-                            // "Complete" = all applicable Bubble IDs actually stamped + transcript approved
-                            // For rows with no bubble_action but sync_status=synced (old stub rows), treat as complete
+                            // "Complete" = has something to sync AND all applicable Bubble IDs stamped + transcript approved
                             const eventDone = !eventAction || !!effectiveRow.bubble_event_id;
                             const libDone = !libAction || !!effectiveRow.bubble_library_item_id;
                             const transcriptDone = !transcriptKey || effectiveRow.ingest_status === "approved";
-                            const isComplete = (eventDone && libDone && transcriptDone) ||
-                              (!bubbleAction && !transcriptKey && effectiveRow.bubble_sync_status === "synced");
+                            const isComplete = hasAnyAction && eventDone && libDone && transcriptDone;
 
                             if (isComplete) {
                               return (
@@ -1678,6 +1664,52 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
                                 className="text-[11px] font-medium text-indigo-600 hover:text-indigo-800 hover:underline whitespace-nowrap"
                               >
                                 Content Gate
+                              </button>
+                            );
+                          })()}
+                          {(() => {
+                            const callId = String(row.agent_call_id ?? "");
+                            if (!callId) return null;
+                            const overrideData = rowOverrides.get(callId) ?? {};
+                            const effectiveAlertType = String((overrideData.alert_type ?? row.alert_type) ?? "");
+                            const preMarkType = String((overrideData._pre_mark_alert_type ?? row._pre_mark_alert_type) ?? "");
+                            const NON_APPLICABLE_TYPES = new Set([
+                              "No Meaningful Change",
+                              "Alert not relevant - the change was limited to carrousel or reordering of content",
+                              "Alert not relevant - the change was limited to removal of content",
+                              "Alert not relevant",
+                            ]);
+                            if (NON_APPLICABLE_TYPES.has(effectiveAlertType)) {
+                              if (!preMarkType) return null;
+                              return (
+                                <button
+                                  onClick={async () => {
+                                    await fetch("/api/alerts/patch-row", {
+                                      method: "PATCH",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ agent_call_id: callId, fields: { alert_type: preMarkType, _pre_mark_alert_type: null } }),
+                                    });
+                                    setRowOverrides((prev) => new Map(prev).set(callId, { ...(prev.get(callId) ?? {}), alert_type: preMarkType, _pre_mark_alert_type: null }));
+                                  }}
+                                  className="text-[11px] text-gray-400 hover:text-green-600 hover:underline whitespace-nowrap text-left"
+                                >
+                                  Mark relevant
+                                </button>
+                              );
+                            }
+                            return (
+                              <button
+                                onClick={async () => {
+                                  await fetch("/api/alerts/patch-row", {
+                                    method: "PATCH",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ agent_call_id: callId, fields: { alert_type: "Alert not relevant", _pre_mark_alert_type: effectiveAlertType } }),
+                                  });
+                                  setRowOverrides((prev) => new Map(prev).set(callId, { ...(prev.get(callId) ?? {}), alert_type: "Alert not relevant", _pre_mark_alert_type: effectiveAlertType }));
+                                }}
+                                className="text-[11px] text-gray-400 hover:text-red-500 hover:underline whitespace-nowrap text-left"
+                              >
+                                Mark irrelevant
                               </button>
                             );
                           })()}
