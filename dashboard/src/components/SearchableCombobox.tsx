@@ -25,10 +25,14 @@ interface MultiProps extends BaseProps {
 
 type Props = SingleProps | MultiProps;
 
+const DROPDOWN_MAX_HEIGHT = 256;
+
 export function SearchableCombobox(props: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [openUpward, setOpenUpward] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Close on outside click
@@ -39,6 +43,16 @@ export function SearchableCombobox(props: Props) {
     };
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  // Decide upward vs downward based on viewport space when opening
+  useEffect(() => {
+    if (!open || !triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    // Open upward only if there's not enough space below AND there's more space above
+    setOpenUpward(spaceBelow < DROPDOWN_MAX_HEIGHT && spaceAbove > spaceBelow);
   }, [open]);
 
   // Focus input when opened
@@ -83,6 +97,7 @@ export function SearchableCombobox(props: Props) {
     <div ref={rootRef} className="relative w-full">
       {/* Trigger / selected chips */}
       <div
+        ref={triggerRef}
         onClick={() => !props.disabled && setOpen(true)}
         className={`min-h-[28px] w-full border border-gray-200 rounded px-2 py-1 bg-white cursor-text transition-colors ${open ? "border-indigo-400 ring-1 ring-indigo-100" : "hover:border-gray-400"} ${props.disabled ? "opacity-50 cursor-not-allowed" : ""}`}
       >
@@ -109,7 +124,7 @@ export function SearchableCombobox(props: Props) {
 
       {/* Dropdown panel */}
       {open && (
-        <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-64 overflow-hidden flex flex-col">
+        <div className={`absolute z-20 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-64 overflow-hidden flex flex-col ${openUpward ? "bottom-full mb-1" : "top-full mt-1"}`}>
           <div className="p-2 border-b border-gray-100 bg-gray-50/60">
             <input
               ref={inputRef}

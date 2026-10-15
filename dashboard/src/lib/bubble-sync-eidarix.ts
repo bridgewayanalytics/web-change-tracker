@@ -531,8 +531,11 @@ export async function validateSyncPlan(
   const row = rows.find(r => r.agent_call_id === agentCallId);
   if (!row) return { valid: false, issues: [{ field: "Row", message: `No row found for agent_call_id=${agentCallId}`, unresolved: [], severity: "error" }] };
 
+  // When there's no stored bubble_action, the Content Gate may still have synthesized
+  // agenda items from doc extraction and will patch the row before syncing. Nothing to
+  // validate at open time — return success so the banner stays silent.
   const plan = row.bubble_action as Record<string, unknown> | undefined;
-  if (!plan) return { valid: false, issues: [{ field: "bubble_action", message: "No bubble_action on row", unresolved: [], severity: "error" }] };
+  if (!plan) return { valid: true, issues: [] };
 
   const ep = (plan.event_preview  ?? {}) as Record<string, unknown>;
   const lp = (plan.library_item_preview ?? {}) as Record<string, unknown>;
