@@ -297,15 +297,52 @@ def _parse_output(raw: str) -> dict:
 # PDF fetch helper
 # ---------------------------------------------------------------------------
 
-def _fetch_single_pdf(url: str) -> str | None:
-    """Fetch and extract text from a single PDF URL. Returns None on any failure.
+def _render_html_to_pdf_text(url: str) -> str | None:
+    """Render an HTML page to PDF via Playwright and extract plain text from it."""
+    try:
+        from playwright.sync_api import sync_playwright
+        from scrape.pdf_meeting_meta import _extract_plain_text
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+            )
+            ctx = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            )
+            page = ctx.new_page()
+            try:
+                page.goto(url, wait_until="networkidle", timeout=30000)
+                pdf_bytes = page.pdf(format="A4")
+            finally:
+                browser.close()
+        if pdf_bytes:
+            text = _extract_plain_text(pdf_bytes)
+            if text and text.strip():
+                log.info("document_agent: rendered HTML→PDF (%d chars) from %s", len(text), url[:80])
+                return text.strip()
+            log.warning("document_agent: HTML→PDF rendered but extracted no text from %s", url[:80])
+    except Exception as e:
+        log.warning("document_agent: HTML→PDF render failed for %s: %s", url[:80], e)
+    return None
 
-    Tries requests first (fast). If blocked (403/non-200), falls back to Playwright
-    so that Cloudflare-protected NAIC PDF links are handled the same way as HTML pages.
+
+def _fetch_single_pdf(url: str) -> str | None:
+    """Fetch and extract text from a URL. Returns None on any failure.
+
+    For PDF URLs: tries requests first (fast), falls back to Playwright expect_download()
+    for Cloudflare-protected PDFs.
+    For HTML URLs: uses Playwright page.pdf() to render the page to PDF, then extracts text.
     """
     url = url.strip()
-    if not url or not url.lower().split("?")[0].endswith(".pdf"):
+    if not url:
         return None
+
+    is_pdf = url.lower().split("?")[0].endswith(".pdf")
+
+    if not is_pdf:
+        return _render_html_to_pdf_text(url)
+
     from scrape.pdf_meeting_meta import _extract_plain_text
 
     # --- requests path (fast, works for unprotected PDFs) ---
@@ -385,11 +422,11 @@ def _fetch_single_pdf(url: str) -> str | None:
 
 def _fetch_pdf_text(url: str) -> str | None:
     """
-    Fetch a PDF from `url` and extract plain text.
+    Fetch a PDF or HTML page from `url` and extract plain text.
     If `url` is semicolon-separated, tries each candidate in order and returns
     the first successful result. Does NOT concatenate — each extraction call
     must cover exactly one document.
-    Returns None if no PDF content could be extracted.
+    Returns None if no content could be extracted.
     """
     if not url:
         return None
