@@ -301,8 +301,10 @@ def _parse_output(raw: str) -> dict:
 def _render_html_to_pdf_text(url: str) -> str | None:
     """Render an HTML page to text for vectorization.
 
-    Primary path: Playwright page.pdf() with domcontentloaded (fast, works for JS-rendered pages).
-    Fallback: requests + BeautifulSoup plain-text extraction (works when Playwright fails in ECS).
+    Primary path: Playwright — goto with domcontentloaded, then extract page.inner_text()
+    directly (more reliable than PDF in headless ECS). Falls back to page.pdf() if inner_text
+    is empty (e.g. JS-rendered content not yet in DOM).
+    Last resort: requests + BeautifulSoup (blocked on some NAIC pages, but worth trying).
     """
     from scrape.pdf_meeting_meta import _extract_plain_text
 
@@ -323,6 +325,13 @@ def _render_html_to_pdf_text(url: str) -> str | None:
                 # networkidle, which waits for all network activity to quiesce (can be 30s+
                 # on pages with analytics/polling). Article text is always in the DOM.
                 page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                # Extract text directly from the live DOM — more reliable than PDF in headless
+                # ECS environments where font subsetting can produce blank PDF text extraction.
+                inner_text = page.inner_text("body")
+                if inner_text and len(inner_text.strip()) > 200:
+                    log.info("document_agent: extracted HTML inner_text (%d chars) from %s", len(inner_text), url[:80])
+                    return inner_text.strip()
+                # DOM text is too short — try PDF render as fallback
                 pdf_bytes = page.pdf(format="A4")
             finally:
                 browser.close()
@@ -333,7 +342,7 @@ def _render_html_to_pdf_text(url: str) -> str | None:
                 return text.strip()
             log.warning("document_agent: HTML→PDF rendered but extracted no text from %s", url[:80])
     except Exception as e:
-        log.warning("document_agent: HTML→PDF render failed for %s (%s) — trying requests fallback", url[:80], e)
+        log.warning("document_agent: HTML render failed for %s (%s) — trying requests fallback", url[:80], e)
 
     # --- requests + BeautifulSoup fallback ---
     try:
