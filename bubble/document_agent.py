@@ -41,6 +41,7 @@ DOCUMENT_ALERT_TYPES = frozenset({
     "Updated Effective Date",
     "New or Updated Report or Other Resource",
     "Other",
+    "New Article",
 })
 
 _FALLBACK_SYSTEM_PROMPT = """\
