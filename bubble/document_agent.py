@@ -299,10 +299,16 @@ def _parse_output(raw: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def _render_html_to_pdf_text(url: str) -> str | None:
-    """Render an HTML page to PDF via Playwright and extract plain text from it."""
+    """Render an HTML page to text for vectorization.
+
+    Primary path: Playwright page.pdf() with domcontentloaded (fast, works for JS-rendered pages).
+    Fallback: requests + BeautifulSoup plain-text extraction (works when Playwright fails in ECS).
+    """
+    from scrape.pdf_meeting_meta import _extract_plain_text
+
+    # --- Playwright path ---
     try:
         from playwright.sync_api import sync_playwright
-        from scrape.pdf_meeting_meta import _extract_plain_text
         with sync_playwright() as pw:
             browser = pw.chromium.launch(
                 headless=True,
@@ -313,7 +319,10 @@ def _render_html_to_pdf_text(url: str) -> str | None:
             )
             page = ctx.new_page()
             try:
-                page.goto(url, wait_until="networkidle", timeout=30000)
+                # domcontentloaded fires as soon as the DOM is parsed — much faster than
+                # networkidle, which waits for all network activity to quiesce (can be 30s+
+                # on pages with analytics/polling). Article text is always in the DOM.
+                page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 pdf_bytes = page.pdf(format="A4")
             finally:
                 browser.close()
@@ -324,7 +333,27 @@ def _render_html_to_pdf_text(url: str) -> str | None:
                 return text.strip()
             log.warning("document_agent: HTML→PDF rendered but extracted no text from %s", url[:80])
     except Exception as e:
-        log.warning("document_agent: HTML→PDF render failed for %s: %s", url[:80], e)
+        log.warning("document_agent: HTML→PDF render failed for %s (%s) — trying requests fallback", url[:80], e)
+
+    # --- requests + BeautifulSoup fallback ---
+    try:
+        import requests as _requests
+        from bs4 import BeautifulSoup
+        resp = _requests.get(url, timeout=20, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        })
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            for tag in soup(["script", "style", "nav", "header", "footer"]):
+                tag.decompose()
+            text = soup.get_text(separator="\n", strip=True)
+            if text and text.strip():
+                log.info("document_agent: extracted HTML text via requests (%d chars) from %s", len(text), url[:80])
+                return text.strip()
+        log.warning("document_agent: requests fallback got status %s for %s", resp.status_code, url[:80])
+    except Exception as e:
+        log.warning("document_agent: requests fallback failed for %s: %s", url[:80], e)
+
     return None
 
 
