@@ -544,3 +544,16 @@ option-set fields (`AMPM from`, etc.).
 - **Chronicle topics flow upward.** Agenda-item topics → library item topics →
   event topics via `allLibraryItemTopics()`. This guarantees the event in Bubble
   carries every topic from every linked agenda item.
+- **Agenda-topic source precedence (sync executor).** `getAgendaTopicNames(row)`
+  reads chronicle-topic names from `bubble_action.agenda_item_previews` first
+  (the modal patches these with doc-extraction-synthesized items before firing
+  the sync) and falls back to the alert row's `agenda_item_title_chronicle_topics`
+  field only when previews are empty. Needed because the page-change agent
+  often leaves `agenda_item_title_chronicle_topics` as `"N/A"` placeholders
+  while the doc extraction agent produces the real topic lists per agenda item.
+- **UPDATE display vs. send parity.** `mergeWithCurrentRecord` in the modal
+  does **not** replace the computed preview value for list-replacing fields
+  (`Chronicle Topics`, `Linked Agenda Items`, `Organizations`) with the Bubble
+  record's current list, because the sync executor PATCH will overwrite those
+  Bubble lists wholesale. Showing the current Bubble state there would be
+  misleading — the user needs to see what will actually be sent.

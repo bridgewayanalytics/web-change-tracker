@@ -424,11 +424,23 @@ function getTopicNamesFromFieldIds(fieldIds: Record<string, unknown>): string[] 
 }
 
 function getAgendaTopicNames(row: Record<string, unknown>): string[] {
+  // Primary source: bubble_action.agenda_item_previews (patched by the modal; reflects
+  // doc-extraction-synthesized agenda items). Fallback: the alert row's agent-output
+  // agenda_item_title_chronicle_topics field (often "N/A" placeholders for alerts
+  // where the page-change agent couldn't extract agenda items from HTML).
+  const notNA = (t: unknown): t is string =>
+    typeof t === "string" && t.toUpperCase() !== "N/A" && t !== "";
+
+  const plan = row.bubble_action as Record<string, unknown> | undefined;
+  const previews = (plan?.agenda_item_previews as Array<Record<string, unknown>> | undefined) ?? [];
+  const fromPreviews = Array.from(new Set(
+    previews.flatMap(p => (p.chronicle_topics as string[] | undefined) ?? []).filter(notNA),
+  ));
+  if (fromPreviews.length) return fromPreviews;
+
   const entries = (row.agenda_item_title_chronicle_topics as Array<Record<string, unknown>> | undefined) ?? [];
   return Array.from(new Set(
-    entries
-      .flatMap(e => (e.chronicle_topics as string[] | undefined) ?? [])
-      .filter((t): t is string => typeof t === "string" && t.toUpperCase() !== "N/A" && t !== ""),
+    entries.flatMap(e => (e.chronicle_topics as string[] | undefined) ?? []).filter(notNA),
   ));
 }
 

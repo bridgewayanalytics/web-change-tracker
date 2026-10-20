@@ -580,9 +580,24 @@ function mergeWithCurrentRecord(
   }
   const current = currentRecord.fields;
 
+  // List-type fields where the sync executor REPLACES Bubble's existing list with the
+  // preview-computed value. Showing Bubble's current value here would be misleading —
+  // user needs to see what will actually be sent.
+  const SYNC_REPLACES_LIST = new Set(["Chronicle Topics", "Linked Agenda Items", "Organizations"]);
+
   return previewFields.map(field => {
     // Changed fields keep the new value (from preview), highlighted amber
     if (field.changed) return field;
+
+    // For list-replacing fields with a non-empty computed preview, trust the preview —
+    // that's what the sync will send.
+    if (SYNC_REPLACES_LIST.has(field.label)) {
+      const hasPreview =
+        (field.topics && field.topics.length > 0) ||
+        (field.list && field.list.length > 0) ||
+        (field.value && field.value !== "—");
+      if (hasPreview) return field;
+    }
 
     // For non-changed fields, use the authoritative Bubble value
     const bubbleVal = current[field.label];
