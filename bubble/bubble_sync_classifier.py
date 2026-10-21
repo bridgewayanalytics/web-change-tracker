@@ -426,14 +426,36 @@ _AGENDA_ENTRY_RE = re.compile(
 
 def _parse_doc_extraction_agenda_items(extraction: dict) -> list[dict]:
     """
-    Parse the doc extraction's `agenda_items` field into structured dicts.
+    Parse the doc extraction's agenda items into structured dicts.
 
-    Handles both the current string format:
+    Current schema (99%+ of rows): list-of-dicts in `agenda_item_bridgeway_title_chronicle_topic`:
+      [{"agenda_item_title": "...", "chronicle_topics": [...], "status": "New|Existing|Updated"}]
+    Legacy string schema (older rows) in `agenda_items`:
       "1. New - Title - Chronicle Topics: T1, T2; 2. Existing - ..."
-    and a future list-of-dicts format.
 
     Returns list of {title, status, chronicle_topics}.
     """
+    structured = extraction.get("agenda_item_bridgeway_title_chronicle_topic")
+    if isinstance(structured, list) and structured:
+        results = []
+        for item in structured:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("agenda_item_title") or item.get("title") or "").strip()
+            if not title or title.lower() in _DOC_NA:
+                continue
+            status = str(item.get("status") or "New").capitalize()
+            raw_topics = item.get("chronicle_topics") or []
+            if not isinstance(raw_topics, list):
+                raw_topics = [raw_topics]
+            topics = [
+                str(t).strip() for t in raw_topics
+                if str(t).strip() and str(t).strip().lower() not in _DOC_NA
+                and str(t).strip().lower() != "chronicle n/a"
+            ]
+            results.append({"title": title, "status": status, "chronicle_topics": topics})
+        return results
+
     raw = extraction.get("agenda_items") or ""
     if isinstance(raw, list):
         return [r for r in raw if isinstance(r, dict)]
