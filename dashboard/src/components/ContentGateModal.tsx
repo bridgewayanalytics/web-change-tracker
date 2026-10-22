@@ -414,19 +414,16 @@ const CLASSIFIER_KEY_TO_LABEL: Record<string, string> = {
   "Start": "Start Date/Time",
   "End": "End Date/Time",
   "Groups": "Organizations",
-  "Location": "Location URL",
-  "Call-in": "Call-In",
+  "Location": "Location",
   "Timezone": "Timezone",
   "Agenda": "Agenda",
   "Name": "Name",
   "URL": "URL",
-  "File": "File",
   "Type": "Type",
   "Organizations": "Organizations",
   "Status": "Status",
   "Description": "Summary",
   "Date": "Date",
-  "Doc Type": "Doc Type",
   "Topics": "Chronicle Topics",
 };
 
@@ -457,7 +454,6 @@ function buildEventFields(
     ? (ep.group as string[]).filter(Boolean).join(", ")
     : safeStr(ep.group);
   const url       = safeStr(ep.url);
-  const callIn    = safeStr(ep.call_in);
   const topics    = allLibraryItemTopics(ep, agendaItems);
   const eventType = deriveEventType(alertType);
 
@@ -482,7 +478,6 @@ function buildEventFields(
       changed: changedLabels.size > 0 ? changedLabels.has("Organizations") : undefined,
     },
     mk("Location",        "event_url",                         notNA(url)    ? url    : "—"),
-    mk("Call-In",         "event_call_in_number_access_code",  notNA(callIn) ? callIn : "—"),
   ];
   if (isFullDay) entries.splice(3, 0, mk("Full Day", "event_is_full_day", "Yes", { readOnly: true }));
 
@@ -503,6 +498,7 @@ function buildEventFields(
       ? { list: agendaItems.map(item => stripStatusPrefix(item.title)) }
       : { value: "—" }),
     readOnly: true,
+    changed: changedLabels.size > 0 ? changedLabels.has("Linked Agenda Items") : undefined,
   });
 
   // Agenda — always shown when there's a library item being linked (Bubble field name)
@@ -526,7 +522,6 @@ function buildLibFields(
 ): FieldEntry[] {
   const title    = safeStr(lp.title);
   const url      = safeStr(lp.url);
-  const filename = safeStr(lp.filename);
   const type     = safeStr(lp.type);
   const group    = Array.isArray(lp.group)
     ? (lp.group as string[]).filter(Boolean).join(", ")
@@ -537,7 +532,6 @@ function buildLibFields(
   const fd = (lp.fields ?? {}) as Record<string, string>;
   const description = fd["Description"] ?? "";
   const date        = derivedDate || cleanDate(fd["Date"] ?? "");
-  const docType     = fd["Doc Type"] ?? "";
 
   const mk = (label: string, agentField: string, value: string, opts?: Partial<FieldEntry>): FieldEntry => ({
     label, agentField, value,
@@ -550,7 +544,6 @@ function buildLibFields(
   const entries: FieldEntry[] = [
     mk("Name",          "library_item_preliminary_title.title", notNA(title)    ? title    : "—"),
     mk("URL",           "library_item_url",                     notNA(url)      ? url      : "—"),
-    mk("File Name",     "library_items_file_name",              notNA(filename) ? filename : "—"),
     mk("Type",          "alert_type (classifier)",              notNA(type)     ? type     : "—", { combobox: { type: "libraryitemtype", mode: "single" } }),
     {
       label: "Organizations",
@@ -572,7 +565,6 @@ function buildLibFields(
   });
 
   if (notNA(description)) entries.push(mk("Description", "doc_extraction.description", description));
-  if (notNA(docType))     entries.push(mk("Doc Type",    "doc_extraction.document_type", docType, { readOnly: true }));
 
   // Linked Agenda Items — shown when items exist
   entries.push({
@@ -582,6 +574,7 @@ function buildLibFields(
       ? { list: agendaItems.map(item => stripStatusPrefix(item.title)) }
       : { value: "—" }),
     readOnly: true,
+    changed: changedLabels.size > 0 ? changedLabels.has("Linked Agenda Items") : undefined,
   });
 
   return entries;
@@ -603,9 +596,13 @@ function mergeWithCurrentRecord(
   const current = currentRecord.fields;
 
   // List-type fields where the sync executor REPLACES Bubble's existing list with the
-  // preview-computed value. Showing Bubble's current value here would be misleading —
-  // user needs to see what will actually be sent.
-  const SYNC_REPLACES_LIST = new Set(["Chronicle Topics", "Linked Agenda Items", "Organizations"]);
+  // preview-computed value on UPDATE. Showing Bubble's current value here would be
+  // misleading — user needs to see what will actually be sent.
+  //   Chronicle Topics   → PATCHed on both lib UPDATE and event UPDATE
+  //   Linked Agenda Items → PATCHed on event UPDATE (attached agenda items)
+  // Organizations is NOT in this set — the current executor doesn't update it on
+  // UPDATE for either lib or event, so Bubble's current value is correct to show.
+  const SYNC_REPLACES_LIST = new Set(["Chronicle Topics", "Linked Agenda Items"]);
 
   return previewFields.map(field => {
     // Changed fields keep the new value (from preview), highlighted amber
@@ -649,7 +646,6 @@ const EVENT_EDIT_MAP: Record<string, EditSpec> = {
   "End Date/Time":    { previewKey: "end_datetime",   fieldIdsKey: "length_end_time_date" },
   "Organizations":    { previewKey: "group",          fieldIdsKey: "orgs__list_custom_organization", isList: true, isMulti: true },
   "Location":         { previewKey: "url" },
-  "Call-In":          { previewKey: "call_in",        fieldIdsKey: "phone_number_and_access_code_text" },
   "Type":             { previewKey: "type" },
   "Chronicle Topics": { fieldIdsKey: "topics___dt_list_custom_newsreel_update", isList: true, isMulti: true },
 };
@@ -657,7 +653,6 @@ const EVENT_EDIT_MAP: Record<string, EditSpec> = {
 const LIB_EDIT_MAP: Record<string, EditSpec> = {
   "Name":             { previewKey: "title",    fieldIdsKey: "name_text" },
   "URL":              { previewKey: "url",      fieldIdsKey: "url_text" },
-  "File Name":        { previewKey: "filename", fieldIdsKey: "file_name_text" },
   "Organizations":    { previewKey: "group",    fieldIdsKey: "organizations_list_custom_organization", isList: true, isMulti: true },
   "Date":             { fieldIdsKey: "date_date" },
   "Description":      { fieldIdsKey: "description_text" },
@@ -1279,18 +1274,30 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
   const docFetchUrl   = [libItemUrl, lpUrl].find(u => u && u !== "N/A" && u.startsWith("http")) ?? "";
   const hasDocument   = !!docFetchUrl;
 
-  const eventChangedLabels = useMemo(() =>
-    eventAction === "update"
-      ? changedLabelsFromPreview((eventPreview.fields ?? {}) as Record<string, unknown>)
-      : new Set<string>(),
-    [eventAction, eventPreview],
-  );
-  const libChangedLabels = useMemo(() =>
-    libAction === "update"
-      ? changedLabelsFromPreview((libPreview.fields ?? {}) as Record<string, unknown>)
-      : new Set<string>(),
-    [libAction, libPreview],
-  );
+  // Fields that the sync executor ALWAYS writes on UPDATE regardless of what the
+  // classifier flagged as changed. Must be forced into the changed-label set so the
+  // modal amber-highlights them and shows the preview-computed value (not Bubble's
+  // current record value, which would be misleading since the sync is about to
+  // overwrite it).
+  //   Event UPDATE   → PATCH Topics - dt, attached agenda items, Agenda (lib link)
+  //   Library UPDATE → PATCH Topics - dt only
+  const EVENT_ALWAYS_UPDATED = ["Chronicle Topics", "Linked Agenda Items", "Agenda"];
+  const LIB_ALWAYS_UPDATED   = ["Chronicle Topics"];
+
+  const eventChangedLabels = useMemo(() => {
+    if (eventAction !== "update") return new Set<string>();
+    const set = changedLabelsFromPreview((eventPreview.fields ?? {}) as Record<string, unknown>);
+    for (const label of EVENT_ALWAYS_UPDATED) set.add(label);
+    return set;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventAction, eventPreview]);
+  const libChangedLabels = useMemo(() => {
+    if (libAction !== "update") return new Set<string>();
+    const set = changedLabelsFromPreview((libPreview.fields ?? {}) as Record<string, unknown>);
+    for (const label of LIB_ALWAYS_UPDATED) set.add(label);
+    return set;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [libAction, libPreview]);
 
   const eventFields = useMemo(() => {
     // Supplement stale/empty preview datetimes from live row fields (try both with and without _et suffix)

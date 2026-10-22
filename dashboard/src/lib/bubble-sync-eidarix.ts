@@ -824,7 +824,6 @@ export async function syncAlert(
       const startDt = toUtcIso(String(ep.start_datetime || r.event_start_date_time || r.event_start_date_time_et || ""));
       const endDt = toUtcIso(String(ep.end_datetime || r.event_end_date_time || r.event_end_date_time_et || ""));
       const locationUrl = String(ep.url ?? "").trim() || null;
-      const callIn = String(ep.call_in ?? "").trim() || null;
 
       // Event topics: union of doc-extraction topics + all agenda item topics
       const agendaTopicNames = getAgendaTopicNames(row);
@@ -866,7 +865,6 @@ export async function syncAlert(
         if (agendaItemIds.length) eventPayload["attached agenda items"] = agendaItemIds;
         if (bubbleLibraryItemId) eventPayload["Agenda"] = [bubbleLibraryItemId];
         if (locationUrl && locationUrl.toUpperCase() !== "N/A") eventPayload["location"] = locationUrl;
-        if (callIn && callIn.toUpperCase() !== "N/A") eventPayload["phone_number_and_access_code"] = callIn;
 
         console.info("[bubble-sync] CREATE calendaritem via Data API", JSON.stringify(eventPayload));
         const createRes = await fetch(`${OBJ_VERSIONED}/calendaritem`, {

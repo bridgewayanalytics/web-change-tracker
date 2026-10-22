@@ -175,11 +175,24 @@ how to split them back into string arrays for the sync payload.
 Reference-data fetches live in `/api/bubble/options?type=X` with an in-process
 10-minute cache (`src/app/api/bubble/options/route.ts`).
 
-### Doc Type
+### Fields shown vs. what the sync actually writes
 
-`Doc Type` on the library item card is **not** a Bubble lookup — it's the free-text
-`document_type` the doc-extraction agent produced for the PDF. Displayed read-only
-for context; not sent to Bubble as a reference ID.
+The field rows displayed on each card are limited to the set of real Bubble fields
+the executor can write. Agent-derived display-only fields that didn't correspond
+to a real Bubble write (previously `Doc Type` on library items, `File Name` on
+library items, `Call-In` on events) have been removed — the modal is now a faithful
+preview of what will land in Bubble.
+
+Current field roster (verified against live library/calendar item records):
+
+- **Library item**: Name → `Name`, URL → `URL`, Type → `Type - DT`, Organizations
+  → `Organizations`, Date → `date` + `Date display`, Description → `summary`,
+  Chronicle Topics → `Topics - dt`, Linked Agenda Items → `Agenda items`.
+- **Calendar event**: Title → `title`, Type → `type`, Start/End Date/Time →
+  `date` + `End time` + `AMPM/Hour/Minutes from/until`, Full Day → `full day`,
+  Organizations → `Orgs ` (note the trailing space), Location → `location`,
+  Chronicle Topics → `Topics - dt`, Linked Agenda Items → `attached agenda items`,
+  Agenda → `Agenda` (array of library item IDs).
 
 ---
 
@@ -400,11 +413,24 @@ Per-section control:
 ## 13. Doc extraction enrichment (display overlay)
 
 For PDF-backed library items, the doc extraction agent produces one row per agenda
-item with:
-- `agenda_item_title`, `chronicle_topics[]`
-- `agenda_item_title_official.official_title`
-- `agenda_item_standardized_id.standardized_id`
-- Document-level fields: `date_published`, `document_description`, `document_type`
+item with (schema as of 2026-10; older rows have the names in the "legacy" column):
+
+| Current field                            | Legacy field (older rows)                                 |
+|------------------------------------------|------------------------------------------------------------|
+| `agenda_item_bridgeway_title[].agenda_item_title` + `.chronicle_topics` + `.status` | `agenda_item_bridgeway_title_chronicle_topic[]` or `agenda_item_title_chronicle_topic[]` |
+| `agenda_item_title_official[].official_title`                        | (unchanged)                                                |
+| `agenda_item_standardized_id[].standardized_id`                      | (unchanged)                                                |
+| `agenda_item_official_id[].official_id`                              | (unchanged)                                                |
+| `chronicle_topic` (singular, top-level string — authoritative doc topic) | — (previously only the per-item inline `chronicle_topics` array existed) |
+| `should_agenda_item_be_created` (`"Yes"` / `"No"`)                   | — (new filter; rows with `"No"` are skipped at synthesis)  |
+| `date_published`, `document_description`, `document_type` (document-level) | (unchanged)                                                |
+
+Synthesis logic (`synthesizedAgendaItems` useMemo + `enrichFromDocExtraction`)
+reads the current field names first and falls back through the legacy ones for
+backward compatibility with historical rows. Rows with
+`should_agenda_item_be_created === "No"` are skipped entirely. When the
+top-level `chronicle_topic` is present and non-N/A it supersedes the per-item
+inline `chronicle_topics` array.
 
 These rows are fetched on modal open (`/api/document-extractions?agent_call_id=X`)
 and filtered to rows where `library_item_url` matches the alert row's URL. They are
@@ -553,7 +579,23 @@ option-set fields (`AMPM from`, etc.).
   while the doc extraction agent produces the real topic lists per agenda item.
 - **UPDATE display vs. send parity.** `mergeWithCurrentRecord` in the modal
   does **not** replace the computed preview value for list-replacing fields
-  (`Chronicle Topics`, `Linked Agenda Items`, `Organizations`) with the Bubble
-  record's current list, because the sync executor PATCH will overwrite those
-  Bubble lists wholesale. Showing the current Bubble state there would be
-  misleading — the user needs to see what will actually be sent.
+  (`Chronicle Topics`, `Linked Agenda Items`) with the Bubble record's current
+  list, because the sync executor PATCH overwrites those Bubble lists
+  wholesale. `Organizations` is NOT in that set — the current executor does
+  not update it on either lib or event UPDATE, so showing Bubble's current
+  value there is correct.
+- **UPDATE "always updated" fields.** Independent of what the classifier
+  marks in `event_preview.fields` / `library_item_preview.fields`, the modal
+  forces these labels into the changed-set so they amber-highlight on
+  UPDATE and show the preview-computed values the sync will send:
+  - Event UPDATE: `Chronicle Topics` (`Topics - dt`), `Linked Agenda Items`
+    (`attached agenda items`), `Agenda` (library item link)
+  - Library UPDATE: `Chronicle Topics` (`Topics - dt`)
+  Everything else on an UPDATE card shows the authoritative Bubble value
+  from `/api/bubble/record`.
+- **Ref # written via Data API PATCH.** The `wf/create-agenda-item/` workflow
+  does not accept a parameter for the NAIC official ID — it writes `BA Ref #`
+  from `reference_id` and silently copies that into `Ref #`. The executor
+  follows every successful workflow create with a PATCH
+  `/obj/agendaitem/{id}` body `{"Ref #": officialId}` to layer the correct
+  NAIC ID on top. Non-fatal; a failed PATCH only logs a warning.
