@@ -184,7 +184,8 @@ The old `bubble_sync.py` PATCH code uses this incorrect convention — that code
 | `_id` | string | Bubble unique ID (read-only) |
 | `BA title` | string | Bridgeway Analytics title (our label) |
 | `NAIC Title` | string | Official NAIC agenda title |
-| `BA Ref #` | string | Reference ID (e.g. `LATF#APF-2025-14`) |
+| `BA Ref #` | string | BA/Bridgeway standardized reference ID (e.g. `LATF#APF-2025-14`) |
+| `Ref #` | string | NAIC's official reference ID (e.g. `2025-14`). Written via Data API PATCH after create — the `wf/create-agenda-item/` workflow does not expose this as an input parameter. |
 | `topics - dt` | array[string] | → `chronicletopic._id` list |
 | `space` | string | → `space._id` *(lowercase — as returned by GET)* |
 | `Eiderix Ref` | string | Our pipeline's `agent_call_id` — for dedup/tracing |

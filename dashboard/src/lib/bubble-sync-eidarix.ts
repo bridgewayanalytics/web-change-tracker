@@ -390,14 +390,14 @@ async function resolveAgendaItems(
     }
 
     // Bubble field mapping:
-    //   reference_id → BA Ref #    (Bridgeway's standardized identifier)
-    //   official_id  → Ref #       (NAIC's official identifier)
+    //   reference_id   → BA Ref #    (Bridgeway's standardized identifier)
     //   official_title → NAIC Title
+    // Note: the create-agenda-item/ workflow does NOT expose Ref # as an input parameter,
+    // so we PATCH the record directly via the Data API after creation to set it.
     const result = await eidarixWfPost("create-agenda-item/", {
       title,
       official_title: officialTitle,
       reference_id: referenceId,
-      official_id:  officialId,
       chronicle_topics: finalTopicIds,
       alert_id: agentCallId,
       space_id: CONTENT_SPACE_ID,
@@ -406,6 +406,32 @@ async function resolveAgendaItems(
     const itemId = result.bubble_id ?? result.id ?? result._id;
     if (!itemId) throw new Error(`create-agenda-item returned no id for '${title}': ${JSON.stringify(result)}`);
     console.info(`[bubble-sync] created agenda item '${title}' → ${itemId}`);
+
+    // PATCH Ref # (NAIC's official identifier) via Data API — the workflow writes BA Ref #
+    // from reference_id but can't set Ref # separately. Field name uses the exact Bubble
+    // display name "Ref #" per docs/bubble_api_reference.md §5. Non-fatal on failure.
+    if (officialId) {
+      try {
+        const patchRes = await fetch(`${OBJ_VERSIONED}/agendaitem/${itemId}`, {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${await getBubbleKey()}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ "Ref #": officialId }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!patchRes.ok) {
+          const body = await patchRes.text();
+          console.warn(`[bubble-sync] PATCH Ref # on agendaitem ${itemId} failed: ${patchRes.status} ${body.slice(0, 200)}`);
+        } else {
+          console.info(`[bubble-sync] set agendaitem ${itemId} 'Ref #' → ${officialId}`);
+        }
+      } catch (e) {
+        console.warn(`[bubble-sync] PATCH Ref # on agendaitem ${itemId} threw:`, e);
+      }
+    }
+
     resolvedIds.push(String(itemId));
   }
 
