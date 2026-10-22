@@ -132,6 +132,12 @@ const AGENT_FIELD_LABEL_FALLBACKS: Record<string, string> = {
   "doc_extraction.document_type":      "Document Type",
   "transcript_s3_key":                 "Transcript File",
   "library_item_preliminary_title.title": "Library Item Preliminary Title",
+  // New doc extraction schema (post-2026-10): agenda_item_bridgeway_title holds the title +
+  // status, chronicle_topic (singular, top-level) holds the overarching topic.
+  "agenda_item_bridgeway_title[].agenda_item_title":       "Agenda Item Bridgeway Title",
+  "chronicle_topic":                                        "Chronicle Topic",
+  "should_agenda_item_be_created":                          "Should Agenda Item Be Created",
+  // Legacy agent field identifiers kept so stored rows with older schemas still resolve.
   "agenda_item_title_chronicle_topics[].chronicle_topics": "Agenda Item Chronicle Topics",
   "agenda_item_title_chronicle_topics[].agenda_item_title": "Agenda Item Bridgeway Title",
   "agenda_item_title_official[].official_title":           "Agenda Item Official Title",
@@ -221,10 +227,14 @@ function allLibraryItemTopics(
 //   2. Positional fallback: if title matching produces 0 hits, match by index order.
 //      Doc rows sorted by agenda_number; row[i] → preview[i].
 //
-// Doc extraction rows use this structure (field name: agenda_item_bridgeway_title_chronicle_topic):
+// Doc extraction rows use this structure (field name: agenda_item_bridgeway_title; older rows:
+//   agenda_item_bridgeway_title_chronicle_topic):
 //   [{ agenda_item_title: "...", chronicle_topics: ["..."], status: "New|Existing" }, ...]
-// Official titles: agenda_item_title_official: [{ official_title: "...", status: "..." }, ...]
-// Reference IDs:   agenda_item_standardized_id: [{ standardized_id: "...", status: "..." }, ...]
+// Official titles:  agenda_item_title_official:   [{ official_title: "...", status: "..." }, ...]
+// Reference IDs:    agenda_item_standardized_id:  [{ standardized_id: "...", status: "..." }, ...]
+// Official IDs:     agenda_item_official_id:      [{ official_id: "...", status: "..." }, ...]
+// Document topic:   chronicle_topic (string, singular, authoritative overarching topic for the doc)
+// Filter flag:      should_agenda_item_be_created ("Yes" / "No") — rows with "No" are skipped.
 function enrichFromDocExtraction(
   items: AgendaItemPreview[],
   docRows: Array<Record<string, unknown>>,
@@ -241,18 +251,26 @@ function enrichFromDocExtraction(
   function extractEntries(rows: Array<Record<string, unknown>>): DocEntry[] {
     const entries: DocEntry[] = [];
     for (const dr of rows) {
+      // should_agenda_item_be_created="No" → skip this entire row
+      if (String(dr.should_agenda_item_be_created ?? "").trim().toLowerCase() === "no") continue;
       const bridgewayItems = (
-        dr.agenda_item_bridgeway_title_chronicle_topic ??
-        dr.agenda_item_title_chronicle_topic
+        dr.agenda_item_bridgeway_title ??                          // new (post-schema-update)
+        dr.agenda_item_bridgeway_title_chronicle_topic ??          // older schema (backward compat)
+        dr.agenda_item_title_chronicle_topic                       // oldest schema (backward compat)
       ) as Array<Record<string, unknown>> | undefined;
       const officialArr     = (dr.agenda_item_title_official    as Array<Record<string, unknown>> | undefined) ?? [];
       const standardizedArr = (dr.agenda_item_standardized_id  as Array<Record<string, unknown>> | undefined) ?? [];
       const officialIdArr   = (dr.agenda_item_official_id       as Array<Record<string, unknown>> | undefined) ?? [];
+      // New: top-level chronicle_topic (singular string) — authoritative overarching doc topic
+      const topLevelTopic   = String(dr.chronicle_topic ?? "").trim();
       if (!Array.isArray(bridgewayItems)) continue;
       bridgewayItems.forEach((entry, i) => {
-        const docTopics = Array.isArray(entry.chronicle_topics)
+        const inlineTopics = Array.isArray(entry.chronicle_topics)
           ? (entry.chronicle_topics as unknown[]).map(String).filter(t => t && notNA(t))
           : [];
+        // Prefer the explicit top-level chronicle_topic (new schema) when present and non-N/A;
+        // fall back to the per-item chronicle_topics array for backward compat.
+        const docTopics = (topLevelTopic && notNA(topLevelTopic)) ? [topLevelTopic] : inlineTopics;
         const offTitle = String(officialArr[i]?.official_title ?? "").trim();
         const refId    = String(standardizedArr[i]?.standardized_id ?? "").trim();
         const offId    = String(officialIdArr[i]?.official_id ?? "").trim();
@@ -276,20 +294,24 @@ function enrichFromDocExtraction(
   const byTitle = new Map<string, DocEntry>();
   const positional = extractEntries(sorted);
   for (const dr of sorted) {
+    if (String(dr.should_agenda_item_be_created ?? "").trim().toLowerCase() === "no") continue;
     const bridgewayItems = (
+      dr.agenda_item_bridgeway_title ??
       dr.agenda_item_bridgeway_title_chronicle_topic ??
       dr.agenda_item_title_chronicle_topic
     ) as Array<Record<string, unknown>> | undefined;
     const officialArr     = (dr.agenda_item_title_official    as Array<Record<string, unknown>> | undefined) ?? [];
     const standardizedArr = (dr.agenda_item_standardized_id  as Array<Record<string, unknown>> | undefined) ?? [];
     const officialIdArr   = (dr.agenda_item_official_id       as Array<Record<string, unknown>> | undefined) ?? [];
+    const topLevelTopic   = String(dr.chronicle_topic ?? "").trim();
     if (!Array.isArray(bridgewayItems)) continue;
     bridgewayItems.forEach((entry, i) => {
       const titleRaw = String(entry.agenda_item_title ?? "").trim();
       if (!titleRaw || NA_SET.has(titleRaw.toLowerCase())) return;
-      const docTopics = Array.isArray(entry.chronicle_topics)
+      const inlineTopics = Array.isArray(entry.chronicle_topics)
         ? (entry.chronicle_topics as unknown[]).map(String).filter(t => t && notNA(t))
         : [];
+      const docTopics = (topLevelTopic && notNA(topLevelTopic)) ? [topLevelTopic] : inlineTopics;
       const offTitle = String(officialArr[i]?.official_title ?? "").trim();
       const refId    = String(standardizedArr[i]?.standardized_id ?? "").trim();
       const offId    = String(officialIdArr[i]?.official_id ?? "").trim();
@@ -467,7 +489,7 @@ function buildEventFields(
   // Chronicle Topics — searchable multi-select dropdown
   entries.push({
     label: "Chronicle Topics",
-    agentField: "agenda_item_title_chronicle_topics[].chronicle_topics",
+    agentField: "chronicle_topic",
     topics,
     combobox: { type: "chronicletopic", mode: "multi" },
     changed: changedLabels.size > 0 ? changedLabels.has("Chronicle Topics") : undefined,
@@ -476,7 +498,7 @@ function buildEventFields(
   // Linked Agenda Items — always shown (agenda items linked to this event)
   entries.push({
     label: "Linked Agenda Items",
-    agentField: "agenda_item_title_chronicle_topics[].agenda_item_title",
+    agentField: "agenda_item_bridgeway_title[].agenda_item_title",
     ...(agendaItems.length > 0
       ? { list: agendaItems.map(item => stripStatusPrefix(item.title)) }
       : { value: "—" }),
@@ -543,7 +565,7 @@ function buildLibFields(
   // Chronicle Topics — searchable multi-select dropdown
   entries.push({
     label: "Chronicle Topics",
-    agentField: "agenda_item_title_chronicle_topics[].chronicle_topics",
+    agentField: "chronicle_topic",
     topics,
     combobox: { type: "chronicletopic", mode: "multi" },
     changed: changedLabels.size > 0 ? changedLabels.has("Chronicle Topics") : undefined,
@@ -555,7 +577,7 @@ function buildLibFields(
   // Linked Agenda Items — shown when items exist
   entries.push({
     label: "Linked Agenda Items",
-    agentField: "agenda_item_title_chronicle_topics[].agenda_item_title",
+    agentField: "agenda_item_bridgeway_title[].agenda_item_title",
     ...(agendaItems.length > 0
       ? { list: agendaItems.map(item => stripStatusPrefix(item.title)) }
       : { value: "—" }),
@@ -1136,26 +1158,39 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     );
     const result: AgendaItemPreview[] = [];
     for (const dr of sorted) {
+      // Doc extraction schema (as of 2026-10): rows with should_agenda_item_be_created="No"
+      // are explicit skips from the agent — don't synthesize them.
+      if (String(dr.should_agenda_item_be_created ?? "").trim().toLowerCase() === "no") continue;
       const bridgewayItems = (
-        dr.agenda_item_bridgeway_title_chronicle_topic ??
-        dr.agenda_item_title_chronicle_topic
+        dr.agenda_item_bridgeway_title ??                          // new (post-schema-update)
+        dr.agenda_item_bridgeway_title_chronicle_topic ??          // older schema (backward compat)
+        dr.agenda_item_title_chronicle_topic                       // oldest schema (backward compat)
       ) as Array<Record<string, unknown>> | undefined;
       const officialArr     = (dr.agenda_item_title_official    as Array<Record<string, unknown>> | undefined) ?? [];
       const standardizedArr = (dr.agenda_item_standardized_id  as Array<Record<string, unknown>> | undefined) ?? [];
       const officialIdArr   = (dr.agenda_item_official_id       as Array<Record<string, unknown>> | undefined) ?? [];
+      // Top-level `chronicle_topic` (new, singular string) is the authoritative overarching
+      // doc topic. Falls back to the per-item `chronicle_topics` array for backward compat.
+      const topLevelTopic   = String(dr.chronicle_topic ?? "").trim();
       if (!Array.isArray(bridgewayItems)) continue;
       bridgewayItems.forEach((entry, i) => {
         const title = String(entry.agenda_item_title ?? "").trim();
         if (!title || NA_SET.has(title.toLowerCase())) return;
-        const topics = Array.isArray(entry.chronicle_topics)
+        const inlineTopics = Array.isArray(entry.chronicle_topics)
           ? (entry.chronicle_topics as unknown[]).map(String).filter(t => t && notNA(t))
           : [];
+        const topics = (topLevelTopic && notNA(topLevelTopic)) ? [topLevelTopic] : inlineTopics;
         const offTitle = String(officialArr[i]?.official_title ?? "").trim();
         const refId    = String(standardizedArr[i]?.standardized_id ?? "").trim();
         const offId    = String(officialIdArr[i]?.official_id ?? "").trim();
         result.push({
           title,
-          status: String(entry.status ?? "New").trim(),
+          // Default "N/A" / missing / blank status to "New" so the item participates
+          // in the Create Agenda Items flow (and the Lib-create dependency guard fires).
+          status: ((): string => {
+            const raw = String(entry.status ?? "").trim();
+            return (!raw || raw.toUpperCase() === "N/A") ? "New" : raw;
+          })(),
           chronicle_topics: topics,
           ...(offTitle && notNA(offTitle) ? { official_title: offTitle } : {}),
           ...(refId    && notNA(refId)    ? { reference_id:  refId }     : {}),
@@ -1178,6 +1213,7 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
   const existingAgendaItems = agendaItems.filter(a => a.status && a.status.toLowerCase() !== "new");
   // These must be declared before the derived activeNewAgendaItems that use them
   const [deletedNewIndices, setDeletedNewIndices] = useState<Set<number>>(new Set());
+  const [deletedExistingIndices, setDeletedExistingIndices] = useState<Set<number>>(new Set());
   // Per-item edit state: index → { Bubble field label → value }
   const [agendaItemEdits, setAgendaItemEdits] = useState<Record<number, Record<string, string>>>({});
   // Backwards compat: title shortcut (reads from the structured map)
@@ -1207,8 +1243,11 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
   const activeNewAgendaItems: AgendaItemPreview[] = newAgendaItems
     .map((item, i) => applyAgendaEdits(item, i))
     .filter((_, i) => !deletedNewIndices.has(i));
-  const activeAgendaItems: AgendaItemPreview[] = [...activeNewAgendaItems, ...existingAgendaItems];
-  const hasNewAgenda   = hasAgenda && activeNewAgendaItems.length > 0;
+  const activeExistingAgendaItems: AgendaItemPreview[] = existingAgendaItems
+    .filter((_, i) => !deletedExistingIndices.has(i));
+  const activeAgendaItems: AgendaItemPreview[] = [...activeNewAgendaItems, ...activeExistingAgendaItems];
+  const hasNewAgenda  = hasAgenda && activeNewAgendaItems.length > 0;
+  const hasAnyAgenda  = hasAgenda && activeAgendaItems.length > 0;
 
   // Enriched agenda items — chronicle_topics, official_title, reference_id overlaid
   // from live doc extraction rows. Used for rendering only; sync/patch still uses activeAgendaItems.
@@ -1217,12 +1256,18 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     () => isAgendaSynthesized ? newAgendaItems : enrichFromDocExtraction(newAgendaItems, docExtractionRows),
     [isAgendaSynthesized, newAgendaItems, docExtractionRows],
   );
+  const enrichedExistingAgendaItems = useMemo(
+    () => isAgendaSynthesized ? existingAgendaItems : enrichFromDocExtraction(existingAgendaItems, docExtractionRows),
+    [isAgendaSynthesized, existingAgendaItems, docExtractionRows],
+  );
   const displayedActiveNewAgenda: AgendaItemPreview[] = enrichedNewAgendaItems
     .map((item, i) => applyAgendaEdits(item, i))
     .filter((_, i) => !deletedNewIndices.has(i));
+  const displayedActiveExistingAgenda: AgendaItemPreview[] = enrichedExistingAgendaItems
+    .filter((_, i) => !deletedExistingIndices.has(i));
   const displayedAgendaItems: AgendaItemPreview[] = [
     ...displayedActiveNewAgenda,
-    ...(isAgendaSynthesized ? existingAgendaItems : enrichFromDocExtraction(existingAgendaItems, docExtractionRows)),
+    ...displayedActiveExistingAgenda,
   ];
 
   const transcriptKey = String((row.transcript_s3_key ?? row.manual_transcript_s3_key) ?? "");
@@ -1410,8 +1455,18 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
         });
         onFieldPatched({ bubble_action: updatedAction } as Partial<AlertRow>);
       }
-      if (Object.keys(eventEdits).length > 0) {
-        const updated = applyEditsToPreview(eventPreview, eventEdits, EVENT_EDIT_MAP);
+      // Inject the modal-computed chronicle topics if the user never touched the combobox,
+      // so the event sync picks them up from event_preview.field_ids regardless of whether
+      // agenda_item_previews was patched. Matches the handlePublishLibItem safety net.
+      const effectiveEventEdits = { ...eventEdits };
+      if (effectiveEventEdits["Chronicle Topics"] === undefined) {
+        const computedTopics = allLibraryItemTopics(eventPreview, displayedAgendaItems);
+        if (computedTopics.length > 0) {
+          effectiveEventEdits["Chronicle Topics"] = multiToEditValue(computedTopics);
+        }
+      }
+      if (Object.keys(effectiveEventEdits).length > 0) {
+        const updated = applyEditsToPreview(eventPreview, effectiveEventEdits, EVENT_EDIT_MAP);
         await patchBubbleAction("event_preview", updated);
       }
       let result: Record<string, unknown>;
@@ -1441,9 +1496,12 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     try {
       // Patch stored bubble_action with the active item list.
       // Always patch when items were synthesized from doc extraction (previews were empty on the row).
-      const needsPatch = isAgendaSynthesized || deletedNewIndices.size > 0 || Object.keys(agendaItemEdits).length > 0;
+      const needsPatch = isAgendaSynthesized
+        || deletedNewIndices.size > 0
+        || deletedExistingIndices.size > 0
+        || Object.keys(agendaItemEdits).length > 0;
       if (needsPatch) {
-        const patchedPreviews = [...activeNewAgendaItems, ...existingAgendaItems];
+        const patchedPreviews = [...activeNewAgendaItems, ...activeExistingAgendaItems];
         const updated = {
           ...(bubbleAction ?? {}),
           agenda_item_previews: patchedPreviews as unknown[],
@@ -1491,6 +1549,16 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
       const effectiveEdits = { ...libEdits };
       if (effectiveEdits["Date"] === undefined && derivedDate) {
         effectiveEdits["Date"] = derivedDate;
+      }
+      // Inject the modal-computed chronicle topics (union of lib preview topics +
+      // agenda-item topics from doc-extraction synthesis) if the user never touched
+      // the combobox. Guarantees the lib item gets the topics the UI showed, even
+      // when bubble_action.agenda_item_previews is still empty on the stored row.
+      if (effectiveEdits["Chronicle Topics"] === undefined) {
+        const computedTopics = allLibraryItemTopics(libPreview, displayedAgendaItems);
+        if (computedTopics.length > 0) {
+          effectiveEdits["Chronicle Topics"] = multiToEditValue(computedTopics);
+        }
       }
       // UPDATE → CREATE fallback: patch bubble_action.library_item so the sync executor
       // runs the create path instead of searching for a non-existent record.
@@ -1641,16 +1709,26 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
             <ValidationBanner result={validation} />
           )}
 
-          {hasNewAgenda && (
+          {hasAnyAgenda && (() => {
+            const isDone = sections.agenda_items.status === "done";
+            const newCount      = activeNewAgendaItems.length;
+            const existingCount = activeExistingAgendaItems.length;
+            const headerLabel =
+              newCount > 0 && existingCount > 0 ? `Create ${newCount}, link ${existingCount} Agenda Items in Bubble` :
+              newCount > 0                       ? `Create ${newCount} Agenda Item${newCount !== 1 ? "s" : ""} in Bubble` :
+                                                   `Link ${existingCount} existing Agenda Item${existingCount !== 1 ? "s" : ""} in Bubble`;
+            const buttonLabel =
+              sections.agenda_items.status === "loading" ? "Working…" :
+              newCount > 0 && existingCount > 0 ? `Create ${newCount}, link ${existingCount}` :
+              newCount > 0                       ? `Create ${newCount} Agenda Item${newCount !== 1 ? "s" : ""}` :
+                                                   `Link ${existingCount} existing`;
+            return (
             <div className="rounded-lg border border-green-200">
-              {/* Header */}
               <div className="flex items-center justify-between px-4 py-2.5 bg-green-50 rounded-t-lg">
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Bubble</span>
                   <span className="text-[11px] text-gray-400">›</span>
-                  <span className="text-[12px] font-semibold text-gray-700">
-                    Create {activeNewAgendaItems.length} Agenda Item{activeNewAgendaItems.length !== 1 ? "s" : ""} in Bubble
-                  </span>
+                  <span className="text-[12px] font-semibold text-gray-700">{headerLabel}</span>
                 </div>
                 {sections.agenda_items.status === "done" ? (
                   <span className="text-[11px] text-green-600 font-semibold">✓ Done</span>
@@ -1658,14 +1736,17 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
                   <span className="text-[11px] text-red-500 font-medium">✕ Failed</span>
                 ) : null}
               </div>
-              {/* Item list — one FieldTable per agenda item (same 3-column layout as library item / event cards) */}
+
+              {/* Item list — new items (editable) first, then existing items (read-only, deletable) */}
               <div className="px-4 py-3 space-y-3">
+                {/* NEW items — editable fields + delete */}
                 {newAgendaItems.map((item, i) => {
                   if (deletedNewIndices.has(i)) return null;
-                  const isDone = sections.agenda_items.status === "done";
-                  const activeIndex = newAgendaItems.slice(0, i + 1).filter((_, j) => !deletedNewIndices.has(j)).length;
+                  const positionIdx = (() => {
+                    const newBefore = newAgendaItems.slice(0, i + 1).filter((_, j) => !deletedNewIndices.has(j)).length;
+                    return newBefore;
+                  })();
                   const itemEdits = agendaItemEdits[i] ?? {};
-                  // Current values: user-edited > enriched-from-doc-extraction > raw preview
                   const enriched = enrichedNewAgendaItems[i] ?? item;
                   const baTitle    = stripStatusPrefix(item.title);
                   const naicTitle  = enriched.official_title ? stripStatusPrefix(enriched.official_title) : "";
@@ -1681,22 +1762,18 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
                     { label: "Ref #",      agentField: "agenda_item_official_id[].official_id",                  value: officialId, readOnly: isDone },
                     {
                       label: "Topics - dt",
-                      agentField: "agenda_item_title_chronicle_topics[].chronicle_topics",
+                      agentField: "chronicle_topic",
                       topics,
                       ...(isDone ? { readOnly: true as const } : { combobox: { type: "chronicletopic" as const, mode: "multi" as const } }),
                     },
                   ];
 
                   return (
-                    <div key={i} className="rounded-md border border-gray-200">
+                    <div key={`new-${i}`} className="rounded-md border border-gray-200">
                       <div className="flex items-center justify-between px-3 py-1.5 bg-gray-50 border-b border-gray-200 rounded-t-md">
                         <span className="text-[11px] font-semibold text-gray-600">
-                          Agenda Item {activeIndex}
-                          {item.status && item.status.toLowerCase() !== "new" && (
-                            <span className="ml-1.5 text-[9px] font-medium bg-blue-100 text-blue-700 rounded px-1.5 py-0.5 uppercase tracking-wider">
-                              {item.status}
-                            </span>
-                          )}
+                          Agenda Item {positionIdx}
+                          <span className="ml-1.5 text-[9px] font-medium bg-green-100 text-green-700 rounded px-1.5 py-0.5 uppercase tracking-wider">New</span>
                         </span>
                         {!isDone && (
                           <button
@@ -1711,6 +1788,63 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
                           fields={itemFields}
                           editState={itemEdits}
                           onEdit={(label, value) => updateAgendaItemField(i, label, value)}
+                          schemaLabels={schemaLabels}
+                          bubbleOptions={bubbleOptions}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* EXISTING items — read-only fields (editing wouldn't affect the Bubble record),
+                    but × delete still works to exclude from the link set */}
+                {existingAgendaItems.map((item, i) => {
+                  if (deletedExistingIndices.has(i)) return null;
+                  const activeNewCount    = newAgendaItems.filter((_, j) => !deletedNewIndices.has(j)).length;
+                  const existingPos       = existingAgendaItems.slice(0, i + 1).filter((_, j) => !deletedExistingIndices.has(j)).length;
+                  const positionIdx       = activeNewCount + existingPos;
+                  const enriched = enrichedExistingAgendaItems[i] ?? item;
+                  const baTitle    = stripStatusPrefix(item.title);
+                  const naicTitle  = enriched.official_title ? stripStatusPrefix(enriched.official_title) : "";
+                  const baRef      = enriched.reference_id ? stripStatusPrefix(enriched.reference_id) : "";
+                  const officialId = enriched.official_id ?? "";
+                  const topics     = enriched.chronicle_topics ?? [];
+
+                  const itemFields: FieldEntry[] = [
+                    { label: "BA title",   agentField: "agenda_item_title_chronicle_topics[].agenda_item_title", value: baTitle,    readOnly: true },
+                    { label: "NAIC Title", agentField: "agenda_item_title_official[].official_title",            value: naicTitle,  readOnly: true },
+                    { label: "BA Ref #",   agentField: "agenda_item_standardized_id[].standardized_id",          value: baRef,      readOnly: true },
+                    { label: "Ref #",      agentField: "agenda_item_official_id[].official_id",                  value: officialId, readOnly: true },
+                    {
+                      label: "Topics - dt",
+                      agentField: "chronicle_topic",
+                      topics,
+                      readOnly: true,
+                    },
+                  ];
+                  const statusLabel = (item.status || "Existing").toLowerCase() === "updated" ? "Updated" : "Existing";
+
+                  return (
+                    <div key={`existing-${i}`} className="rounded-md border border-gray-200">
+                      <div className="flex items-center justify-between px-3 py-1.5 bg-gray-50 border-b border-gray-200 rounded-t-md">
+                        <span className="text-[11px] font-semibold text-gray-600">
+                          Agenda Item {positionIdx}
+                          <span className="ml-1.5 text-[9px] font-medium bg-blue-100 text-blue-700 rounded px-1.5 py-0.5 uppercase tracking-wider">{statusLabel}</span>
+                          <span className="ml-1 text-[9px] font-medium text-gray-400 italic">(link only)</span>
+                        </span>
+                        {!isDone && (
+                          <button
+                            onClick={() => setDeletedExistingIndices(prev => { const s = new Set(Array.from(prev)); s.add(i); return s; })}
+                            className="text-gray-300 hover:text-red-500 transition-colors text-[16px] leading-none"
+                            title="Don't link this existing agenda item"
+                          >×</button>
+                        )}
+                      </div>
+                      <div className="px-3 py-2">
+                        <FieldTable
+                          fields={itemFields}
+                          editState={{}}
+                          onEdit={() => {}}
                           schemaLabels={schemaLabels}
                           bubbleOptions={bubbleOptions}
                         />
@@ -1733,12 +1867,13 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
                     disabled={sections.agenda_items.status === "loading"}
                     className="text-[11px] font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-md px-3 py-1.5 transition-colors"
                   >
-                    {sections.agenda_items.status === "loading" ? "Working…" : `Create ${activeNewAgendaItems.length} Agenda Item${activeNewAgendaItems.length !== 1 ? "s" : ""}`}
+                    {buttonLabel}
                   </button>
                 </div>
               )}
             </div>
-          )}
+            );
+          })()}
 
           {libAction && (
             <div className="space-y-1.5">
