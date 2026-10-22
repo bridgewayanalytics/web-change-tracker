@@ -190,8 +190,23 @@ def _get_alert_type(alert: dict) -> str:
     return ""
 
 
+_NMC_EQUIVALENT_NORMALIZED = frozenset({
+    "nomeaningfulchange", "nomeaningfulchanges",
+    "nosubstantivechange", "nosubstantivechanges",
+    "nonsubstantivechange", "nonsubstantivechanges",
+    "monitoringissue",
+})
+
+
 def _is_no_meaningful_change(alert: dict) -> bool:
-    return _get_alert_type(alert) == _NMC_VALUE
+    at = _get_alert_type(alert).strip()
+    if not at:
+        return False
+    if at == _NMC_VALUE:
+        return True
+    import re as _re
+    normalized = _re.sub(r'[^a-z]', '', at.lower())
+    return normalized in _NMC_EQUIVALENT_NORMALIZED
 
 
 def _get_output_json_schema() -> dict | None:
