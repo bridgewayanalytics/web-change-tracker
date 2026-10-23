@@ -190,7 +190,9 @@ async def _run_with_pgvector(
                 verbosity=reasoning_effort,
             ),
         )
-        result = await Runner.run(agent, input=user_content)
+        # Default Agents SDK max_turns is 10; gpt-6.1-sol frequently needs more
+        # pgvector tool calls to answer thoroughly, so bump it.
+        result = await Runner.run(agent, input=user_content, max_turns=25)
         gathered = result.final_output or ""
         from bubble.usage_telemetry import extract_agents_sdk_usage, post_usage
         u = extract_agents_sdk_usage(result)
