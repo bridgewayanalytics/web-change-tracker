@@ -1,13 +1,19 @@
 """
 Bulk pipeline re-run + QA eval for specific agent_call_ids.
 
+Modes:
+  alerts (default): re-runs page_change_agent, accepts into alerts_table.jsonl, runs WTA QA eval
+  docs:             re-runs document_agent only, accepts into document_extractions_table.jsonl, runs doc QA eval
+  both:             re-runs page_change_agent + document_agent, accepts both, runs both QA evals
+
 For each unique (run_id, target_id) group derived from the given agent_call_ids:
-  1. Re-runs spike.py in rerun mode (re-runs page_change_agent with current DynamoDB config)
-  2. Auto-accepts the rerun result into alerts_table.jsonl (mirrors /api/rerun/accept logic)
+  1. Re-runs spike.py in the chosen RERUN_MODE
+  2. Auto-accepts the rerun result (mirrors dashboard accept logic)
 Then runs QA eval on the original agent_call_ids (which are preserved on the updated rows).
 
 Usage:
-  python -m eval.run_bulk_reeval --agent-call-ids a,b,c [--dry-run]
+  python -m eval.run_bulk_reeval --agent-call-ids a,b,c [--mode docs] [--dry-run]
+  python -m eval.run_bulk_reeval --start-date 2026-08-15 --end-date 2026-10-22 --mode docs
 """
 
 import argparse
@@ -22,7 +28,8 @@ from datetime import datetime, timezone
 log = logging.getLogger(__name__)
 
 ALERTS_KEY = "alerts/alerts_table.jsonl"
-_DEFAULT_RERUN_TIMEOUT = 900  # 15 minutes per target rerun
+DOC_EXT_KEY = "alerts/document_extractions_table.jsonl"
+_DEFAULT_RERUN_TIMEOUT = 1800  # 30 minutes per target rerun (docs mode can be slow)
 
 
 def _get_s3():
@@ -62,24 +69,26 @@ def _save_jsonl(s3, bucket: str, key: str, rows: list[dict]) -> None:
                   ContentType="application/x-ndjson")
 
 
-def _run_spike_rerun(run_id: str, target_id: str) -> None:
+def _run_spike_rerun(run_id: str, target_id: str, mode: str = "alerts") -> None:
     """
     Invoke spike.py in rerun mode (RERUN_RUN_ID + RERUN_TARGET_ID env vars).
     Writes result to alerts/reruns/{run_id}/{target_id}/result.json.
+
+    mode: "alerts" (page_change only), "docs" (document_agent only), or "both".
     """
     env = os.environ.copy()
     env["RERUN_RUN_ID"] = run_id
     env["RERUN_TARGET_ID"] = target_id
-    env["RERUN_MODE"] = "alerts"
+    env["RERUN_MODE"] = mode
 
     cmd = [sys.executable, "spike.py"]
-    log.info("rerun: run_id=%s target_id=%s — starting spike.py", run_id, target_id)
+    log.info("rerun[%s]: run_id=%s target_id=%s — starting spike.py", mode, run_id, target_id)
     result = subprocess.run(cmd, env=env, timeout=_DEFAULT_RERUN_TIMEOUT)
     if result.returncode != 0:
         raise RuntimeError(
             f"spike.py rerun exited {result.returncode} for run_id={run_id} target_id={target_id}"
         )
-    log.info("rerun: run_id=%s target_id=%s — done", run_id, target_id)
+    log.info("rerun[%s]: run_id=%s target_id=%s — done", mode, run_id, target_id)
 
 
 def _accept_rerun_result(s3, bucket: str, run_id: str, target_id: str, rows: list[dict]) -> list[dict]:
@@ -173,7 +182,93 @@ def _accept_rerun_result(s3, bucket: str, run_id: str, target_id: str, rows: lis
     return patched
 
 
-def run(agent_call_ids: list[str], dry_run: bool = False) -> None:
+def _rid_to_ts(run_id: str) -> int:
+    """Extract unix timestamp from run-NNNNNNNNNN run_id. Returns 0 on parse failure."""
+    try:
+        return int(str(run_id).replace("run-", "").strip())
+    except Exception:
+        return 0
+
+
+def _enumerate_call_ids_by_date(all_rows: list[dict], start_ts: int, end_ts: int, mode: str) -> list[str]:
+    """
+    Find agent_call_ids with alerts in [start_ts, end_ts] (both inclusive).
+    For mode='docs' / 'both': only agent_call_ids with a real library_item_url (eligible for doc extraction).
+    For mode='alerts': any agent_call_id with a non-synthetic alert_type.
+    """
+    _SYNTHETIC_TYPES = {"New Meeting Transcript Available"}
+    _NA_URLS = {"", "N/A", "N/A.", "-", "NONE"}
+    call_ids: list[str] = []
+    seen: set[str] = set()
+    for row in all_rows:
+        cid = str(row.get("agent_call_id") or "").strip()
+        if not cid or cid in seen:
+            continue
+        rid = str(row.get("run_id") or "")
+        ts = _rid_to_ts(rid)
+        if ts < start_ts or ts > end_ts:
+            continue
+        if row.get("alert_type") in _SYNTHETIC_TYPES:
+            continue
+        if mode in ("docs", "both"):
+            url = str(row.get("library_item_url") or "").strip().upper()
+            if url in _NA_URLS:
+                continue
+        call_ids.append(cid)
+        seen.add(cid)
+    return call_ids
+
+
+def _accept_doc_rerun_result(
+    s3, bucket: str, run_id: str, target_id: str, all_doc_rows: list[dict]
+) -> list[dict]:
+    """
+    Read the docs-mode rerun result and apply doc_rerun_rows to the full
+    document_extractions_table.jsonl: remove all doc_original_rows and append doc_rerun_rows.
+    Returns the updated all_doc_rows list.
+    """
+    result_key = f"alerts/reruns/{run_id}/{target_id}/result.json"
+    try:
+        raw = s3.get_object(Bucket=bucket, Key=result_key)["Body"].read().decode("utf-8")
+        result = json.loads(raw)
+    except Exception as e:
+        log.error("accept_doc: could not read %s: %s", result_key, e)
+        return all_doc_rows
+
+    doc_rerun_rows = result.get("doc_rerun_rows") or []
+    doc_original_rows = result.get("doc_original_rows") or []
+
+    if not doc_rerun_rows and not doc_original_rows:
+        log.warning("accept_doc: no doc rows in %s — skipping", result_key)
+        return all_doc_rows
+
+    # Identify rows to remove by (agent_call_id, library_item_url)
+    remove_keys: set[tuple[str, str]] = set()
+    for r in doc_original_rows:
+        remove_keys.add((str(r.get("agent_call_id") or ""), str(r.get("library_item_url") or "")))
+
+    kept = [
+        r for r in all_doc_rows
+        if (str(r.get("agent_call_id") or ""), str(r.get("library_item_url") or "")) not in remove_keys
+    ]
+    kept.extend(doc_rerun_rows)
+
+    log.info(
+        "accept_doc: replaced %d original rows with %d rerun rows for run_id=%s target_id=%s",
+        len(doc_original_rows), len(doc_rerun_rows), run_id, target_id,
+    )
+    return kept
+
+
+def run(
+    agent_call_ids: list[str] | None = None,
+    dry_run: bool = False,
+    mode: str = "alerts",
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> None:
+    assert mode in ("alerts", "docs", "both"), f"invalid mode: {mode}"
+
     from bubble.ssm_loader import load_openai_env_from_ssm, load_db_env_from_ssm
     try:
         load_openai_env_from_ssm()
@@ -183,13 +278,31 @@ def run(agent_call_ids: list[str], dry_run: bool = False) -> None:
 
     s3 = _get_s3()
     bucket = _bucket()
-    id_set = set(agent_call_ids)
 
     log.info("bulk_reeval: loading alerts_table.jsonl...")
     all_rows = _load_jsonl(s3, bucket, ALERTS_KEY)
     if not all_rows:
         log.error("bulk_reeval: alerts_table.jsonl is empty or missing")
         return
+
+    # Resolve agent_call_ids: either from --agent-call-ids or from --start-date/--end-date
+    if start_date and end_date:
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        start_ts = int(start_dt.timestamp())
+        end_ts = int(end_dt.timestamp()) + 86400  # include the end-date day
+        resolved_ids = _enumerate_call_ids_by_date(all_rows, start_ts, end_ts, mode)
+        log.info(
+            "bulk_reeval: date range %s → %s (ts %d → %d) resolved %d agent_call_ids",
+            start_date, end_date, start_ts, end_ts, len(resolved_ids),
+        )
+        agent_call_ids = list(resolved_ids)
+
+    if not agent_call_ids:
+        log.error("bulk_reeval: no agent_call_ids resolved — provide --agent-call-ids or --start-date/--end-date")
+        return
+
+    id_set = set(agent_call_ids)
 
     # Build (run_id, target_id) groups from the selected agent_call_ids
     groups: dict[tuple[str, str], list[str]] = {}
@@ -209,22 +322,26 @@ def run(agent_call_ids: list[str], dry_run: bool = False) -> None:
             groups[key].append(cid)
 
     if not groups:
-        log.error("bulk_reeval: no matching rows with run_id+target_id found for %s", agent_call_ids)
+        log.error("bulk_reeval: no matching rows with run_id+target_id found for %s", agent_call_ids[:5])
         return
 
-    log.info("bulk_reeval: %d agent_call_ids → %d unique (run_id, target_id) groups",
-             len(agent_call_ids), len(groups))
+    log.info("bulk_reeval[%s]: %d agent_call_ids → %d unique (run_id, target_id) groups",
+             mode, len(agent_call_ids), len(groups))
 
     if dry_run:
-        for (run_id, target_id), cids in groups.items():
-            log.info("  [dry-run] would rerun run_id=%s target_id=%s (%d call_ids)", run_id, target_id, len(cids))
+        for i, ((run_id, target_id), cids) in enumerate(groups.items(), 1):
+            log.info("  [dry-run %d/%d] would rerun run_id=%s target_id=%s (%d call_ids)",
+                     i, len(groups), run_id, target_id, len(cids))
+        log.info("  [dry-run] total agent_call_ids that would get QA: %d", len(agent_call_ids))
         return
 
     # Phase 1: rerun each group sequentially (each writes its own staging file)
     failed_groups: list[tuple[str, str]] = []
-    for run_id, target_id in groups:
+    total = len(groups)
+    for i, (run_id, target_id) in enumerate(groups, 1):
+        log.info("bulk_reeval[%s]: [%d/%d] rerun start", mode, i, total)
         try:
-            _run_spike_rerun(run_id, target_id)
+            _run_spike_rerun(run_id, target_id, mode=mode)
         except Exception as e:
             log.error("bulk_reeval: rerun failed for run_id=%s target_id=%s: %s", run_id, target_id, e)
             failed_groups.append((run_id, target_id))
@@ -234,19 +351,35 @@ def run(agent_call_ids: list[str], dry_run: bool = False) -> None:
         log.error("bulk_reeval: all reruns failed — aborting")
         sys.exit(1)
 
-    # Phase 2: accept all successful rerun results into alerts_table.jsonl
-    log.info("bulk_reeval: accepting %d rerun results...", len(succeeded_groups))
-    current_rows = list(all_rows)
-    for run_id, target_id in succeeded_groups:
-        current_rows = _accept_rerun_result(s3, bucket, run_id, target_id, current_rows)
+    log.info("bulk_reeval[%s]: %d/%d reruns succeeded", mode, len(succeeded_groups), total)
 
-    _save_jsonl(s3, bucket, ALERTS_KEY, current_rows)
-    log.info("bulk_reeval: alerts_table.jsonl updated (%d rows)", len(current_rows))
+    # Phase 2: accept rerun results
+    if mode in ("alerts", "both"):
+        log.info("bulk_reeval: accepting %d alert rerun results into alerts_table.jsonl...", len(succeeded_groups))
+        current_rows = list(all_rows)
+        for run_id, target_id in succeeded_groups:
+            current_rows = _accept_rerun_result(s3, bucket, run_id, target_id, current_rows)
+        _save_jsonl(s3, bucket, ALERTS_KEY, current_rows)
+        log.info("bulk_reeval: alerts_table.jsonl updated (%d rows)", len(current_rows))
+
+    if mode in ("docs", "both"):
+        log.info("bulk_reeval: accepting %d doc rerun results into document_extractions_table.jsonl...", len(succeeded_groups))
+        current_doc_rows = _load_jsonl(s3, bucket, DOC_EXT_KEY)
+        for run_id, target_id in succeeded_groups:
+            current_doc_rows = _accept_doc_rerun_result(s3, bucket, run_id, target_id, current_doc_rows)
+        _save_jsonl(s3, bucket, DOC_EXT_KEY, current_doc_rows)
+        log.info("bulk_reeval: document_extractions_table.jsonl updated (%d rows)", len(current_doc_rows))
 
     # Phase 3: QA eval on the original agent_call_ids (preserved on updated rows)
-    log.info("bulk_reeval: running QA eval for %d agent_call_ids...", len(agent_call_ids))
-    from eval.run_eval import run as run_eval
-    run_eval(agent_call_ids=agent_call_ids)
+    if mode in ("alerts", "both"):
+        log.info("bulk_reeval: running WTA QA eval for %d agent_call_ids...", len(agent_call_ids))
+        from eval.run_eval import run as run_eval
+        run_eval(agent_call_ids=agent_call_ids)
+
+    if mode in ("docs", "both"):
+        log.info("bulk_reeval: running doc QA eval for %d agent_call_ids...", len(agent_call_ids))
+        from eval.run_doc_eval import run as run_doc_eval
+        run_doc_eval(agent_call_ids=agent_call_ids)
 
     log.info("bulk_reeval: complete")
 
@@ -257,17 +390,31 @@ def main():
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     parser = argparse.ArgumentParser(description="Bulk pipeline re-run + QA eval")
-    parser.add_argument("--agent-call-ids", required=True, help="Comma-separated agent_call_ids")
+    parser.add_argument("--agent-call-ids", help="Comma-separated agent_call_ids (OR provide --start-date/--end-date)")
+    parser.add_argument("--start-date", help="YYYY-MM-DD lower bound on run_id date (inclusive)")
+    parser.add_argument("--end-date", help="YYYY-MM-DD upper bound on run_id date (inclusive)")
+    parser.add_argument("--mode", default="alerts", choices=["alerts", "docs", "both"],
+                        help="Which rerun mode: alerts (page_change), docs (document extraction), or both")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    ids = [x.strip() for x in args.agent_call_ids.split(",") if x.strip()]
-    if not ids:
-        log.error("No agent_call_ids provided")
+    ids: list[str] | None = None
+    if args.agent_call_ids:
+        ids = [x.strip() for x in args.agent_call_ids.split(",") if x.strip()]
+    if not ids and not (args.start_date and args.end_date):
+        log.error("Must provide --agent-call-ids OR both --start-date and --end-date")
         sys.exit(1)
 
-    log.info("bulk_reeval: agent_call_ids=%s dry_run=%s", ids, args.dry_run)
-    run(agent_call_ids=ids, dry_run=args.dry_run)
+    log.info("bulk_reeval: mode=%s start=%s end=%s dry_run=%s agent_call_ids=%s",
+             args.mode, args.start_date, args.end_date, args.dry_run,
+             f"{len(ids)} ids" if ids else "(none)")
+    run(
+        agent_call_ids=ids,
+        dry_run=args.dry_run,
+        mode=args.mode,
+        start_date=args.start_date,
+        end_date=args.end_date,
+    )
 
 
 if __name__ == "__main__":
