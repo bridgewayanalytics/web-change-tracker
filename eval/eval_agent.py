@@ -204,6 +204,21 @@ async def _run_with_pgvector(
         )
         result = await Runner.run(agent, input=user_content)
         gathered = result.final_output or ""
+
+        # Telemetry — Step 1 (Agents SDK with pgvector tools)
+        try:
+            from bubble.usage_telemetry import extract_agents_sdk_usage, post_usage
+            u = extract_agents_sdk_usage(result)
+            if u["requests"]:
+                post_usage(
+                    "web_tracking_qa_eval", model,
+                    u["input_tokens"], u["output_tokens"],
+                    cached_input_tokens=u["cached_input_tokens"],
+                    reasoning_tokens=u["reasoning_tokens"],
+                    requests_count=u["requests"],
+                )
+        except Exception:
+            pass  # telemetry must never break the eval
     finally:
         await close_pg_pool()
 
@@ -237,7 +252,7 @@ async def _run_with_pgvector(
         },
         {"role": "user", "content": gathered},
     ]
-    indexed = chat_json(messages, model=model, reasoning_effort=reasoning_effort) or {}
+    indexed = chat_json(messages, model=model, reasoning_effort=reasoning_effort, surface="web_tracking_qa_eval") or {}
     # Remap integer-index keys → real eval_row_keys so _flatten_scores works unchanged.
     return {
         eval_row_keys[int(k)]: v
@@ -314,7 +329,7 @@ def evaluate_group(
         {"role": "user", "content": user_message},
     ]
     try:
-        indexed = chat_json(messages, model=model, reasoning_effort=reasoning_effort) or {}
+        indexed = chat_json(messages, model=model, reasoning_effort=reasoning_effort, surface="web_tracking_qa_eval") or {}
         if not isinstance(indexed, dict):
             return [{"eval_row_key": k, "eval_scores": {}, "error": "Agent returned non-dict response"} for k in eval_row_keys]
         raw = {

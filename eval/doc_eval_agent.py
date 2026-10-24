@@ -361,6 +361,21 @@ async def _run_agent_async(
     result = await Runner.run(agent, input=user_content, max_turns=25)
     gathered = result.final_output or ""
 
+    # Telemetry — Step 1 (Agents SDK with pgvector tools)
+    try:
+        from bubble.usage_telemetry import extract_agents_sdk_usage, post_usage
+        u = extract_agents_sdk_usage(result)
+        if u["requests"]:
+            post_usage(
+                "document_qa_eval", model,
+                u["input_tokens"], u["output_tokens"],
+                cached_input_tokens=u["cached_input_tokens"],
+                reasoning_tokens=u["reasoning_tokens"],
+                requests_count=u["requests"],
+            )
+    except Exception:
+        pass  # telemetry must never break the eval
+
     if not gathered:
         return {"error": "Agent returned empty output"}
 
@@ -386,7 +401,7 @@ async def _run_agent_async(
         },
         {"role": "user", "content": gathered},
     ]
-    return chat_json(messages, model=model, reasoning_effort=reasoning_effort)
+    return chat_json(messages, model=model, reasoning_effort=reasoning_effort, surface="document_qa_eval")
 
 
 def _prepare_eval_args(rows: list[dict], alert_row: dict | None = None) -> dict:
@@ -533,7 +548,7 @@ async def _run_group_async(rows: list[dict], prepared: dict) -> list[dict]:
         {"role": "user", "content": user_message},
     ]
     try:
-        raw = chat_json(messages, model=model, reasoning_effort=reasoning_effort)
+        raw = chat_json(messages, model=model, reasoning_effort=reasoning_effort, surface="document_qa_eval")
         if not isinstance(raw, dict):
             return [{"error": "Agent returned non-dict response"}]
         return _flatten_scores(raw, rows, eval_row_keys)
