@@ -78,7 +78,7 @@ def _load_alert_lookup() -> dict[tuple[str, str], dict]:
     return lookup
 
 
-def _load_doc_rows(agent_call_ids: list[str] | None, limit: int = _DEFAULT_LIMIT, library_item_url: str | None = None) -> list[dict]:
+def _load_doc_rows(agent_call_ids: list[str] | None, limit: int = _DEFAULT_LIMIT, library_item_url: str | None = None, resume: bool = False) -> list[dict]:
     # `limit` is only used for the agent_call_ids path; bulk path selects all eligible rows.
     bucket = _get_bucket()
     client = _s3_client()
@@ -113,6 +113,33 @@ def _load_doc_rows(agent_call_ids: list[str] | None, limit: int = _DEFAULT_LIMIT
             if existing is None or (row.get("run_timestamp", "") > existing.get("run_timestamp", "")):
                 dedup[key] = row
         result = list(dedup.values())
+
+        # --resume mode: skip rows whose doc_extraction_id already has a QA result.
+        # Useful when restarting a killed bulk eval — rows already graded in a prior
+        # eval_run_id (incl. partial progress of a previous attempt) are skipped so
+        # the restart only processes what hasn't been done yet.
+        if resume:
+            already: set[str] = set()
+            try:
+                eval_resp = client.get_object(Bucket=bucket, Key=_RESULTS_KEY)
+                for line in eval_resp["Body"].read().decode("utf-8").split("\n"):
+                    if not line.strip():
+                        continue
+                    try:
+                        er = json.loads(line)
+                        eid = er.get("doc_extraction_id") or ""
+                        if eid:
+                            already.add(eid)
+                    except json.JSONDecodeError:
+                        continue
+            except Exception as e:
+                log.warning("Resume mode: could not load existing eval results: %s", e)
+
+            before = len(result)
+            result = [r for r in result if (r.get("doc_extraction_id") or "") not in already]
+            log.info("Resume mode: skipped %d row(s) already QA'd (by doc_extraction_id); remaining: %d",
+                     before - len(result), len(result))
+
         log.info("Selected %d row(s) by agent_call_id (after dedup)", len(result))
         return result
 
@@ -279,6 +306,7 @@ def run(
     agent_call_ids: list[str] | None = None,
     library_item_url: str | None = None,
     dry_run: bool = False,
+    resume: bool = False,
 ) -> list[dict]:
     import subprocess
 
@@ -289,7 +317,7 @@ def run(
 
     log.info("Starting doc eval run %s", eval_run_id)
 
-    rows = _load_doc_rows(agent_call_ids, limit, library_item_url)
+    rows = _load_doc_rows(agent_call_ids, limit, library_item_url, resume=resume)
     if not rows:
         log.info("No eligible doc extraction rows found")
         return []
@@ -411,6 +439,9 @@ def main():
     parser.add_argument("--agent-call-ids", type=str, default=None)
     parser.add_argument("--library-item-url", type=str, default=None)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--resume", action="store_true",
+                        help="With --agent-call-ids: skip rows whose doc_extraction_id already has a QA result. "
+                             "Lets you restart a killed bulk eval without redoing completed rows.")
     parser.add_argument("--group-file", type=str, default=None,
                         help="Internal: path to a JSON file containing a pre-serialized group. "
                              "Run by subprocess; do not use directly.")
@@ -431,6 +462,7 @@ def main():
             agent_call_ids=call_ids,
             library_item_url=args.library_item_url,
             dry_run=args.dry_run,
+            resume=args.resume,
         )
     except Exception:
         import traceback
