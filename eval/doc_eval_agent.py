@@ -356,7 +356,9 @@ async def _run_agent_async(
             verbosity=reasoning_effort,
         ),
     )
-    result = await Runner.run(agent, input=user_content)
+    # Default Agents SDK max_turns is 10; gpt-6.1-sol often uses more pgvector
+    # tool calls for thorough QA, so bump it (mirrors document_agent.py).
+    result = await Runner.run(agent, input=user_content, max_turns=25)
     gathered = result.final_output or ""
 
     if not gathered:
