@@ -2684,13 +2684,12 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
         log.info("rerun: wrote empty result to s3://%s/%s", bucket, result_key)
         return
 
-    agent_call_id = agent_alerts_for_rows[0].get("agent_call_id", "") if agent_alerts_for_rows else ""
-
-    # For docs/both mode: if page_change_agent failed, fall back to original alert rows
-    # so document extraction can still proceed independently.
+    # For docs/both mode: if page_change_agent didn't run (mode=docs) or failed, fall back
+    # to original alert rows so document extraction can still proceed. This fallback MUST
+    # happen BEFORE agent_call_id is captured below, otherwise agent_call_id ends up empty
+    # and gets stamped on every doc extraction row, breaking QA eval lookups.
     if rerun_mode in ("docs", "both") and not agent_alerts_for_rows:
         log.warning("rerun: page_change_agent returned no output — falling back to original rows for doc extraction")
-        # Fetch original rows from S3 to use as the agent_alerts source
         try:
             jsonl_body = s3.get_object(Bucket=bucket, Key="alerts/alerts_table.jsonl")["Body"].read().decode("utf-8")
             for line in jsonl_body.splitlines():
@@ -2709,6 +2708,8 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
         if not agent_alerts_for_rows:
             log.error("rerun: no original rows found for fallback")
             raise SystemExit(1)
+
+    agent_call_id = agent_alerts_for_rows[0].get("agent_call_id", "") if agent_alerts_for_rows else ""
 
     # Run document agent on library items if applicable (only in "docs" or "both" mode)
     doc_extractions: list[dict] = []
