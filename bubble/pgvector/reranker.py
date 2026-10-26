@@ -45,10 +45,38 @@ def _get_rerank_client() -> Optional[AsyncOpenAI]:
     return _rerank_client
 
 
-async def _score_one(client: AsyncOpenAI, query: str, chunk: dict[str, Any]) -> dict[str, Any]:
+def _resolve_rerank_model() -> str:
+    """Resolve the rerank model from the parent agent's contextvar; fall back to RERANK_MODEL."""
+    try:
+        from bubble.pgvector.search_tool import get_rerank_model
+        m = (get_rerank_model() or "").strip()
+        if m:
+            return m
+    except Exception:
+        pass
+    return RERANK_MODEL
+
+
+def _resolve_rerank_surface() -> str:
+    """Resolve the telemetry surface — parent agent's surface if set, else 'reranker'."""
+    try:
+        from bubble.pgvector.search_tool import get_rerank_surface
+        s = (get_rerank_surface() or "").strip()
+        if s:
+            return s
+    except Exception:
+        pass
+    return "reranker"
+
+
+async def _score_one(
+    client: AsyncOpenAI, query: str, chunk: dict[str, Any], model: str,
+) -> tuple[dict[str, Any], dict[str, int]]:
+    """Score one chunk; also return token usage so caller can aggregate telemetry."""
+    usage = {"input_tokens": 0, "output_tokens": 0, "cached_input_tokens": 0, "reasoning_tokens": 0}
     try:
         resp = await client.chat.completions.create(
-            model=RERANK_MODEL,
+            model=model,
             messages=[
                 {"role": "system", "content": RERANK_SYSTEM_PROMPT},
                 {"role": "user", "content": (
@@ -60,6 +88,21 @@ async def _score_one(client: AsyncOpenAI, query: str, chunk: dict[str, Any]) -> 
             ],
             max_completion_tokens=200,
         )
+        # Collect usage before parsing content (so even on parse failure we still bill).
+        try:
+            u = getattr(resp, "usage", None)
+            if u is not None:
+                usage["input_tokens"] = int(getattr(u, "prompt_tokens", 0) or 0)
+                usage["output_tokens"] = int(getattr(u, "completion_tokens", 0) or 0)
+                pt_det = getattr(u, "prompt_tokens_details", None)
+                if pt_det is not None:
+                    usage["cached_input_tokens"] = int(getattr(pt_det, "cached_tokens", 0) or 0)
+                ct_det = getattr(u, "completion_tokens_details", None)
+                if ct_det is not None:
+                    usage["reasoning_tokens"] = int(getattr(ct_det, "reasoning_tokens", 0) or 0)
+        except Exception:
+            pass
+
         choice = resp.choices[0]
         if choice.finish_reason == "length":
             chunk["rerank_score"] = 0.0
@@ -78,7 +121,7 @@ async def _score_one(client: AsyncOpenAI, query: str, chunk: dict[str, Any]) -> 
             type(e).__name__, e,
         )
         chunk["rerank_score"] = 0.0
-    return chunk
+    return chunk, usage
 
 
 _RERANK_CONCURRENCY = 4  # concurrent httpx connections before heap corruption risk
@@ -91,6 +134,10 @@ async def rerank_chunks(
 ) -> list[dict[str, Any]]:
     """Score candidates in parallel (batched) and return the top_n by relevance.
 
+    Model and telemetry surface are inherited from the parent agent via contextvars
+    set by `search_tool.set_rerank_model()` / `set_rerank_surface()`. Falls back to
+    the hardcoded RERANK_MODEL and surface="reranker" if neither is set.
+
     Batching limits concurrent httpx connections to _RERANK_CONCURRENCY.
     Unbounded asyncio.gather() over many candidates causes shared OpenSSL/httpx
     state to corrupt glibc's heap (double free), killing the process with SIGABRT.
@@ -100,10 +147,37 @@ async def rerank_chunks(
     client = _get_rerank_client()
     if client is None:
         return candidates[:top_n]
+
+    model = _resolve_rerank_model()
+    surface = _resolve_rerank_surface()
+
     scored: list[dict[str, Any]] = []
+    agg = {"input_tokens": 0, "output_tokens": 0, "cached_input_tokens": 0, "reasoning_tokens": 0, "requests": 0}
     for i in range(0, len(candidates), _RERANK_CONCURRENCY):
         batch = candidates[i : i + _RERANK_CONCURRENCY]
-        batch_results = await asyncio.gather(*[_score_one(client, query, c) for c in batch])
-        scored.extend(batch_results)
+        batch_results = await asyncio.gather(*[_score_one(client, query, c, model) for c in batch])
+        for chunk, usage in batch_results:
+            scored.append(chunk)
+            agg["input_tokens"] += usage["input_tokens"]
+            agg["output_tokens"] += usage["output_tokens"]
+            agg["cached_input_tokens"] += usage["cached_input_tokens"]
+            agg["reasoning_tokens"] += usage["reasoning_tokens"]
+            agg["requests"] += 1
+
+    # Post aggregated usage under the parent agent's surface so cost rolls up to
+    # whoever invoked the search. Falls back to the generic "reranker" surface.
+    if agg["requests"] and (agg["input_tokens"] or agg["output_tokens"]):
+        try:
+            from bubble.usage_telemetry import post_usage
+            post_usage(
+                surface, model,
+                agg["input_tokens"], agg["output_tokens"],
+                cached_input_tokens=agg["cached_input_tokens"],
+                reasoning_tokens=agg["reasoning_tokens"],
+                requests_count=agg["requests"],
+            )
+        except Exception:
+            pass  # telemetry must never break the agent
+
     scored.sort(key=lambda x: x.get("rerank_score", 0.0), reverse=True)
     return scored[:top_n]

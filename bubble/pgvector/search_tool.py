@@ -50,6 +50,38 @@ def get_pgvector_namespaces() -> list[str]:
     return _pgvector_namespaces.get()
 
 
+# Reranker model inherited from the parent agent, so the reranker uses the same
+# model (and billing/surface) as whoever called search_knowledge_base. Set this
+# BEFORE Runner.run() in each parent agent (document_agent, doc_eval_agent, etc).
+# Empty string = fall back to the hardcoded default in reranker.py.
+_rerank_model: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "rerank_model", default=""
+)
+
+# Parent agent's telemetry surface so reranker usage gets attributed to the agent
+# that caused it (e.g. document_data_extraction, document_qa_eval). Empty string
+# = fall back to the generic "reranker" surface so cost is still tracked.
+_rerank_surface: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "rerank_surface", default=""
+)
+
+
+def set_rerank_model(model: str) -> None:
+    _rerank_model.set(model or "")
+
+
+def get_rerank_model() -> str:
+    return _rerank_model.get()
+
+
+def set_rerank_surface(surface: str) -> None:
+    _rerank_surface.set(surface or "")
+
+
+def get_rerank_surface() -> str:
+    return _rerank_surface.get()
+
+
 # Pattern for "ART Newsreel | February 26, 2026" or "February 26, 2026" etc.
 _DATE_IN_QUERY_PATTERN = re.compile(
     r"(?:"

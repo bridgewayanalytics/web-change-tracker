@@ -186,12 +186,15 @@ async def _run_with_pgvector(
         from agents import Agent, Runner, ModelSettings
         from agents.model_settings import Reasoning
         from bubble.pgvector.search_tool import (
-            set_pgvector_namespaces,
+            set_pgvector_namespaces, set_rerank_model, set_rerank_surface,
             search_knowledge_base,
             list_available_documents,
         )
 
         set_pgvector_namespaces(namespaces)
+        # Reranker inherits this agent's model + telemetry surface so cost rolls up correctly.
+        set_rerank_model(model)
+        set_rerank_surface("web_tracking_qa_eval")
         agent = Agent(
             name=_CHAT_ID,
             instructions=system_prompt,
