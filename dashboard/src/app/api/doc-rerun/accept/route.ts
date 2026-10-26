@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 
 const BUCKET = process.env.BUBBLE_ARTIFACT_BUCKET ?? "";
 const DOC_KEY = "alerts/document_extractions_table.jsonl";
+const EVAL_KEY = "alerts/doc_eval_results_table.jsonl";
 
 let s3: S3Client | null = null;
 function getS3() {
@@ -102,6 +103,61 @@ export async function POST(request: NextRequest) {
       }
     }
     if (!inserted) patched.push(...insertRows); // fallback: append if none matched
+
+    // 3b. Carry forward eval_row_key onto new extraction rows.
+    //     Without this, the dashboard sees the new rows with empty eval_row_key
+    //     and all four fallback lookups fail — old QA appears to vanish until
+    //     carry_forward_eval_row_keys() runs on the Python side (during QA start,
+    //     ~10-30s after accept). Stamping here closes that gap so old QA stays
+    //     visible immediately after accept until the new QA replaces it.
+    try {
+      const evalRes = await getS3().send(
+        new GetObjectCommand({ Bucket: BUCKET, Key: EVAL_KEY })
+      );
+      const evalBody = await evalRes.Body?.transformToString();
+      if (evalBody) {
+        // Build (agent_call_id, library_item_url) → eval_row_key map from most recent eval entry.
+        const keyMap = new Map<string, string>();
+        for (const line of evalBody.split("\n")) {
+          const t = line.trim();
+          if (!t) continue;
+          try {
+            const er = JSON.parse(t) as { agent_call_id?: string; library_item_url?: string; eval_row_key?: string };
+            const cid = er.agent_call_id ?? "";
+            const url = er.library_item_url ?? "";
+            const erk = er.eval_row_key ?? "";
+            if (!cid || !erk) continue;
+            // Last entry wins (JSONL order = chronological, upserts preserved)
+            keyMap.set(`${cid}|${url}`, erk);
+            // Also index by just agent_call_id as a weaker fallback (for sibling rows
+            // or rows where library_item_url differs slightly between extraction and eval)
+            if (!keyMap.has(cid)) keyMap.set(cid, erk);
+          } catch {
+            // skip malformed lines
+          }
+        }
+
+        let stamped = 0;
+        for (const row of insertRows) {
+          if (row.eval_row_key) continue; // already stamped by extraction pipeline
+          const cid = String(row.agent_call_id ?? "");
+          const url = String(row.library_item_url ?? "");
+          if (!cid) continue;
+          const found = keyMap.get(`${cid}|${url}`) ?? keyMap.get(cid);
+          if (found) {
+            row.eval_row_key = found;
+            stamped += 1;
+          }
+        }
+        if (stamped > 0) {
+          console.log(`[/api/doc-rerun/accept] carried forward eval_row_key onto ${stamped}/${insertRows.length} new rows`);
+        }
+      }
+    } catch (e) {
+      // Non-fatal: if eval table doesn't exist yet or is unreadable, continue without carry-forward.
+      // Python's carry_forward_eval_row_keys will handle it at QA-start time (just with a brief gap).
+      console.warn("[/api/doc-rerun/accept] carry-forward skipped (non-fatal):", e instanceof Error ? e.message : e);
+    }
 
     // 4. Write back
     const newJSONL = patched.map((r) => JSON.stringify(r)).join("\n") + "\n";
