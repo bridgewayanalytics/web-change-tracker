@@ -12,7 +12,7 @@ from typing import Any, Optional
 import httpx
 from openai import AsyncOpenAI
 
-RERANK_MODEL = "gpt-5.4"
+RERANK_MODEL = "gpt-5-nano"
 
 RERANK_SYSTEM_PROMPT = """You are a relevance scoring engine for an insurance regulation
 knowledge base. Given a user query and a candidate text chunk, score the chunk's

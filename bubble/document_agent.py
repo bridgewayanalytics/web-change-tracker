@@ -176,15 +176,15 @@ async def _run_with_pgvector(
     from agents.model_settings import Reasoning
     from bubble.pgvector.client import init_pg_pool, close_pg_pool
     from bubble.pgvector.search_tool import (
-        set_pgvector_namespaces, set_rerank_model, set_rerank_surface,
+        set_pgvector_namespaces, set_rerank_surface,
         search_knowledge_base, list_available_documents,
     )
 
     await init_pg_pool()
     try:
         set_pgvector_namespaces(pgvector_namespaces)
-        # Reranker inherits this agent's model + telemetry surface so cost rolls up correctly.
-        set_rerank_model(model)
+        # Reranker uses its own fast model (nano) for speed — cost still rolls up to this
+        # agent's surface via set_rerank_surface so document_data_extraction gets the credit.
         set_rerank_surface("document_data_extraction")
         agent = Agent(
             name=_CHAT_ID,
