@@ -528,8 +528,12 @@ async def _run_group_async(rows: list[dict], prepared: dict) -> list[dict]:
                 return [{"error": "Agent returned non-dict response"}]
             return _flatten_scores(raw, rows, eval_row_keys)
         except Exception as e:
-            log.error("Doc eval agent (pgvector) failed agent_call_id=%s: %s", agent_call_id, e)
-            return [{"error": str(e)}]
+            import traceback
+            log.error(
+                "Doc eval agent (pgvector) failed agent_call_id=%s type=%s msg=%r\n%s",
+                agent_call_id, type(e).__name__, str(e), traceback.format_exc(),
+            )
+            return [{"error": f"{type(e).__name__}: {e}"}]
 
     from bubble.openai_client import chat_json
     doc_text = prepared.get("doc_text")
@@ -556,8 +560,12 @@ async def _run_group_async(rows: list[dict], prepared: dict) -> list[dict]:
             return [{"error": "Agent returned non-dict response"}]
         return _flatten_scores(raw, rows, eval_row_keys)
     except Exception as e:
-        log.error("Doc eval agent failed agent_call_id=%s: %s", agent_call_id, e)
-        return [{"error": str(e)}]
+        import traceback
+        log.error(
+            "Doc eval agent failed agent_call_id=%s type=%s msg=%r\n%s",
+            agent_call_id, type(e).__name__, str(e), traceback.format_exc(),
+        )
+        return [{"error": f"{type(e).__name__}: {e}"}]
 
 
 def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None) -> list[dict]:
@@ -576,10 +584,19 @@ def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None
     async def _single():
         from bubble.pgvector.client import init_pg_pool, close_pg_pool
         if prepared["namespaces"] is not None:
-            await init_pg_pool()
+            try:
+                await init_pg_pool()
+            except (TimeoutError, ConnectionError, OSError) as pool_err:
+                log.warning(
+                    "doc_eval_agent: pgvector pool unreachable (%s: %s) — falling back to non-pgvector mode agent_call_id=%s",
+                    type(pool_err).__name__, pool_err or "<no msg>",
+                    rows[0].get("agent_call_id", "unknown"),
+                )
+                prepared["namespaces"] = None
         try:
             return await _run_group_async(rows, prepared)
         finally:
+
             if prepared["namespaces"] is not None:
                 await close_pg_pool()
                 from bubble.pgvector import reranker as _reranker_mod
@@ -603,9 +620,13 @@ def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None
     try:
         return asyncio.run(_single())
     except Exception as e:
+        import traceback
         agent_call_id = rows[0].get("agent_call_id", "unknown")
-        log.error("Doc eval agent failed agent_call_id=%s: %s", agent_call_id, e)
-        return [{"error": str(e)}]
+        log.error(
+            "Doc eval agent failed agent_call_id=%s type=%s msg=%r\n%s",
+            agent_call_id, type(e).__name__, str(e), traceback.format_exc(),
+        )
+        return [{"error": f"{type(e).__name__}: {e}"}]
 
 
 async def evaluate_doc_extraction_call_async(rows: list[dict], alert_row: dict | None = None) -> list[dict]:

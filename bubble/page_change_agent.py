@@ -467,13 +467,42 @@ def extract_page_change(
 
         _store_agent_context(agent_call_id, "alerts", user_content, system_prompt)
 
+        pgvector_pool_failed = False
         if _pgvector_enabled():
             log.info("page_change_agent: running with pgvector tools (model=%s, call_id=%s)", model, agent_call_id[:8])
-            raw = asyncio.run(_run_with_pgvector(
-                system_prompt, user_content, model, reasoning_effort,
-                pgvector_namespaces if isinstance(pgvector_namespaces, list) else [],
-            ))
+            try:
+                raw = asyncio.run(_run_with_pgvector(
+                    system_prompt, user_content, model, reasoning_effort,
+                    pgvector_namespaces if isinstance(pgvector_namespaces, list) else [],
+                ))
+            except (TimeoutError, ConnectionError, OSError) as pool_err:
+                log.warning(
+                    "page_change_agent: pgvector pool unreachable (%s: %s) — falling back to non-pgvector mode (call_id=%s)",
+                    type(pool_err).__name__, pool_err or "<no msg>", agent_call_id[:8],
+                )
+                pgvector_pool_failed = True
+                raw = None
 
+        if pgvector_pool_failed or not _pgvector_enabled():
+            log.info("page_change_agent: running without pgvector (model=%s, call_id=%s)", model, agent_call_id[:8])
+            from bubble.openai_client import chat_json
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ]
+            json_schema = _get_output_json_schema()
+            if json_schema:
+                log.info("page_change_agent: using structured outputs schema '%s'", _get_output_json_schema_name())
+            result = chat_json(
+                messages,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                json_schema=json_schema,
+                json_schema_name=_get_output_json_schema_name(),
+                json_schema_strict=_get_output_json_schema_strict(),
+                surface="web_tracking_agent",
+            )
+        else:
             # Log Step 1 output for debugging (visible in CloudWatch + stored to S3).
             log.info("page_change_agent: Step 1 raw output (call_id=%s, len=%d):\n%s",
                      agent_call_id[:8], len(raw or ""), (raw or "")[:4000])
@@ -519,25 +548,6 @@ def extract_page_change(
                 )
             else:
                 result = _parse_output(raw)
-        else:
-            log.info("page_change_agent: running without pgvector (model=%s, call_id=%s)", model, agent_call_id[:8])
-            from bubble.openai_client import chat_json
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ]
-            json_schema = _get_output_json_schema()
-            if json_schema:
-                log.info("page_change_agent: using structured outputs schema '%s'", _get_output_json_schema_name())
-            result = chat_json(
-                messages,
-                model=model,
-                reasoning_effort=reasoning_effort,
-                json_schema=json_schema,
-                json_schema_name=_get_output_json_schema_name(),
-                json_schema_strict=_get_output_json_schema_strict(),
-                surface="web_tracking_agent",
-            )
 
         if not isinstance(result, dict):
             return []

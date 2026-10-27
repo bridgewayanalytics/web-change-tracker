@@ -701,12 +701,32 @@ def extract_document_data(
                 return []
 
         log.info("document_agent: running with pgvector (model=%s) for: %s", model, document_name[:80])
-        result = asyncio.run(_run_with_pgvector(
-            system_prompt, user_content, model, reasoning_effort, pgvector_namespaces,
-            json_schema=json_schema,
-            json_schema_name=json_schema_name,
-            json_schema_strict=json_schema_strict,
-        ))
+        try:
+            result = asyncio.run(_run_with_pgvector(
+                system_prompt, user_content, model, reasoning_effort, pgvector_namespaces,
+                json_schema=json_schema,
+                json_schema_name=json_schema_name,
+                json_schema_strict=json_schema_strict,
+            ))
+        except (TimeoutError, ConnectionError, OSError) as pool_err:
+            log.warning(
+                "document_agent: pgvector pool unreachable (%s: %s) — falling back to direct API for: %s",
+                type(pool_err).__name__, pool_err or "<no msg>", document_name[:80],
+            )
+            from bubble.openai_client import chat_json
+            messages = [
+                {"role": "system", "content": _get_base_system_prompt()},
+                {"role": "user", "content": user_content},
+            ]
+            result = chat_json(
+                messages,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                json_schema=json_schema,
+                json_schema_name=json_schema_name,
+                json_schema_strict=json_schema_strict,
+                surface="document_data_extraction",
+            )
 
         out = result if isinstance(result, dict) else {}
         if not out:
