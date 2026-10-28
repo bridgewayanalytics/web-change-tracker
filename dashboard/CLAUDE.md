@@ -72,7 +72,7 @@ Deploy script flags:
 | `/api/schema` | GET | Reads `output_json_schema` + `output_requested_values` from DynamoDB (`chat:web-tracking-agent`). Returns `{ columns, labels }`. Drills into `alerts.items` if schema has alerts array wrapper. Falls back to instructions fenced block. |
 | `/api/config` | GET | Returns current agent config hash + model name from DynamoDB (used by rerun modal). |
 | `/api/rerun` | POST | Starts ECS Fargate task with `RERUN_RUN_ID` + `RERUN_TARGET_ID` env overrides. Returns `{ taskArn }`. |
-| `/api/rerun/[taskId]` | GET | Polls ECS task status. When stopped + exit 0, fetches result from S3 `alerts/reruns/<run_id>/<target_id>/result.json`. |
+| `/api/rerun/[taskId]` | GET | Polls ECS task status. When stopped + exit 0, fetches result from S3 `alerts/reruns/<run_id>/<target_id>/result.json`. **ECS DescribeTasks has ~1h retention after task stops** — if the task isn't found, falls back to reading S3 and returning `{status: "complete", result}` so the dashboard's auto-accept flow still works when the browser tab was closed during polling. |
 | `/api/rerun/accept` | POST | Patches `alerts_table.jsonl` in S3 (replaces rows for run_id+target_id with rerun rows). Always preserves `run_timestamp`, `agent_call_id`, `alert_date_time`, and `run_id` from the original row (`run_id` is in `alwaysPreserve` so `html_fetcher.py` can reconstruct the correct S3 path for QA eval). Conditionally preserves `target_id` and `source_url` when missing from the rerun row. Busts cache. |
 | `/api/rerun/discard` | POST | Deletes rerun result from S3. |
 | `/api/snapshot` | GET | Proxies before/after HTML snapshots from S3 for download. Safety check: path must start with `pages/` and end with `.html`. |
@@ -80,7 +80,7 @@ Deploy script flags:
 | `/api/document-extractions` | GET | Reads `document_extractions_table.jsonl` from S3, applies filters, returns rows. 60s in-memory cache. |
 | `/api/doc-schema` | GET | Reads `output_json_schema` + `output_requested_values` from DynamoDB (`chat:document-data-extraction`). Unwraps single-property array wrapper if present. Filters out labels containing `, report`. |
 | `/api/doc-rerun` | POST | Starts ECS rerun task for document extractions. Returns `{ taskArn }`. |
-| `/api/doc-rerun/[taskId]` | GET | Polls ECS task. When complete, returns `{ run_id, target_id, rerun_timestamp, config_hash, original_rows, rerun_rows }` from S3. |
+| `/api/doc-rerun/[taskId]` | GET | Polls ECS task. When complete, returns `{ run_id, target_id, rerun_timestamp, config_hash, original_rows, rerun_rows }` from S3. Has the same ECS-retention S3 fallback as `/api/rerun/[taskId]` — a stopped task that aged out of ECS metadata is still auto-accepted if its result.json is present. |
 | `/api/doc-rerun/accept` | POST | Patches `document_extractions_table.jsonl` (replaces rows for run_id+target_id). Busts doc cache. |
 | `/api/doc-rerun/discard` | POST | Deletes doc rerun result from S3. |
 | `/api/presigned-url` | GET | Generates presigned S3 GET URL for a recording or transcript file. Query param: `key`. Redirects (302) to the presigned URL (1-hour expiry). |
@@ -218,7 +218,7 @@ Auth for ingest API calls: `CHATKIT_INTERNAL_API_KEY` from env or SSM (`/web-cha
 
 ### QA Evaluation feature
 
-Each alert row can be QA-evaluated by the `chat:eval-agent` (rubric-based field-by-field scoring). Evaluation is triggered per-row via ECS, results are stored in `alerts/eval_results_table.jsonl` (upsert keyed by `eval_row_key`: `agent_call_id` for single-row runs, `agent_call_id|library_item_url` for sibling rows from the same run). `getEvalForRow(row, evalResults)` in `AlertsTable.tsx` resolves the correct key: when both a plain `callId` key and a composite `callId|libUrl` key exist in `evalResults`, the function returns whichever has the newer `eval_timestamp` (so a fresh solo re-evaluation overwrites a stale sibling-group result rather than being shadowed by it). If only one key exists, it returns that one directly.
+Each alert row can be QA-evaluated by the `chat:eval-agent` (rubric-based field-by-field scoring). Evaluation is triggered per-row via ECS, results are stored in `alerts/eval_results_table.jsonl` (upsert keyed by `eval_row_key`: `agent_call_id` for single-row runs, composite for sibling rows from the same run). `lookupEvalResult(row, evalResults)` in `AlertsTable.tsx` resolves the correct key: when both a plain `callId` key and a composite key exist in `evalResults`, the function returns whichever has the newer `eval_timestamp` (so a fresh solo re-evaluation overwrites a stale sibling-group result rather than being shadowed by it). If only one key exists, it returns that one directly. **The composite key must mirror `eval/run_eval.py` `_eval_row_key`**: `{callId}|{library_item_url}` when the URL is set, otherwise `{callId}|{alert_title}` (for rows with no library item, e.g. "New Meeting" alerts). The dashboard tries both forms depending on `library_item_url`.
 
 **Actions cell — QA section:**
 - No "Run QA" button — QA is triggered automatically when a re-evaluate result is accepted. There is no manual "Run QA" trigger on the row itself.
