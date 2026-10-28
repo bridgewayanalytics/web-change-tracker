@@ -33,6 +33,34 @@ export async function GET(
 
     const task = res.tasks?.[0];
     if (!task) {
+      // ECS DescribeTasks has ~1h retention after a task stops. If the task
+      // isn't returned, the rerun may already be done — check S3 for the
+      // result.json before giving up, so the dashboard's auto-accept flow
+      // works even when the browser tab closed before polling caught the
+      // terminal state.
+      if (run_id && target_id) {
+        const key = `alerts/reruns/${run_id}/${target_id}/result.json`;
+        try {
+          const s3res = await getS3().send(
+            new GetObjectCommand({ Bucket: BUCKET, Key: key })
+          );
+          const body = await s3res.Body?.transformToString();
+          if (body) {
+            const fullResult = JSON.parse(body);
+            const docResult = {
+              run_id: fullResult.run_id,
+              target_id: fullResult.target_id,
+              rerun_timestamp: fullResult.rerun_timestamp,
+              config_hash: fullResult.config_hash,
+              original_rows: fullResult.doc_original_rows ?? [],
+              rerun_rows: fullResult.doc_rerun_rows ?? [],
+            };
+            return NextResponse.json({ status: "complete", result: docResult });
+          }
+        } catch {
+          // no result.json either — fall through to unknown
+        }
+      }
       return NextResponse.json({ status: "unknown", error: "Task not found" });
     }
 
