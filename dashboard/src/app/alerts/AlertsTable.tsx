@@ -897,9 +897,13 @@ function lookupEvalResult(row: AlertRow, evalResults: Record<string, EvalResult>
   let libUrl = libUrlRaw;
   try { libUrl = libUrlRaw ? decodeURIComponent(libUrlRaw) : ""; } catch { /* leave as-is on malformed %XX */ }
   const plain = evalResults[callId];
-  const composite = (libUrl && libUrl.toLowerCase() !== "n/a")
+  // Match eval/run_eval.py _eval_row_key: composite key uses library_item_url when
+  // available, or falls back to alert_title (for rows without a library item, e.g.
+  // "New Meeting" alerts where library_item_url is "N/A").
+  const hasUrl = libUrl && libUrl.toLowerCase() !== "n/a";
+  const composite = hasUrl
     ? evalResults[`${callId}|${libUrl}`]
-    : undefined;
+    : evalResults[`${callId}|${String(row.alert_title ?? "")}`];
   if (plain && composite) {
     // Prefer whichever was evaluated more recently (re-evaluated solo rows win over stale sibling results)
     return (plain.eval_timestamp ?? "") >= (composite.eval_timestamp ?? "") ? plain : composite;
