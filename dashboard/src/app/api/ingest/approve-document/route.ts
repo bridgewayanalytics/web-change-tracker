@@ -19,14 +19,33 @@ function getS3() {
 }
 
 // POST /api/ingest/approve-document
-// Body: { agent_call_id: string, library_item_url: string }
+// Allowed destination namespaces (per docs/integration/newsreel-ingest-api.md).
+// Anything outside this set gets a 400 from the upstream API, so we gate it here too.
+const ALLOWED_NAMESPACES = new Set([
+  "newsreel-generation:ART",
+  "naic-proceedings",
+  "bridgeway-sharepoint",
+  "art-state-system",
+  "ba:chronicles",
+  "ba:newsreels",
+  "ba:NAIC Guidelines",
+  "ba:International Guidelines",
+  "ba:Rating Agencies",
+]);
+const DEFAULT_NAMESPACE = "newsreel-generation:ART";
+
+// Body: { agent_call_id: string, library_item_url: string, namespace?: string }
 // Calls ingest-document API, then patches the doc extraction row to "approved".
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json() as { agent_call_id?: string; library_item_url?: string };
+    const body = await request.json() as { agent_call_id?: string; library_item_url?: string; namespace?: string };
     const { agent_call_id, library_item_url } = body;
+    const namespace = (body.namespace && body.namespace.trim()) || DEFAULT_NAMESPACE;
     if (!agent_call_id || !library_item_url) {
       return NextResponse.json({ error: "agent_call_id and library_item_url required" }, { status: 400 });
+    }
+    if (!ALLOWED_NAMESPACES.has(namespace)) {
+      return NextResponse.json({ error: `unknown namespace: ${namespace}` }, { status: 400 });
     }
 
     // Find the row to get library_item_title and manual_doc_s3_key
@@ -63,7 +82,7 @@ export async function POST(request: NextRequest) {
     }
 
     const formData = new FormData();
-    formData.append("namespace", "newsreel-generation:ART");
+    formData.append("namespace", namespace);
     formData.append("filename", library_item_title || library_item_url || manual_doc_s3_key);
     formData.append("url", ingestUrl);
 

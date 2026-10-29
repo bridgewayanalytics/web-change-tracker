@@ -337,8 +337,14 @@ async function resolveAgendaItems(
   let previews = (plan?.agenda_item_previews as Array<Record<string, unknown>> | undefined) ?? [];
 
   if (!previews.length) {
-    // Fallback: build previews from flat alert fields (old rows without previews)
-    const agendaEntries = (row.agenda_item_title_chronicle_topics as Array<Record<string, unknown>> | undefined) ?? [];
+    // Fallback: build previews from flat alert fields (old rows without previews).
+    // Field name was renamed `agenda_item_title_chronicle_topics` → `agenda_item_title`
+    // in the 2026-10 schema sync; keep both so historical rows still resolve.
+    const agendaEntries = (
+      (row.agenda_item_title as Array<Record<string, unknown>> | undefined) ??
+      (row.agenda_item_title_chronicle_topics as Array<Record<string, unknown>> | undefined) ??
+      []
+    );
     const officialTitles = (row.agenda_item_title_official as Array<Record<string, unknown>> | undefined) ?? [];
     const standardizedIds = (row.agenda_item_standardized_id as Array<Record<string, unknown>> | undefined) ?? [];
     previews = agendaEntries.map((entry, i) => ({
@@ -464,10 +470,23 @@ function getAgendaTopicNames(row: Record<string, unknown>): string[] {
   ));
   if (fromPreviews.length) return fromPreviews;
 
-  const entries = (row.agenda_item_title_chronicle_topics as Array<Record<string, unknown>> | undefined) ?? [];
-  return Array.from(new Set(
+  // Fallback: read from the alert row's agent-output compound field. Renamed from
+  // `agenda_item_title_chronicle_topics` → `agenda_item_title` in the 2026-10 schema
+  // sync; also fold in the new top-level `chronicle_topic` scalar if present (the
+  // post-sync Web Tracking Agent emits the overarching doc topic there).
+  const entries = (
+    (row.agenda_item_title as Array<Record<string, unknown>> | undefined) ??
+    (row.agenda_item_title_chronicle_topics as Array<Record<string, unknown>> | undefined) ??
+    []
+  );
+  const inline = Array.from(new Set(
     entries.flatMap(e => (e.chronicle_topics as string[] | undefined) ?? []).filter(notNA),
   ));
+  const topLevelTopic = typeof row.chronicle_topic === "string" ? row.chronicle_topic.trim() : "";
+  if (topLevelTopic && topLevelTopic.toUpperCase() !== "N/A" && !inline.includes(topLevelTopic)) {
+    inline.push(topLevelTopic);
+  }
+  return inline;
 }
 
 // Bubble Data API expects ISO 8601 UTC (e.g. "2026-06-11T18:00:00.000Z").

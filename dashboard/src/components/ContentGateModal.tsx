@@ -106,10 +106,18 @@ interface AgendaItemPreview {
   official_id?: string;     // from agenda_item_official_id.official_id            → Bubble "Ref #"
 }
 
+// Where a field's value comes from — surfaced as a small badge in the FieldTable
+// so the user can tell at a glance whether a value originated from the Web Agent
+// (page_change_agent), the Document Agent (doc extraction), a derived computation,
+// or a transcript. The classifier is a post-processing step over Web Agent output,
+// so classifier-derived fields are labelled as Web Agent too.
+type FieldSource = "web_tracking" | "doc_extraction" | "derived" | "transcript" | "bubble";
+
 // A structured display field
 interface FieldEntry {
   label: string;        // Bubble field name (what the sync writes to)
   agentField?: string;  // Agent output field key — resolved to its human-readable label at render time
+  source?: FieldSource; // Which agent / origin produced the value in `value` / `topics` / `list`
   value?: string;       // plain text value
   topics?: string[];    // rendered as chips (or combobox selections when combobox is set)
   list?: string[];      // rendered as a numbered list
@@ -121,6 +129,14 @@ interface FieldEntry {
     mode: "single" | "multi";  // multi: edit `topics`; single: edit `value`
   };
 }
+
+const SOURCE_BADGE: Record<FieldSource, { label: string; title: string; className: string }> = {
+  web_tracking:   { label: "Web Agent",      title: "Web Agent (page_change_agent)",            className: "bg-sky-100 text-sky-700 border-sky-200" },
+  doc_extraction: { label: "Document Agent", title: "Document Agent (doc extraction)",          className: "bg-emerald-100 text-emerald-700 border-emerald-200" },
+  derived:        { label: "Derived",        title: "Derived / computed, not direct agent output", className: "bg-gray-100 text-gray-500 border-gray-200" },
+  transcript:     { label: "Transcript",     title: "Transcript / recording",                   className: "bg-amber-100 text-amber-700 border-amber-200" },
+  bubble:         { label: "Bubble",         title: "Bubble metadata (not an agent)",           className: "bg-purple-100 text-purple-700 border-purple-200" },
+};
 
 // Fallback labels for internal/derived fields that aren't in the agent's output schema
 // (e.g. doc extraction fields merged in, derived values).
@@ -137,6 +153,12 @@ const AGENT_FIELD_LABEL_FALLBACKS: Record<string, string> = {
   "agenda_item_bridgeway_title[].agenda_item_title":       "Agenda Item Bridgeway Title",
   "chronicle_topic":                                        "Chronicle Topic",
   "should_agenda_item_be_created":                          "Should Agenda Item Be Created",
+  // New Web-Agent schema (2026-10): the compound field was renamed
+  // `agenda_item_title_chronicle_topics` → `agenda_item_title` (still a list of
+  // {agenda_item_title, chronicle_topics, status}), and chronicle_topic became a
+  // separate top-level scalar.
+  "agenda_item_title[].agenda_item_title":                 "Agenda Item Title",
+  "agenda_item_title[].chronicle_topics":                  "Agenda Item Chronicle Topics (inline)",
   // Legacy agent field identifiers kept so stored rows with older schemas still resolve.
   "agenda_item_title_chronicle_topics[].chronicle_topics": "Agenda Item Chronicle Topics",
   "agenda_item_title_chronicle_topics[].agenda_item_title": "Agenda Item Bridgeway Title",
@@ -466,25 +488,27 @@ function buildEventFields(
   const orgList = Array.isArray(ep.group) ? (ep.group as string[]).filter(Boolean) : (notNA(group) ? [group] : []);
 
   const entries: FieldEntry[] = [
-    mk("Title",           "event_title",                       notNA(title) ? title : "—"),
-    mk("Type",            "alert_type (derived)",              eventType, { combobox: { type: "calendaritemtype", mode: "single" } }),
-    mk("Start Date/Time", "event_start_date_time",             notNA(start) ? start : "—"),
-    mk("End Date/Time",   "event_end_date_time",               notNA(end)   ? end   : "—"),
+    mk("Title",           "event_title",                       notNA(title) ? title : "—",       { source: "web_tracking" }),
+    mk("Type",            "alert_type (derived)",              eventType,                      { source: "derived",      combobox: { type: "calendaritemtype", mode: "single" } }),
+    mk("Start Date/Time", "event_start_date_time",             notNA(start) ? start : "—",     { source: "web_tracking" }),
+    mk("End Date/Time",   "event_end_date_time",               notNA(end)   ? end   : "—",     { source: "web_tracking" }),
     {
       label: "Organizations",
       agentField: "organization",
+      source: "web_tracking",
       topics: orgList,
       combobox: { type: "organization", mode: "multi" },
       changed: changedLabels.size > 0 ? changedLabels.has("Organizations") : undefined,
     },
-    mk("Location",        "event_url",                         notNA(url)    ? url    : "—"),
+    mk("Location",        "event_url",                         notNA(url)    ? url    : "—",   { source: "web_tracking" }),
   ];
-  if (isFullDay) entries.splice(3, 0, mk("Full Day", "event_is_full_day", "Yes", { readOnly: true }));
+  if (isFullDay) entries.splice(3, 0, mk("Full Day", "event_is_full_day", "Yes", { source: "web_tracking", readOnly: true }));
 
   // Chronicle Topics — searchable multi-select dropdown
   entries.push({
     label: "Chronicle Topics",
     agentField: "chronicle_topic",
+    source: "doc_extraction",
     topics,
     combobox: { type: "chronicletopic", mode: "multi" },
     changed: changedLabels.size > 0 ? changedLabels.has("Chronicle Topics") : undefined,
@@ -494,6 +518,7 @@ function buildEventFields(
   entries.push({
     label: "Linked Agenda Items",
     agentField: "agenda_item_bridgeway_title[].agenda_item_title",
+    source: "doc_extraction",
     ...(agendaItems.length > 0
       ? { list: agendaItems.map(item => stripStatusPrefix(item.title)) }
       : { value: "—" }),
@@ -504,7 +529,7 @@ function buildEventFields(
   // Agenda — always shown when there's a library item being linked (Bubble field name)
   if (libAction) {
     const libTitle = safeStr(lp.title);
-    entries.push(mk("Agenda", "library_item_preliminary_title.title", notNA(libTitle) ? libTitle : "—", { readOnly: true }));
+    entries.push(mk("Agenda", "library_item_preliminary_title.title", notNA(libTitle) ? libTitle : "—", { source: "web_tracking", readOnly: true }));
   }
 
   return entries;
@@ -542,34 +567,37 @@ function buildLibFields(
   const orgList = Array.isArray(lp.group) ? (lp.group as string[]).filter(Boolean) : (notNA(group) ? [group] : []);
 
   const entries: FieldEntry[] = [
-    mk("Name",          "library_item_preliminary_title.title", notNA(title)    ? title    : "—"),
-    mk("URL",           "library_item_url",                     notNA(url)      ? url      : "—"),
-    mk("Type",          "alert_type (classifier)",              notNA(type)     ? type     : "—", { combobox: { type: "libraryitemtype", mode: "single" } }),
+    mk("Name",          "library_item_preliminary_title.title", notNA(title)    ? title    : "—",   { source: "web_tracking" }),
+    mk("URL",           "library_item_url",                     notNA(url)      ? url      : "—",   { source: "web_tracking" }),
+    mk("Type",          "alert_type (classifier)",              notNA(type)     ? type     : "—",   { source: "web_tracking", combobox: { type: "libraryitemtype", mode: "single" } }),
     {
       label: "Organizations",
       agentField: "organization",
+      source: "web_tracking",
       topics: orgList,
       combobox: { type: "organization", mode: "multi" },
       changed: changedLabels.size > 0 ? changedLabels.has("Organizations") : undefined,
     },
-    mk("Date",          "doc_extraction.date_published",        notNA(date)     ? date     : "—"),
+    mk("Date",          "doc_extraction.date_published",        notNA(date)     ? date     : "—",   { source: "doc_extraction" }),
   ];
 
   // Chronicle Topics — searchable multi-select dropdown
   entries.push({
     label: "Chronicle Topics",
     agentField: "chronicle_topic",
+    source: "doc_extraction",
     topics,
     combobox: { type: "chronicletopic", mode: "multi" },
     changed: changedLabels.size > 0 ? changedLabels.has("Chronicle Topics") : undefined,
   });
 
-  if (notNA(description)) entries.push(mk("Description", "doc_extraction.description", description));
+  if (notNA(description)) entries.push(mk("Description", "doc_extraction.description", description, { source: "doc_extraction" }));
 
   // Linked Agenda Items — shown when items exist
   entries.push({
     label: "Linked Agenda Items",
     agentField: "agenda_item_bridgeway_title[].agenda_item_title",
+    source: "doc_extraction",
     ...(agendaItems.length > 0
       ? { list: agendaItems.map(item => stripStatusPrefix(item.title)) }
       : { value: "—" }),
@@ -763,6 +791,17 @@ function FieldTable({
           return (
             <tr key={i} className={rowClass}>
               <td className="py-2 px-2.5 text-[11px] text-gray-700 align-top break-words leading-snug border-r border-gray-100">
+                {f.source && (() => {
+                  const b = SOURCE_BADGE[f.source];
+                  return (
+                    <span
+                      title={b.title}
+                      className={`inline-flex items-center justify-center mr-1.5 align-middle text-[8.5px] font-bold rounded px-1 py-0.5 border leading-none ${b.className}`}
+                    >
+                      {b.label}
+                    </span>
+                  );
+                })()}
                 {resolveAgentFieldLabel(f.agentField, schemaLabels)}
               </td>
               <td
@@ -913,8 +952,11 @@ function Section({
     : "bg-purple-50";
   const systemColor = system === "Bubble" ? "text-indigo-600" : "text-purple-600";
 
+  // Top-of-card badge is a status noun ("New" / "Update") so it reads as a label for
+  // the content, not the action — the action verb lives on the publish button at the
+  // bottom ("Create in Bubble" / "Update in Bubble").
   const actionBadge = action === "create"
-    ? <span className="text-[9px] font-bold uppercase tracking-wider bg-green-100 text-green-700 rounded px-1.5 py-0.5">Create</span>
+    ? <span className="text-[9px] font-bold uppercase tracking-wider bg-green-100 text-green-700 rounded px-1.5 py-0.5">New</span>
     : action === "update"
     ? <span className="text-[9px] font-bold uppercase tracking-wider bg-blue-100 text-blue-700 rounded px-1.5 py-0.5">Update</span>
     : <span className="text-[9px] font-bold uppercase tracking-wider bg-purple-100 text-purple-700 rounded px-1.5 py-0.5">Publish</span>;
@@ -1366,8 +1408,6 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
 
   const eventDone      = !!(row.bubble_event_id);
   const libDone        = !!(row.bubble_library_item_id);
-  const transcriptDone = row.ingest_status === "approved";
-
   const agendaDone = !!(row.eidarix_agenda_item_ids as unknown[] | undefined)?.length;
 
   // UPDATE → CREATE fallback: when the classifier said "update" but no matching record
@@ -1382,8 +1422,9 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     event:        { status: eventDone  ? "done" : "idle" },
     library_item: { status: libDone   ? "done" : "idle" },
     agenda_items: { status: agendaDone ? "done" : "idle" },
-    transcript:   { status: transcriptDone ? "done" : "idle" },
-    document:     { status: "idle" },
+    // transcript / document status is now tracked per-namespace via `kbIngestState`
+    // (see further down). The row-level `ingest_status: "approved"` flag seeds the
+    // primary newsreel-generation:ART entry in that map.
   });
 
   useEffect(() => {
@@ -1392,14 +1433,43 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
       .then(r => r.json())
       .then((d: { rows?: Array<Record<string, unknown>> }) => {
         const allRows = d.rows ?? [];
-        // Filter to rows matching the effective library URL. When multiple PDFs share an
-        // agent_call_id the URL discriminates which rows belong to this alert's document.
-        const filtered = docFetchUrl
-          ? allRows.filter(r => String(r.library_item_url ?? "") === docFetchUrl)
-          : allRows;
+        // Filter doc-extraction rows to the one belonging to this alert's library item.
+        // When a single agent_call_id spans multiple PDFs we need the URL discriminator;
+        // when it covers just one PDF the discriminator is unnecessary.
+        //
+        // Matching strategy (fall through on each miss):
+        //   1. Exact string match on library_item_url
+        //   2. Normalized match (lowercase, strip trailing slash, strip URL fragment)
+        //   3. If all doc rows share the same URL anyway, use all rows (one-PDF case
+        //      where the stored URL differs cosmetically from the alert's URL)
+        const normalize = (u: string): string =>
+          u.toLowerCase().replace(/#.*$/, "").replace(/\/+$/, "").trim();
+        let filtered: Array<Record<string, unknown>> = [];
+        if (docFetchUrl) {
+          filtered = allRows.filter(r => String(r.library_item_url ?? "") === docFetchUrl);
+          if (!filtered.length) {
+            const targetNorm = normalize(docFetchUrl);
+            filtered = allRows.filter(r => normalize(String(r.library_item_url ?? "")) === targetNorm);
+          }
+          if (!filtered.length) {
+            const uniqueUrls = new Set(allRows.map(r => normalize(String(r.library_item_url ?? ""))));
+            if (uniqueUrls.size === 1 && allRows.length > 0) {
+              console.info("[content-gate] doc extraction URL mismatch — falling back to all rows (single-PDF case)",
+                           { alert_url: docFetchUrl, doc_url: Array.from(uniqueUrls)[0] });
+              filtered = allRows;
+            } else {
+              console.warn("[content-gate] no doc extraction rows match library_item_url",
+                           { alert_url: docFetchUrl, doc_urls: Array.from(uniqueUrls) });
+            }
+          }
+        } else {
+          filtered = allRows;
+        }
         setDocExtractionRows(filtered);
+        // Seed the primary-newsreel kb state if a doc extraction row says it was already
+        // approved for ingest — mirrors the row-level `ingest_status: "approved"` flag.
         if (filtered.some(r => r.ingest_status === "approved")) {
-          setSections(prev => ({ ...prev, document: { status: "done" } }));
+          setKbIngestState(prev => ({ ...prev, "newsreel-generation:ART": { status: "done" } }));
         }
       })
       .catch(() => {});
@@ -1604,36 +1674,52 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     }
   }
 
-  async function handlePublishTranscript() {
-    setSectionState("transcript", "loading");
+  // KB ingest state keyed by namespace — one ingest can go to multiple destinations
+  // independently (e.g., same document into "newsreel-generation:ART" and
+  // "naic-proceedings"), each with its own done/working/failed indicator. Seed the
+  // primary newsreel entry from the row's `ingest_status` flag so previously-approved
+  // rows render the ✓ Added marker without re-firing the ingest.
+  const [kbIngestState, setKbIngestState] = useState<Record<string, SectionState>>(() => ({
+    ...(row.ingest_status === "approved"
+      ? { "newsreel-generation:ART": { status: "done" as SectionStatus } }
+      : {}),
+  }));
+  function setKbState(namespace: string, status: SectionStatus, error?: string) {
+    setKbIngestState(prev => ({ ...prev, [namespace]: { status, error } }));
+  }
+
+  async function handlePublishTranscript(namespace: string = "newsreel-generation:ART") {
+    setKbState(namespace, "loading");
     try {
       const resp = await fetch("/api/ingest/approve-transcript", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agent_call_id: agentCallId }),
+        body: JSON.stringify({ agent_call_id: agentCallId, namespace }),
       });
       const data = await resp.json() as Record<string, unknown>;
       if (!resp.ok) throw new Error(String(data.error ?? "Ingest failed"));
-      setSectionState("transcript", "done");
-      onFieldPatched({ ingest_status: "approved" });
+      setKbState(namespace, "done");
+      // The row's ingest_status flag only tracks the primary (newsreel) destination so
+      // the Alerts table "✓ Complete" badge keeps its original meaning.
+      if (namespace === "newsreel-generation:ART") onFieldPatched({ ingest_status: "approved" });
     } catch (err) {
-      setSectionState("transcript", "error", err instanceof Error ? err.message : String(err));
+      setKbState(namespace, "error", err instanceof Error ? err.message : String(err));
     }
   }
 
-  async function handlePublishDocument() {
-    setSectionState("document", "loading");
+  async function handlePublishDocument(namespace: string = "newsreel-generation:ART") {
+    setKbState(namespace, "loading");
     try {
       const resp = await fetch("/api/ingest/approve-document", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agent_call_id: agentCallId, library_item_url: libItemUrl }),
+        body: JSON.stringify({ agent_call_id: agentCallId, library_item_url: libItemUrl, namespace }),
       });
       const data = await resp.json() as Record<string, unknown>;
       if (!resp.ok) throw new Error(String(data.error ?? "Ingest failed"));
-      setSectionState("document", "done");
+      setKbState(namespace, "done");
     } catch (err) {
-      setSectionState("document", "error", err instanceof Error ? err.message : String(err));
+      setKbState(namespace, "error", err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -1644,40 +1730,45 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     return String(raw);
   })();
 
-  // Vector store destinations (dropdown shown on the Library Item card).
-  // When a row has both a transcript AND a document URL, transcript ingest takes priority
-  // (the transcript IS the authoritative text to vectorize).
+  // All allowed KB destinations per docs/integration/newsreel-ingest-api.md.
+  // When a row has both a transcript AND a document URL, the transcript is the
+  // authoritative payload (it's the richer text). Each destination has independent
+  // per-namespace state so a user can send the same content to several KBs.
+  const VECTOR_STORE_DESTINATIONS: Array<{ value: string; label: string; disabledReason?: string }> = [
+    { value: "newsreel-generation:ART",   label: "Newsreel Generation" },
+    { value: "naic-proceedings",          label: "NAIC Proceedings" },
+    { value: "bridgeway-sharepoint",      label: "Bridgeway SharePoint" },
+    { value: "art-state-system",          label: "ART State System" },
+    { value: "ba:chronicles",             label: "Chronicles (ba:*)",             disabledReason: "ba:* namespaces: your upload won't dedupe against content Bubble sync already provides." },
+    { value: "ba:newsreels",              label: "Newsreels (ba:*)",              disabledReason: "ba:* namespaces: your upload won't dedupe against content Bubble sync already provides." },
+    { value: "ba:NAIC Guidelines",        label: "NAIC Guidelines (ba:*)",        disabledReason: "ba:* namespaces: your upload won't dedupe against content Bubble sync already provides." },
+    { value: "ba:International Guidelines", label: "International Guidelines (ba:*)", disabledReason: "ba:* namespaces: your upload won't dedupe against content Bubble sync already provides." },
+    { value: "ba:Rating Agencies",        label: "Rating Agencies (ba:*)",        disabledReason: "ba:* namespaces: your upload won't dedupe against content Bubble sync already provides." },
+  ];
+
   const libraryVectorStoreOptions = useMemo((): VectorStoreOption[] => {
-    const opts: VectorStoreOption[] = [];
-    if (hasTranscript) {
-      opts.push({
-        value: "newsreel",
-        label: "Newsreel Knowledge Base",
-        onSelect: () => void handlePublishTranscript(),
-        state: sections.transcript,
-      });
-    } else if (hasDocument) {
-      opts.push({
-        value: "newsreel",
-        label: "Newsreel Knowledge Base",
-        onSelect: () => void handlePublishDocument(),
-        state: sections.document,
-      });
-    }
-    return opts;
+    if (!hasTranscript && !hasDocument) return [];
+    const dispatch = hasTranscript ? handlePublishTranscript : handlePublishDocument;
+    return VECTOR_STORE_DESTINATIONS.map(dest => ({
+      value: dest.value,
+      label: dest.label,
+      onSelect: () => void dispatch(dest.value),
+      state: kbIngestState[dest.value] ?? { status: "idle" as SectionStatus },
+      disabledReason: dest.disabledReason,
+    }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasTranscript, hasDocument, sections.transcript, sections.document]);
+  }, [hasTranscript, hasDocument, kbIngestState]);
 
   const documentFields: FieldEntry[] = [
-    { label: "Destination", agentField: "—", value: "Newsreel Knowledge Base", readOnly: true },
+    { label: "Destination", agentField: "—", source: "derived", value: "Newsreel Knowledge Base", readOnly: true },
   ];
-  if (libItemTitle && libItemTitle !== "N/A") documentFields.push({ label: "Title", agentField: "library_item_preliminary_title.title", value: libItemTitle, readOnly: true });
-  if (libItemUrl) documentFields.push({ label: "URL", agentField: "library_item_url", value: libItemUrl, readOnly: true });
+  if (libItemTitle && libItemTitle !== "N/A") documentFields.push({ label: "Title", agentField: "library_item_preliminary_title.title", source: "web_tracking", value: libItemTitle, readOnly: true });
+  if (libItemUrl) documentFields.push({ label: "URL", agentField: "library_item_url", source: "web_tracking", value: libItemUrl, readOnly: true });
 
   const transcriptFields: FieldEntry[] = [
-    { label: "Destination", agentField: "—", value: "Newsreel Knowledge Base", readOnly: true },
+    { label: "Destination", agentField: "—", source: "derived", value: "Newsreel Knowledge Base", readOnly: true },
   ];
-  if (transcriptKey) transcriptFields.push({ label: "File", agentField: "transcript_s3_key", value: transcriptKey.split("/").pop() ?? transcriptKey, readOnly: true });
+  if (transcriptKey) transcriptFields.push({ label: "File", agentField: "transcript_s3_key", source: "transcript", value: transcriptKey.split("/").pop() ?? transcriptKey, readOnly: true });
 
   const hasAnySection = !!(eventAction || libAction || hasAgenda || hasTranscript || hasDocument);
 
@@ -1720,10 +1811,9 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
             const isDone = sections.agenda_items.status === "done";
             const newCount      = activeNewAgendaItems.length;
             const existingCount = activeExistingAgendaItems.length;
-            const headerLabel =
-              newCount > 0 && existingCount > 0 ? `Create ${newCount}, link ${existingCount} Agenda Items in Bubble` :
-              newCount > 0                       ? `Create ${newCount} Agenda Item${newCount !== 1 ? "s" : ""} in Bubble` :
-                                                   `Link ${existingCount} existing Agenda Item${existingCount !== 1 ? "s" : ""} in Bubble`;
+            const totalCount    = newCount + existingCount;
+            // Neutral card title — each mini-card carries its own NEW/EXISTING badge.
+            const headerLabel = `${totalCount} Agenda Item${totalCount !== 1 ? "s" : ""}`;
             const buttonLabel =
               sections.agenda_items.status === "loading" ? "Working…" :
               newCount > 0 && existingCount > 0 ? `Create ${newCount}, link ${existingCount}` :
@@ -1763,13 +1853,14 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
                   const topics = editedTopics ?? (enriched.chronicle_topics ?? []);
 
                   const itemFields: FieldEntry[] = [
-                    { label: "BA title",   agentField: "agenda_item_title_chronicle_topics[].agenda_item_title", value: baTitle,    readOnly: isDone },
-                    { label: "NAIC Title", agentField: "agenda_item_title_official[].official_title",            value: naicTitle,  readOnly: isDone },
-                    { label: "BA Ref #",   agentField: "agenda_item_standardized_id[].standardized_id",          value: baRef,      readOnly: isDone },
-                    { label: "Ref #",      agentField: "agenda_item_official_id[].official_id",                  value: officialId, readOnly: isDone },
+                    { label: "BA title",   agentField: "agenda_item_bridgeway_title[].agenda_item_title", source: "doc_extraction", value: baTitle,    readOnly: isDone },
+                    { label: "NAIC Title", agentField: "agenda_item_title_official[].official_title",     source: "doc_extraction", value: naicTitle,  readOnly: isDone },
+                    { label: "BA Ref #",   agentField: "agenda_item_standardized_id[].standardized_id",   source: "doc_extraction", value: baRef,      readOnly: isDone },
+                    { label: "Ref #",      agentField: "agenda_item_official_id[].official_id",           source: "doc_extraction", value: officialId, readOnly: isDone },
                     {
                       label: "Topics - dt",
                       agentField: "chronicle_topic",
+                      source: "doc_extraction",
                       topics,
                       ...(isDone ? { readOnly: true as const } : { combobox: { type: "chronicletopic" as const, mode: "multi" as const } }),
                     },
@@ -1818,13 +1909,14 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
                   const topics     = enriched.chronicle_topics ?? [];
 
                   const itemFields: FieldEntry[] = [
-                    { label: "BA title",   agentField: "agenda_item_title_chronicle_topics[].agenda_item_title", value: baTitle,    readOnly: true },
-                    { label: "NAIC Title", agentField: "agenda_item_title_official[].official_title",            value: naicTitle,  readOnly: true },
-                    { label: "BA Ref #",   agentField: "agenda_item_standardized_id[].standardized_id",          value: baRef,      readOnly: true },
-                    { label: "Ref #",      agentField: "agenda_item_official_id[].official_id",                  value: officialId, readOnly: true },
+                    { label: "BA title",   agentField: "agenda_item_bridgeway_title[].agenda_item_title", source: "doc_extraction", value: baTitle,    readOnly: true },
+                    { label: "NAIC Title", agentField: "agenda_item_title_official[].official_title",     source: "doc_extraction", value: naicTitle,  readOnly: true },
+                    { label: "BA Ref #",   agentField: "agenda_item_standardized_id[].standardized_id",   source: "doc_extraction", value: baRef,      readOnly: true },
+                    { label: "Ref #",      agentField: "agenda_item_official_id[].official_id",           source: "doc_extraction", value: officialId, readOnly: true },
                     {
                       label: "Topics - dt",
                       agentField: "chronicle_topic",
+                      source: "doc_extraction",
                       topics,
                       readOnly: true,
                     },
@@ -1952,7 +2044,7 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
               fields={transcriptFields}
               editState={{}}
               onEdit={() => {}}
-              sectionState={sections.transcript}
+              sectionState={kbIngestState["newsreel-generation:ART"] ?? { status: "idle" }}
               schemaLabels={schemaLabels}
               bubbleOptions={bubbleOptions}
               vectorStoreOptions={libraryVectorStoreOptions}
@@ -1969,7 +2061,7 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
               fields={documentFields}
               editState={{}}
               onEdit={() => {}}
-              sectionState={sections.document}
+              sectionState={kbIngestState["newsreel-generation:ART"] ?? { status: "idle" }}
               schemaLabels={schemaLabels}
               bubbleOptions={bubbleOptions}
               vectorStoreOptions={libraryVectorStoreOptions}

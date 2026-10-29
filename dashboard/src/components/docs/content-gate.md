@@ -141,13 +141,24 @@ Every field inside a section renders in a 3-column table:
 
 | Column        | Content                                                           |
 |---------------|-------------------------------------------------------------------|
-| Agent Field   | Human-readable label from the agent's output schema (from `/api/schema`). Falls back to a hand-maintained map in `AGENT_FIELD_LABEL_FALLBACKS` for internal/derived fields. |
+| Agent Field   | Small color-coded source badge (**Web Agent** / **Document Agent** / **Derived** / **Transcript**) followed by the human-readable label from the agent's output schema (`/api/schema`). Falls back to a hand-maintained map in `AGENT_FIELD_LABEL_FALLBACKS` for internal/derived fields. |
 | Bubble Field  | Name of the Bubble field being written (e.g., "Name", "Date"). |
 | Value         | Either a text input (free-text), a `SearchableCombobox` (dropdown), chronicle-topic chips, a numbered list, or read-only text. |
 
+The source badge is driven by a `source: FieldSource` property on each
+`FieldEntry`. The `SOURCE_BADGE` map in `ContentGateModal.tsx` controls the
+label, hover title, and color class per source. Classifier-derived fields (e.g.,
+the library item `Type` which is mapped from the alert's `alert_type`) are
+badged **Web Agent** because the classifier operates downstream of Web Agent
+output.
+
 For UPDATE sections, when the modal has fetched the current Bubble record,
 unchanged fields display the authoritative Bubble value (`mergeWithCurrentRecord`),
-while changed fields show the proposed new value highlighted amber.
+while changed fields show the proposed new value highlighted amber. The modal
+forces a set of "always updated" labels (Chronicle Topics, Linked Agenda Items,
+Agenda for events; Chronicle Topics for library items) into the changed set so
+users see the preview values the sync will PATCH, independent of whether the
+classifier flagged them.
 
 ### SearchableCombobox
 
@@ -215,7 +226,10 @@ rendered by the `Section` component with a consistent header:
 - **SYSTEM** = `Bubble` or `Newsreel` (color-coded).
 - **OBJECT TYPE** = `Library Item`, `Calendar Event`, `Meeting Transcript`,
   `Library Document`, etc.
-- **ACTION BADGE** = `CREATE` (green), `UPDATE` (blue), or `PUBLISH` (purple).
+- **ACTION BADGE** = `NEW` (green), `UPDATE` (blue), or `PUBLISH` (purple). The
+  top-of-card badge is a status noun ("New"/"Update"), not an action verb — the
+  action verb lives on the publish button at the bottom ("Create in Bubble" /
+  "Update in Bubble" / "Publish to Newsreel").
 - **Subtitle** = the content's title (e.g., library item name, event name),
   shown prominently so users know what's being published.
 
@@ -245,26 +259,45 @@ The sync executor accepts both ISO (`YYYY-MM-DD`) and natural-language
 
 ---
 
-## 8. Vector store (Newsreel) consolidation
+## 8. Vector store (Library Vector Store) consolidation
 
-Documents and transcripts flow to the Newsreel Knowledge Base via the same
-`/internal/documents/ingest` API. When a library item is already being written to
-Bubble, the vector-store action is folded into the Library Item card's footer as a
-secondary button:
+Documents and transcripts flow to any curated knowledge-base namespace via the
+same `/internal/documents/ingest` API (contract: `docs/integration/newsreel-ingest-api.md`).
+When a library item is already being written to Bubble, the vector-store action
+is folded into the Library Item card's footer as a secondary split-button:
 
 ```
 [Add to Library Vector Store ▼]   [Create in Bubble]
-    ├─ Newsreel Knowledge Base
-    └─ (future types...)
+    ├─ Newsreel Generation          (default / primary — mirrors `ingest_status: "approved"`)
+    ├─ NAIC Proceedings
+    ├─ Bridgeway SharePoint
+    ├─ ART State System
+    ├─ Chronicles (ba:*)             ⚠ no dedupe against Bubble-synced content
+    ├─ Newsreels (ba:*)              ⚠ "
+    ├─ NAIC Guidelines (ba:*)        ⚠ "
+    ├─ International Guidelines (ba:*)  ⚠ "
+    └─ Rating Agencies (ba:*)        ⚠ "
 ```
 
-- `AddToVectorStoreButton` component renders the split-button pattern.
-- Clicking the dropdown item fires `handlePublishTranscript()` or
-  `handlePublishDocument()` depending on the row kind:
-  - Row has `transcript_s3_key` and `alert_type === "New Meeting Transcript Available"` → `POST /api/ingest/approve-transcript`
-  - Otherwise, if `library_item_url` is non-empty and starts with `http` → `POST /api/ingest/approve-document`
-- Per-type section state (`sections.transcript` / `sections.document`) renders
-  `✓ Added` / `Working…` / `Failed` inside the dropdown.
+- `AddToVectorStoreButton` renders the dropdown; `VECTOR_STORE_DESTINATIONS`
+  in `ContentGateModal.tsx` enumerates the full set with human labels and a
+  per-destination `disabledReason` tooltip for the `ba:*` dedup caveat.
+- Clicking a destination calls `handlePublishTranscript(namespace)` or
+  `handlePublishDocument(namespace)` depending on whether the row has a
+  transcript (`transcript_s3_key` + `alert_type === "New Meeting Transcript Available"`)
+  or a document URL. Both route to `POST /api/ingest/approve-{transcript,document}`
+  with `{ namespace }` in the body.
+- The ingest routes validate `namespace` against an `ALLOWED_NAMESPACES` set
+  mirroring the upstream contract; anything outside returns 400 locally.
+- Per-destination state lives in `kbIngestState: Record<namespace, SectionState>`
+  on the modal. Each dropdown item renders its own `✓ Added` / `Working…` /
+  `Failed` indicator — the user can send the same content to multiple KBs
+  independently.
+- The row-level `ingest_status: "approved"` flag only tracks the primary
+  `newsreel-generation:ART` destination so the Alerts-table "✓ Complete" badge
+  keeps its original meaning. On modal open, `kbIngestState` is seeded with
+  `{"newsreel-generation:ART": { status: "done" }}` when the row's
+  `ingest_status === "approved"`.
 
 If there's no library item action to piggy-back on (rare), a standalone section
 with just the vector-store dropdown is rendered.
@@ -273,27 +306,48 @@ with just the vector-store dropdown is rendered.
 
 ## 9. Agenda item editing
 
-Each new agenda item renders as a compact row inside the "Create Agenda Items"
-card:
+New and existing agenda items share one unified "N Agenda Items" card (header
+text is neutral — each mini-card carries its own `NEW` / `EXISTING` / `UPDATED`
+status badge). Each item renders as a bordered mini-card with the same
+3-column field table used by the library item / event sections:
 
-```
-1. [editable title input          ]  [×]
-   [Chronicle Topics searchable multi-select combobox]
-```
+| Agent Field                 | Bubble Field | Value                                  |
+|-----------------------------|--------------|----------------------------------------|
+| Agenda Item Bridgeway Title | BA title     | editable text (New) / read-only (Existing) |
+| Agenda Item Official Title  | NAIC Title   | editable text (New) / read-only (Existing) |
+| Agenda Item Standardized ID | BA Ref #     | editable text (New) / read-only (Existing) |
+| Agenda Item Official ID     | Ref #        | editable text (New) / read-only (Existing) |
+| Agenda Item Chronicle Topics | Topics - dt | searchable multi-select (New) / chips (Existing) |
 
-- **Title** — free-text input (`agenda_item_title_chronicle_topics[].agenda_item_title`)
-- **Chronicle Topics** — `SearchableCombobox` with multi-select, options from the
-  10-min-cached chronicle topic list (scoped to `CONTENT_SPACE_ID`)
-- Per-item edits are stored in `agendaItemEdits: Record<number, Record<string, string>>`
-  and applied via `applyAgendaEdits(item, i)` before patching `bubble_action.agenda_item_previews`
+- All five fields auto-populate from the matching doc-extraction row
+  (`agenda_item_bridgeway_title[]`, `agenda_item_title_official[]`,
+  `agenda_item_standardized_id[]`, `agenda_item_official_id[]`,
+  `chronicle_topic` top-level scalar).
+- **New** items are editable and will be POSTed to `wf/create-agenda-item/`.
+- **Existing / Updated** items are read-only (editing wouldn't affect the
+  Bubble record) but still carry a × delete button so the user can drop them
+  from the final link set.
+- `×` on a New item removes it from the create batch (`deletedNewIndices`).
+  `×` on an Existing item removes it from the link set
+  (`deletedExistingIndices`).
+- Per-item edits land in `agendaItemEdits: Record<number, Record<string, string>>`
+  and are applied via `applyAgendaEdits(item, i)` before patching
+  `bubble_action.agenda_item_previews`.
 
-**Status prefixes** (`"New - "`, `"Existing - "`, `"Updated - "`) are stripped at
-display time via `stripStatusPrefix()` and also before any Bubble API write.
+**Ref # Data-API PATCH**: the `wf/create-agenda-item/` workflow does not accept
+an input parameter for `Ref #`, so the executor PATCHes
+`/obj/agendaitem/{id}` with `{"Ref #": officialId}` immediately after each
+successful workflow create. Non-fatal — a failed PATCH only logs a warning.
+
+**Status prefixes** (`"New - "`, `"Existing - "`, `"Updated - "`) are stripped
+at display time via `stripStatusPrefix()` and also before any Bubble API write.
+`N/A` and missing status values on synthesized items are normalized to `"New"`
+so the dependency guard fires correctly.
 
 **Existing/Updated items** (status != `"New"`) are not re-created — they are
-looked up in Bubble by title via `findAgendaItemByTitle()` (searches for the "title"
-or "BA title" field). If the item can't be found, the whole sync fails with a
-`RuntimeError` rather than silently proceeding.
+looked up in Bubble by title via `findAgendaItemByTitle()` (searches for the
+"title" or "BA title" field). If the item can't be found, the whole sync fails
+with a `RuntimeError` rather than silently proceeding.
 
 ---
 
@@ -573,10 +627,17 @@ option-set fields (`AMPM from`, etc.).
 - **Agenda-topic source precedence (sync executor).** `getAgendaTopicNames(row)`
   reads chronicle-topic names from `bubble_action.agenda_item_previews` first
   (the modal patches these with doc-extraction-synthesized items before firing
-  the sync) and falls back to the alert row's `agenda_item_title_chronicle_topics`
-  field only when previews are empty. Needed because the page-change agent
-  often leaves `agenda_item_title_chronicle_topics` as `"N/A"` placeholders
-  while the doc extraction agent produces the real topic lists per agenda item.
+  the sync). If previews are empty it falls back to the alert row's agent-output
+  fields, preferring the current field name `agenda_item_title[]` and falling
+  back to the legacy `agenda_item_title_chronicle_topics[]` for historical rows.
+  It then folds in the row's top-level `chronicle_topic` scalar (new in the
+  2026-10 Web Agent schema) when it's non-N/A and not already in the list.
+- **Doc-extraction URL filter is forgiving.** The modal filters doc extraction
+  rows to the alert's `library_item_url` with three passes: (1) exact match,
+  (2) normalized match (lowercase, strip trailing slash, strip fragment), and
+  (3) if all doc rows share the same URL anyway, use all of them (one-PDF
+  case where the stored URL differs only cosmetically from the alert URL).
+  Falls through to logging rather than crashing when nothing matches.
 - **UPDATE display vs. send parity.** `mergeWithCurrentRecord` in the modal
   does **not** replace the computed preview value for list-replacing fields
   (`Chronicle Topics`, `Linked Agenda Items`) with the Bubble record's current

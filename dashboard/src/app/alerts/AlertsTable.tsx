@@ -90,6 +90,15 @@ const METADATA_COLS = new Set([
  * To add a new alias when a field is renamed: { newName: oldName }.
  */
 const LEGACY_ALIASES: Record<string, string> = {
+  // ── NEW post-2026-10 schema sync → previous stable IDs ──────────────────────
+  // Datetime fields gained an "_et" suffix and the compound agenda field was
+  // renamed. Add the new → old chain so pre-sync rows resolve under the new
+  // column headers.
+  alert_date_time_et:                                     "alert_date_time",
+  event_start_date_time_et:                               "event_start_date_time",
+  event_end_date_time_et:                                 "event_end_date_time",
+  agenda_item_title:                                      "agenda_item_title_chronicle_topics",
+
   // ── current stable IDs → previous stable IDs (backend field rename, May 2026) ─
   // The new sync backend derives IDs via to_field_id(label). Several IDs changed.
   // These chains let old rows display correctly under the new column names.

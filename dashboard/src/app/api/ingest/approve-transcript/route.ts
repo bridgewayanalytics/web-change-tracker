@@ -18,16 +18,34 @@ function getS3() {
   return s3;
 }
 
+// Allowed destination namespaces (per docs/integration/newsreel-ingest-api.md).
+const ALLOWED_NAMESPACES = new Set([
+  "newsreel-generation:ART",
+  "naic-proceedings",
+  "bridgeway-sharepoint",
+  "art-state-system",
+  "ba:chronicles",
+  "ba:newsreels",
+  "ba:NAIC Guidelines",
+  "ba:International Guidelines",
+  "ba:Rating Agencies",
+]);
+const DEFAULT_NAMESPACE = "newsreel-generation:ART";
+
 // POST /api/ingest/approve-transcript
-// Body: { agent_call_id: string }
+// Body: { agent_call_id: string, namespace?: string }
 // Generates a presigned URL for the transcript txt file and submits it to the
-// newsreel-generation knowledge base, then patches the alert row to "approved".
+// requested knowledge-base namespace, then patches the alert row to "approved".
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json() as { agent_call_id?: string };
+    const body = await request.json() as { agent_call_id?: string; namespace?: string };
     const { agent_call_id } = body;
+    const namespace = (body.namespace && body.namespace.trim()) || DEFAULT_NAMESPACE;
     if (!agent_call_id) {
       return NextResponse.json({ error: "agent_call_id required" }, { status: 400 });
+    }
+    if (!ALLOWED_NAMESPACES.has(namespace)) {
+      return NextResponse.json({ error: `unknown namespace: ${namespace}` }, { status: 400 });
     }
 
     // Find the row to get transcript_s3_key
@@ -72,7 +90,7 @@ export async function POST(request: NextRequest) {
         method: "POST",
         headers: { "x-api-key": apiKey },
         body: new URLSearchParams({
-          namespace: "newsreel-generation:ART",
+          namespace,
           filename,
           url: presignedUrl,
         }),
