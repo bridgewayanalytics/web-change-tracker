@@ -29,8 +29,13 @@ interface ValidationResult {
 
 function ValidationBanner({ result }: { result: ValidationResult | null | "loading" }) {
   if (!result || result === "loading" || result.issues.length === 0) return null;
-  const errors   = result.issues.filter(i => i.severity === "error");
-  const warnings = result.issues.filter(i => i.severity === "warning");
+  // Chronicle Topic issues are surfaced inline on the agenda item mini-cards they
+  // belong to; suppress the duplicate top-level banner entries so the user isn't
+  // told about the same topic twice.
+  const issues  = result.issues.filter(i => i.field !== "Chronicle Topics");
+  if (issues.length === 0) return null;
+  const errors   = issues.filter(i => i.severity === "error");
+  const warnings = issues.filter(i => i.severity === "warning");
   return (
     <div className="rounded-lg border border-gray-200 overflow-hidden text-[11px]">
       <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 flex items-center gap-1.5">
@@ -47,7 +52,7 @@ function ValidationBanner({ result }: { result: ValidationResult | null | "loadi
         )}
       </div>
       <div className="divide-y divide-gray-100">
-        {result.issues.map((issue, i) => (
+        {issues.map((issue, i) => (
           <div key={i} className={`px-3 py-2 ${issue.severity === "error" ? "bg-red-50" : "bg-amber-50"}`}>
             <div className="flex items-start gap-1.5">
               <span className={`mt-0.5 flex-shrink-0 ${issue.severity === "error" ? "text-red-500" : "text-amber-500"}`}>
@@ -196,6 +201,16 @@ function safeStr(v: unknown): string {
   return String(v).trim();
 }
 
+// Top-level `chronicle_topic` is schema-typed as a scalar but the agent sometimes
+// emits multiple topics joined with `;` or `|`. Split so each piece can be
+// resolved against the Bubble chronicletopic table independently. Comma is NOT
+// a delimiter — real Bubble topic titles contain commas (e.g.
+// "Markets, Risk-Based Capital, and Reserves").
+function splitChronicleTopic(raw: unknown): string[] {
+  if (typeof raw !== "string") return [];
+  return raw.split(/[;|]/).map(s => s.trim()).filter(Boolean);
+}
+
 const NA_SET = new Set(["n/a", "n/a.", "-", "none", ""]);
 function notNA(s: string): boolean {
   return !NA_SET.has(s.toLowerCase().trim());
@@ -284,16 +299,17 @@ function enrichFromDocExtraction(
       const officialArr     = (dr.agenda_item_title_official    as Array<Record<string, unknown>> | undefined) ?? [];
       const standardizedArr = (dr.agenda_item_standardized_id  as Array<Record<string, unknown>> | undefined) ?? [];
       const officialIdArr   = (dr.agenda_item_official_id       as Array<Record<string, unknown>> | undefined) ?? [];
-      // New: top-level chronicle_topic (singular string) — authoritative overarching doc topic
-      const topLevelTopic   = String(dr.chronicle_topic ?? "").trim();
+      // New: top-level chronicle_topic may be one topic OR a `;`/`|`-joined list;
+      // split and keep only non-N/A pieces so each resolves independently in Bubble.
+      const topLevelTopics  = splitChronicleTopic(dr.chronicle_topic).filter(notNA);
       if (!Array.isArray(bridgewayItems)) continue;
       bridgewayItems.forEach((entry, i) => {
         const inlineTopics = Array.isArray(entry.chronicle_topics)
           ? (entry.chronicle_topics as unknown[]).map(String).filter(t => t && notNA(t))
           : [];
-        // Prefer the explicit top-level chronicle_topic (new schema) when present and non-N/A;
+        // Prefer the explicit top-level chronicle_topic (new schema) when present;
         // fall back to the per-item chronicle_topics array for backward compat.
-        const docTopics = (topLevelTopic && notNA(topLevelTopic)) ? [topLevelTopic] : inlineTopics;
+        const docTopics = topLevelTopics.length > 0 ? topLevelTopics : inlineTopics;
         const offTitle = String(officialArr[i]?.official_title ?? "").trim();
         const refId    = String(standardizedArr[i]?.standardized_id ?? "").trim();
         const offId    = String(officialIdArr[i]?.official_id ?? "").trim();
@@ -326,7 +342,7 @@ function enrichFromDocExtraction(
     const officialArr     = (dr.agenda_item_title_official    as Array<Record<string, unknown>> | undefined) ?? [];
     const standardizedArr = (dr.agenda_item_standardized_id  as Array<Record<string, unknown>> | undefined) ?? [];
     const officialIdArr   = (dr.agenda_item_official_id       as Array<Record<string, unknown>> | undefined) ?? [];
-    const topLevelTopic   = String(dr.chronicle_topic ?? "").trim();
+    const topLevelTopics  = splitChronicleTopic(dr.chronicle_topic).filter(notNA);
     if (!Array.isArray(bridgewayItems)) continue;
     bridgewayItems.forEach((entry, i) => {
       const titleRaw = String(entry.agenda_item_title ?? "").trim();
@@ -334,7 +350,7 @@ function enrichFromDocExtraction(
       const inlineTopics = Array.isArray(entry.chronicle_topics)
         ? (entry.chronicle_topics as unknown[]).map(String).filter(t => t && notNA(t))
         : [];
-      const docTopics = (topLevelTopic && notNA(topLevelTopic)) ? [topLevelTopic] : inlineTopics;
+      const docTopics = topLevelTopics.length > 0 ? topLevelTopics : inlineTopics;
       const offTitle = String(officialArr[i]?.official_title ?? "").trim();
       const refId    = String(standardizedArr[i]?.standardized_id ?? "").trim();
       const offId    = String(officialIdArr[i]?.official_id ?? "").trim();
@@ -1213,9 +1229,10 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
       const officialArr     = (dr.agenda_item_title_official    as Array<Record<string, unknown>> | undefined) ?? [];
       const standardizedArr = (dr.agenda_item_standardized_id  as Array<Record<string, unknown>> | undefined) ?? [];
       const officialIdArr   = (dr.agenda_item_official_id       as Array<Record<string, unknown>> | undefined) ?? [];
-      // Top-level `chronicle_topic` (new, singular string) is the authoritative overarching
-      // doc topic. Falls back to the per-item `chronicle_topics` array for backward compat.
-      const topLevelTopic   = String(dr.chronicle_topic ?? "").trim();
+      // Top-level `chronicle_topic` is schema-typed as a scalar but the agent sometimes
+      // emits `;`/`|`-joined values — split so each piece resolves against Bubble independently.
+      // Falls back to the per-item `chronicle_topics` array for backward compat.
+      const topLevelTopics  = splitChronicleTopic(dr.chronicle_topic).filter(notNA);
       if (!Array.isArray(bridgewayItems)) continue;
       bridgewayItems.forEach((entry, i) => {
         const title = String(entry.agenda_item_title ?? "").trim();
@@ -1223,7 +1240,7 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
         const inlineTopics = Array.isArray(entry.chronicle_topics)
           ? (entry.chronicle_topics as unknown[]).map(String).filter(t => t && notNA(t))
           : [];
-        const topics = (topLevelTopic && notNA(topLevelTopic)) ? [topLevelTopic] : inlineTopics;
+        const topics = topLevelTopics.length > 0 ? topLevelTopics : inlineTopics;
         const offTitle = String(officialArr[i]?.official_title ?? "").trim();
         const refId    = String(standardizedArr[i]?.standardized_id ?? "").trim();
         const offId    = String(officialIdArr[i]?.official_id ?? "").trim();
@@ -1819,6 +1836,43 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
             const newCount      = activeNewAgendaItems.length;
             const existingCount = activeExistingAgendaItems.length;
             const totalCount    = newCount + existingCount;
+            // Build a case-insensitive Set of exact Bubble topic names so each mini-card
+            // can flag its own unresolved topics inline (instead of a single aggregated
+            // warning on the parent card). Only once the list has actually loaded —
+            // otherwise every topic looks "unresolved" until the fetch finishes.
+            const topicList = bubbleOptions.chronicletopic;
+            const topicsLoaded = Array.isArray(topicList);
+            const bubbleTopicNameSet = new Set(
+              (topicList ?? []).map(o => o.name.trim().toLowerCase())
+            );
+            const unresolvedTopics = (topics: string[] | undefined): string[] =>
+              !topicsLoaded || !topics ? []
+                : topics.filter(t => {
+                    const name = String(t).trim();
+                    return name && !bubbleTopicNameSet.has(name.toLowerCase());
+                  });
+            const renderTopicWarning = (topics: string[] | undefined) => {
+              const missing = unresolvedTopics(topics);
+              if (missing.length === 0) return null;
+              return (
+                <div className="px-3 py-1.5 bg-amber-50 border-b border-amber-200 text-[10.5px] text-amber-700">
+                  <div className="flex items-start gap-1.5">
+                    <span className="text-amber-500 flex-shrink-0">⚠</span>
+                    <div className="min-w-0">
+                      <span className="font-semibold">
+                        {missing.length} chronicle topic{missing.length > 1 ? "s" : ""} not found
+                        <span className="font-normal text-amber-600"> — &quot;Calendar Events with no Topic&quot; fallback will be used</span>
+                      </span>
+                      <div className="mt-0.5 space-y-0.5">
+                        {missing.map(n => (
+                          <div key={n} className="font-mono text-[10px] truncate text-amber-500">→ {n}</div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            };
             // Neutral card title — each mini-card carries its own NEW/EXISTING badge.
             const headerLabel = `${totalCount} Agenda Item${totalCount !== 1 ? "s" : ""}`;
             const buttonLabel =
@@ -1888,6 +1942,7 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
                           >×</button>
                         )}
                       </div>
+                      {renderTopicWarning(topics)}
                       <div className="px-3 py-2">
                         <FieldTable
                           fields={itemFields}
@@ -1946,6 +2001,7 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
                           >×</button>
                         )}
                       </div>
+                      {renderTopicWarning(topics)}
                       <div className="px-3 py-2">
                         <FieldTable
                           fields={itemFields}

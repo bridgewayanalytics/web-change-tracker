@@ -369,8 +369,26 @@ modal open via `GET /api/bubble/validate`. It runs four parallel lookups:
 | Library item type not found | error   | Library item will publish with no type                   |
 | Calendar item type not found | error  | Event will publish with no type                          |
 
-Issues render in the `ValidationBanner` at the top of the modal. Users can still
-confirm and publish — the banner is informational, not blocking.
+Issues render in the `ValidationBanner` at the top of the modal, **except**
+chronicle-topic warnings. Those are surfaced inline on the agenda-item mini-card
+they belong to (amber strip under the card header listing only that item's
+unresolved topics) so the user can see which agenda item is affected without
+cross-referencing. The banner suppresses `issues.filter(i => i.field ===
+"Chronicle Topics")`. The per-item check runs client-side against the
+`bubbleOptions.chronicletopic` list that's already loaded for the dropdowns
+(exact case-insensitive match on `.name`); it's a no-op until the fetch
+resolves.
+
+Users can still confirm and publish — the warnings are informational, not
+blocking.
+
+**Note on `chronicle_topic` scalar:** the doc-extraction schema defines the
+top-level `chronicle_topic` as a single string, but the agent sometimes emits
+`;`- or `|`-joined values. `splitChronicleTopic()` (both in the modal and in
+`bubble-sync-eidarix.ts::splitTopicNames`) splits on those two delimiters only —
+comma is NOT a delimiter because real Bubble topic titles contain commas
+(e.g. `"Markets, Risk-Based Capital, and Reserves"`). Each piece then resolves
+against Bubble independently.
 
 A second pre-ECS check runs when the user clicks "Create in Bubble": if orgs are
 still unresolved at that moment (e.g., user removed an org via the combobox and

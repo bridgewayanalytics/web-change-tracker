@@ -482,11 +482,27 @@ function getAgendaTopicNames(row: Record<string, unknown>): string[] {
   const inline = Array.from(new Set(
     entries.flatMap(e => (e.chronicle_topics as string[] | undefined) ?? []).filter(notNA),
   ));
-  const topLevelTopic = typeof row.chronicle_topic === "string" ? row.chronicle_topic.trim() : "";
-  if (topLevelTopic && topLevelTopic.toUpperCase() !== "N/A" && !inline.includes(topLevelTopic)) {
-    inline.push(topLevelTopic);
+  // Top-level `chronicle_topic` is schema-typed as a scalar but the agent sometimes
+  // emits multiple topics joined with `;`, `,`, or `|` — split and dedupe each piece.
+  for (const t of splitTopicNames(row.chronicle_topic)) {
+    if (!inline.includes(t)) inline.push(t);
   }
   return inline;
+}
+
+// Split a possibly-joined topic string into clean individual topic names.
+// The post-2026-10 Web Agent schema defines `chronicle_topic` as a single string,
+// but in practice the agent sometimes concatenates multiple topics with `;` or
+// `|`. This helper normalises both cases so each resulting topic can be
+// resolved against the Bubble chronicletopic table independently.
+// NOTE: comma is intentionally NOT a delimiter — real Bubble topic titles
+// routinely contain commas (e.g. "Markets, Risk-Based Capital, and Reserves").
+export function splitTopicNames(raw: unknown): string[] {
+  if (typeof raw !== "string") return [];
+  return raw
+    .split(/[;|]/)
+    .map(s => s.trim())
+    .filter(s => s && s.toUpperCase() !== "N/A");
 }
 
 // Bubble Data API expects ISO 8601 UTC (e.g. "2026-06-11T18:00:00.000Z").
