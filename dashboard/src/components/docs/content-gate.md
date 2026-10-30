@@ -141,7 +141,7 @@ Every field inside a section renders in a 3-column table:
 
 | Column        | Content                                                           |
 |---------------|-------------------------------------------------------------------|
-| Agent Field   | Small color-coded source badge (**Web Agent** / **Document Agent** / **Derived** / **Transcript**) followed by the human-readable label from the agent's output schema (`/api/schema`). Falls back to a hand-maintained map in `AGENT_FIELD_LABEL_FALLBACKS` for internal/derived fields. |
+| Agent Field   | Small color-coded source badge (**Web Extraction** / **Document Extraction** / **Derived** / **Transcript**) on its own line, with the human-readable label from the agent's output schema (`/api/schema`) stacked underneath. Falls back to a hand-maintained map in `AGENT_FIELD_LABEL_FALLBACKS` for internal/derived fields. The vertical stack prevents the long badge text from forcing awkward mid-word wraps of the field name. |
 | Bubble Field  | Name of the Bubble field being written (e.g., "Name", "Date"). |
 | Value         | Either a text input (free-text), a `SearchableCombobox` (dropdown), chronicle-topic chips, a numbered list, or read-only text. |
 
@@ -149,7 +149,7 @@ The source badge is driven by a `source: FieldSource` property on each
 `FieldEntry`. The `SOURCE_BADGE` map in `ContentGateModal.tsx` controls the
 label, hover title, and color class per source. Classifier-derived fields (e.g.,
 the library item `Type` which is mapped from the alert's `alert_type`) are
-badged **Web Agent** because the classifier operates downstream of Web Agent
+badged **Web Extraction** because the classifier operates downstream of Web Extraction
 output.
 
 For UPDATE sections, when the modal has fetched the current Bubble record,
@@ -214,24 +214,30 @@ rendered by the `Section` component with a consistent header:
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│ SYSTEM · OBJECT TYPE   [ACTION BADGE]           ✓ Done   │  ← header bar
-│ <content title shown prominently>                        │  ← subtitle
+│ New Library Item                                ✓ Done   │  ← header title
+│ <content title shown as clickable indigo link ↗>         │  ← subtitle
 ├──────────────────────────────────────────────────────────┤
 │ [3-column field table]                                   │
 ├──────────────────────────────────────────────────────────┤
-│                 [Add to Vector Store ▼] [Create in Bubble] │ ← footer
+│          [Add to Library Vector Store ▼] [Create in Bubble] │ ← footer
 └──────────────────────────────────────────────────────────┘
 ```
 
-- **SYSTEM** = `Bubble` or `Newsreel` (color-coded).
-- **OBJECT TYPE** = `Library Item`, `Calendar Event`, `Meeting Transcript`,
-  `Library Document`, etc.
-- **ACTION BADGE** = `NEW` (green), `UPDATE` (blue), or `PUBLISH` (purple). The
-  top-of-card badge is a status noun ("New"/"Update"), not an action verb — the
-  action verb lives on the publish button at the bottom ("Create in Bubble" /
-  "Update in Bubble" / "Publish to Newsreel").
+- **Header title** = `{Action Noun} {Object Type}` — one clean bold line.
+  - For Bubble sections: `New Library Item` / `Update Library Item` /
+    `New Event` / `Update Event`.
+  - For Newsreel sections: `Publish Meeting Transcript` /
+    `Publish Library Document`.
+  - The action noun is a label for *what the card is*, not what the button
+    does — the button verb ("Create in Bubble" / "Update in Bubble" /
+    "Publish to Newsreel") lives at the bottom.
+- **Border + background color** follow the action: green for new, blue for
+  update, purple for publish.
 - **Subtitle** = the content's title (e.g., library item name, event name),
-  shown prominently so users know what's being published.
+  rendered as a clickable indigo link opening in a new tab when a URL is
+  available (library item → `library_item_url`, document → `library_item_url`,
+  event → `event_url`). Falls back to plain gray text otherwise (e.g.,
+  transcript filename). Driven by `subtitleHref?: string` on `SectionProps`.
 
 ---
 

@@ -107,10 +107,11 @@ interface AgendaItemPreview {
 }
 
 // Where a field's value comes from — surfaced as a small badge in the FieldTable
-// so the user can tell at a glance whether a value originated from the Web Agent
-// (page_change_agent), the Document Agent (doc extraction), a derived computation,
-// or a transcript. The classifier is a post-processing step over Web Agent output,
-// so classifier-derived fields are labelled as Web Agent too.
+// so the user can tell at a glance whether a value originated from the Web
+// Extraction agent (page_change_agent), the Document Extraction agent, a
+// derived computation, or a transcript. The classifier is a post-processing
+// step over Web Extraction output, so classifier-derived fields are labelled
+// as Web Extraction too.
 type FieldSource = "web_tracking" | "doc_extraction" | "derived" | "transcript" | "bubble";
 
 // A structured display field
@@ -131,8 +132,8 @@ interface FieldEntry {
 }
 
 const SOURCE_BADGE: Record<FieldSource, { label: string; title: string; className: string }> = {
-  web_tracking:   { label: "Web Agent",      title: "Web Agent (page_change_agent)",            className: "bg-sky-100 text-sky-700 border-sky-200" },
-  doc_extraction: { label: "Document Agent", title: "Document Agent (doc extraction)",          className: "bg-emerald-100 text-emerald-700 border-emerald-200" },
+  web_tracking:   { label: "Web Extraction",      title: "Web Extraction agent (page_change_agent)", className: "bg-sky-100 text-sky-700 border-sky-200" },
+  doc_extraction: { label: "Document Extraction", title: "Document Extraction agent",                className: "bg-emerald-100 text-emerald-700 border-emerald-200" },
   derived:        { label: "Derived",        title: "Derived / computed, not direct agent output", className: "bg-gray-100 text-gray-500 border-gray-200" },
   transcript:     { label: "Transcript",     title: "Transcript / recording",                   className: "bg-amber-100 text-amber-700 border-amber-200" },
   bubble:         { label: "Bubble",         title: "Bubble metadata (not an agent)",           className: "bg-purple-100 text-purple-700 border-purple-200" },
@@ -739,6 +740,7 @@ interface VectorStoreOption {
 interface SectionProps {
   title: string;         // button label
   subtitle?: string;     // actual content title shown prominently under the header bar
+  subtitleHref?: string; // optional URL — renders subtitle as a clickable link opening in new tab
   objectType?: string;   // "Library Item" | "Calendar Event" | "Meeting Transcript" | "Library Document"
   system: "Bubble" | "Newsreel";
   action: BubbleAction;
@@ -796,13 +798,13 @@ function FieldTable({
                   return (
                     <span
                       title={b.title}
-                      className={`inline-flex items-center justify-center mr-1.5 align-middle text-[8.5px] font-bold rounded px-1 py-0.5 border leading-none ${b.className}`}
+                      className={`inline-flex items-center self-start text-[8.5px] font-bold rounded px-1 py-0.5 border leading-none mb-1 w-fit whitespace-nowrap ${b.className}`}
                     >
                       {b.label}
                     </span>
                   );
                 })()}
-                {resolveAgentFieldLabel(f.agentField, schemaLabels)}
+                <div className="block">{resolveAgentFieldLabel(f.agentField, schemaLabels)}</div>
               </td>
               <td
                 className={`py-2 px-2.5 text-[11px] font-medium align-top break-words leading-snug border-r border-gray-100 ${isChanged ? "text-amber-700" : "text-gray-800"}`}
@@ -937,7 +939,7 @@ function AddToVectorStoreButton({ options }: { options: VectorStoreOption[] }) {
 }
 
 function Section({
-  title, subtitle, objectType, system, action, fields, editState, onEdit,
+  title, subtitle, subtitleHref, objectType, system, action, fields, editState, onEdit,
   sectionState, onPublish, currentRecord, isLoadingRecord, agendaItems, schemaLabels, bubbleOptions,
   vectorStoreOptions, fallbackNotice,
 }: SectionProps) {
@@ -950,16 +952,16 @@ function Section({
   const headerBg = action === "create" ? "bg-green-50"
     : action === "update" ? "bg-blue-50"
     : "bg-purple-50";
-  const systemColor = system === "Bubble" ? "text-indigo-600" : "text-purple-600";
 
-  // Top-of-card badge is a status noun ("New" / "Update") so it reads as a label for
-  // the content, not the action — the action verb lives on the publish button at the
-  // bottom ("Create in Bubble" / "Update in Bubble").
-  const actionBadge = action === "create"
-    ? <span className="text-[9px] font-bold uppercase tracking-wider bg-green-100 text-green-700 rounded px-1.5 py-0.5">New</span>
-    : action === "update"
-    ? <span className="text-[9px] font-bold uppercase tracking-wider bg-blue-100 text-blue-700 rounded px-1.5 py-0.5">Update</span>
-    : <span className="text-[9px] font-bold uppercase tracking-wider bg-purple-100 text-purple-700 rounded px-1.5 py-0.5">Publish</span>;
+  // Collapse the previous SYSTEM · OBJECT TYPE · [NEW] triple into a single
+  // "{Action Noun} {Object Type}" title line (e.g., "New Library Item" /
+  // "Update Event" / "Publish Transcript"). The action verb for the button
+  // ("Create in Bubble" / "Update in Bubble") still lives on the footer.
+  const actionNoun = system === "Newsreel"
+    ? "Publish"
+    : action === "update" ? "Update"
+    : "New";
+  const headerTitle = objectType ? `${actionNoun} ${objectType}` : actionNoun;
 
   const publishLabel = system === "Newsreel"
     ? "Publish to Newsreel"
@@ -969,16 +971,9 @@ function Section({
   const SectionHeader = ({ showSubtitle }: { showSubtitle?: boolean }) => (
     <div className={`${headerBg} px-4 pt-3 pb-2.5 rounded-t-lg`}>
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span className={`text-[10px] font-bold uppercase tracking-wider shrink-0 ${systemColor}`}>{system}</span>
-          {objectType && (
-            <>
-              <span className="text-[10px] text-gray-300 shrink-0">·</span>
-              <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wider shrink-0">{objectType}</span>
-            </>
-          )}
-          <span className="ml-0.5 shrink-0">{actionBadge}</span>
-        </div>
+        <span className="text-[13px] font-semibold text-gray-800 leading-snug min-w-0 truncate">
+          {headerTitle}
+        </span>
         <div className="flex items-center gap-2 shrink-0">
           {action === "update" && isLoadingRecord && (
             <span className="text-[10px] text-gray-400 italic">Loading…</span>
@@ -991,7 +986,19 @@ function Section({
         </div>
       </div>
       {showSubtitle && subtitle && (
-        <p className="text-[13px] font-semibold text-gray-800 mt-1.5 leading-snug line-clamp-2">{subtitle}</p>
+        subtitleHref && subtitleHref !== "N/A" && subtitleHref.startsWith("http") ? (
+          <a
+            href={subtitleHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block text-[12px] text-indigo-600 hover:text-indigo-800 hover:underline mt-1 leading-snug line-clamp-2 break-words"
+          >
+            {subtitle}
+            <span className="inline-block ml-1 align-text-top opacity-70">↗</span>
+          </a>
+        ) : (
+          <p className="text-[12px] text-gray-700 mt-1 leading-snug line-clamp-2 break-words">{subtitle}</p>
+        )
       )}
     </div>
   );
@@ -1984,6 +1991,7 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
               <Section
                 title={effectiveLibAction === "create" ? "Create Library Item" : "Update Library Item"}
                 subtitle={safeStr(libPreview.title) || libItemTitle || undefined}
+                subtitleHref={libItemUrl || safeStr(libPreview.url) || undefined}
                 objectType="Library Item"
                 system="Bubble"
                 action={effectiveLibAction}
@@ -2014,6 +2022,7 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
               <Section
                 title={effectiveEventAction === "create" ? "Create Event" : "Update Event"}
                 subtitle={safeStr(eventPreview.title) || safeStr((row as Record<string, unknown>).event_title) || undefined}
+                subtitleHref={safeStr(eventPreview.url) || safeStr((row as Record<string, unknown>).event_url) || undefined}
                 objectType="Calendar Event"
                 system="Bubble"
                 action={effectiveEventAction}
@@ -2055,6 +2064,7 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
             <Section
               title="Publish Document"
               subtitle={libItemTitle || undefined}
+              subtitleHref={libItemUrl || undefined}
               objectType="Library Document"
               system="Newsreel"
               action={null}
