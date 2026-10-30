@@ -519,17 +519,23 @@ def _stamp_extraction_datetime(out: dict, original_datetime: str | None = None) 
 
 
 def _stamp_web_page_url(out: dict, alert_context: dict | None) -> None:
-    """Stamp web_page_url = source_url (always overrides agent output).
+    """Stamp web_page_url from pipeline-known data (always overrides agent output).
     The web_page_url must be the exact monitored page URL. The agent sometimes
-    normalizes or guesses a different URL — source_url is the ground truth.
+    outputs N/A because its instructions require an explicit URL in context and
+    the context builder only shows one when source_url is present. alert_url
+    (always emitted by the WTA agent) is the reliable fallback — it carries the
+    same monitored-page URL at every call site.
     """
     if not out or not alert_context:
         return
     if "web_page_url" not in out:
         return
-    source_url = str(alert_context.get("source_url") or "").strip()
-    if source_url:
-        out["web_page_url"] = source_url
+    url = (
+        str(alert_context.get("source_url") or "").strip()
+        or str(alert_context.get("alert_url") or "").strip()
+    )
+    if url:
+        out["web_page_url"] = url
 
 
 _NA_URL_VALUES = {"", "N/A", "N/A.", "-", "NONE", "UNKNOWN"}
@@ -632,7 +638,14 @@ def extract_document_data(
             event_dt = str(alert_context.get("event_start_date_time") or "").strip()
             if event_dt and event_dt.upper() not in ("N/A", ""):
                 ctx_parts.append(f"Event start date/time: {event_dt}")
-            source_url = str(alert_context.get("source_url") or "").strip()
+            # Pipeline stamps source_url onto the stored alert row post-hoc; the WTA
+            # agent emits the same URL as alert_url. When alert_context is agent_output
+            # directly (the common pipeline path), source_url is absent — fall through
+            # to alert_url so the agent always sees the monitored page URL.
+            source_url = (
+                str(alert_context.get("source_url") or "").strip()
+                or str(alert_context.get("alert_url") or "").strip()
+            )
             if source_url:
                 ctx_parts.append(f"Source page URL: {source_url}")
             if ctx_parts:
