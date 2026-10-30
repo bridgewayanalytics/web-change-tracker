@@ -365,7 +365,7 @@ modal open via `GET /api/bubble/validate`. It runs four parallel lookups:
 | Check                      | Severity | Result                                                   |
 |----------------------------|----------|----------------------------------------------------------|
 | Unresolved org names       | error    | Record will publish with empty Organizations field       |
-| Unresolved chronicle topics | warning  | "Calendar Events with no Topic" fallback will be used    |
+| Unresolved chronicle topics | warning  | "Calendar Events with no Topic" fallback will be used (surfaced per-agenda-item, not in the banner) |
 | Library item type not found | error   | Library item will publish with no type                   |
 | Calendar item type not found | error  | Event will publish with no type                          |
 
@@ -499,7 +499,7 @@ item with (schema as of 2026-10; older rows have the names in the "legacy" colum
 | `agenda_item_title_official[].official_title`                        | (unchanged)                                                |
 | `agenda_item_standardized_id[].standardized_id`                      | (unchanged)                                                |
 | `agenda_item_official_id[].official_id`                              | (unchanged)                                                |
-| `chronicle_topic` (singular, top-level string — authoritative doc topic) | — (previously only the per-item inline `chronicle_topics` array existed) |
+| `chronicle_topic` (top-level string, schema-typed as scalar but may hold `;`/`|`-joined values — authoritative doc topic) | — (previously only the per-item inline `chronicle_topics` array existed) |
 | `should_agenda_item_be_created` (`"Yes"` / `"No"`)                   | — (new filter; rows with `"No"` are skipped at synthesis)  |
 | `date_published`, `document_description`, `document_type` (document-level) | (unchanged)                                                |
 
@@ -508,7 +508,8 @@ reads the current field names first and falls back through the legacy ones for
 backward compatibility with historical rows. Rows with
 `should_agenda_item_be_created === "No"` are skipped entirely. When the
 top-level `chronicle_topic` is present and non-N/A it supersedes the per-item
-inline `chronicle_topics` array.
+inline `chronicle_topics` array — passed through `splitChronicleTopic()` so a
+`;`/`|`-joined value yields multiple distinct topics.
 
 These rows are fetched on modal open (`/api/document-extractions?agent_call_id=X`)
 and filtered to rows where `library_item_url` matches the alert row's URL. They are
@@ -655,7 +656,9 @@ option-set fields (`AMPM from`, etc.).
   fields, preferring the current field name `agenda_item_title[]` and falling
   back to the legacy `agenda_item_title_chronicle_topics[]` for historical rows.
   It then folds in the row's top-level `chronicle_topic` scalar (new in the
-  2026-10 Web Agent schema) when it's non-N/A and not already in the list.
+  2026-10 Web Agent schema) when it's non-N/A and not already in the list,
+  running the value through `splitTopicNames()` so a `;`/`|`-joined scalar
+  contributes multiple distinct topics.
 - **Doc-extraction URL filter is forgiving.** The modal filters doc extraction
   rows to the alert's `library_item_url` with three passes: (1) exact match,
   (2) normalized match (lowercase, strip trailing slash, strip fragment), and
