@@ -172,6 +172,17 @@ Eligible rows: excludes `extraction_source == "transcript"` rows and rows with n
 
 ## Agent configuration (DynamoDB)
 
+### Write flow (owned by ChatKit backend)
+
+1. Admin edits labels / instructions / schema fragments in **Bubble admin UI**
+2. The ChatKit backend persists field metadata to **`chatkit_production_field_registry`** (keyed by `agent_id`, stores stable `key`, `label`, `prior_keys`, `kind`, etc. — the authoritative source of truth)
+3. The ChatKit backend derives `output_json_schema` + `output_requested_values` from the field_registry and writes them atomically to **`chatkit_production_config`**
+4. Our agents and the dashboard **read** `chatkit_production_config` only — nothing on our side mutates it (the former `validate_config_sync` Lambda was removed 2026-10-29)
+
+**Stable IDs**: the `key` field in `chatkit_production_field_registry` is the stable storage ID that never changes across label renames. `prior_keys` carries every past storage key so rows written under old names normalize cleanly. Our side reads this registry in `storage/field_normalizer.py` to build the alert / doc-extraction normalization maps.
+
+### Config table
+
 Table: `chatkit_production_config` (env: `CHATKIT_CONFIG_TABLE`)
 Key format: `chat:{chat_id}`
 
@@ -206,35 +217,28 @@ The `output_json_schema.required` array defines the **ordered** list of field na
 | `output_json_schema` | JSON Schema object defining the output fields. Fully dynamic — stored in DynamoDB, drives both agent output and `document_extractions_table.jsonl` columns. |
 | `output_json_schema_name`, `output_json_schema_strict`, `output_requested_values` | Same semantics as `web-tracking-agent` fields |
 
-## Current output schema fields (as of May 2026)
+## Current output schema fields
 
-New flat schema — all top-level, no nested arrays for event/library/agenda items:
+The authoritative live schema is in DynamoDB — `output_json_schema` + `output_requested_values` on each config row. Never trust a snapshot in this doc; it drifts. To inspect current state:
 
-| Field | Type | Notes |
-|-------|------|-------|
-| `alert_type` | string (enum) | 15 valid values |
-| `alert_title` | string | |
-| `alert_description` | string | |
-| `alert_url` | string | URL where change was detected |
-| `organization` | `string[]` | Array of org name(s) — guided by live Bubble org tree (`bubble/org_tree.py`; falls back to `prompts/org_tree.txt`) |
-| `alert_date_time` | string | ISO 8601 Eastern Time |
-| `event_title` | string | "N/A" if no event |
-| `event_start_date_time` | string | ISO 8601 or "N/A" |
-| `event_end_date_time` | string | ISO 8601 or "N/A" |
-| `event_duration` | string | e.g. "2h 30m" or "N/A" |
-| `event_is_full_day` | string | "Full Day" or "N/A" |
-| `event_url` | string | "N/A" if none |
-| `event_call_in_number_access_code` | string | "N/A" if none |
-| `agenda_item_title_chronicle_topics` | `[{status, agenda_item_title, chronicle_topics[]}]` | Array (minItems 1) |
-| `agenda_item_title_official` | `[{status, official_title}]` | Array (minItems 1) |
-| `agenda_item_standardized_id` | `[{status, standardized_id}]` | Array (minItems 1) |
-| `agenda_item_official_id` | `[{status, official_id}]` | Array (minItems 1) |
-| `library_item_preliminary_title` | `{status, title}` | Object; status in New/Updated/Existing/N/A |
-| `library_item_url` | string | URL or "N/A" |
-| `library_items_file_name` | string | Filename or "N/A" |
-| `is_the_alert_relevant_for_an_art_newsreel_article` | `{status, details}` | status in Yes/No/Additional review needed |
+```bash
+AWS_PROFILE=bridgeway aws dynamodb get-item \
+  --table-name chatkit_production_config \
+  --key '{"config_key":{"S":"chat:web-tracking-agent"}}' \
+  --output json \
+  | jq '.Item.output_json_schema' | head -200
+```
 
-Previous schema (before May 2026) used nested arrays: `events[]`, `library_items[]`, `agenda_items[]`. Old rows in `alerts_table.jsonl` use that format. The dashboard handles both gracefully via `FIELD_ALIASES` in `AlertsTable.tsx`.
+High-level shape (as of 2026-10-30, subject to change via Bubble admin):
+
+- **Flat top-level schema** — no nested `events[]` / `library_items[]` / `agenda_items[]` wrappers. Event / library / agenda data lives in prefixed top-level fields (`event_title`, `agenda_item_title`, `library_item_preliminary_title`, etc.).
+- **Multi-alert wrapper**: `required: ["alerts"]` with `properties.alerts` as an array of inner objects. The dashboard's `/api/schema` drills into `alerts.items` to get the 21-22 inner field names for column derivation.
+- **Compound array fields** (status + value): `agenda_item_title`, `agenda_item_title_official`, `agenda_item_standardized_id`, `agenda_item_official_id` are each arrays of `{status, <value>}` objects. Status enum is `["New", "Existing", "N/A"]`.
+- **Chronicle Topic** is a standalone top-level string field (split from the old compound in 2026-10-29). Agents output chronicle data in `chronicle_topic` only; the inside of `agenda_item_title` no longer carries nested chronicle_topics.
+- **Binary enums for relevance**: `is_the_alert_relevant_for_an_art_newsreel_article.status` and `is_the_document_relevant_for_a_future_newsreel_article.status` are both `["Yes", "No"]` (dropped "Additional review needed" on 2026-10-29).
+- **`organization`**: top-level `string[]` — guided by the live Bubble org tree injected via `bubble/org_tree.py` into the agent user message (planned migration: ingest orgs into pgvector `ba:organizations` namespace and remove the injection — see dev conversations).
+
+Pre-May-2026 rows in `alerts_table.jsonl` use the old nested-array format (`events[]`, `library_items[]`, `agenda_items[]`). The dashboard's `FIELD_ALIASES` in `AlertsTable.tsx` + `storage/field_normalizer.py` + the field_registry's `prior_keys` resolve old rows to current column names on display.
 
 ## Flat vs nested schema detection
 

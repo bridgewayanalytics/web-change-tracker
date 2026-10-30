@@ -3,13 +3,17 @@ Normalize JSONL row field keys to stable IDs at write time.
 
 Every JSONL row (alerts, doc extractions, QA eval scores) is written through
 normalize_row_keys() or normalize_score_keys() before hitting S3.  This ensures
-the dashboard can always do a direct row[col] lookup against the _column_registry
-stable ID — no alias guessing, no schema-version branching.
+the dashboard can always do a direct row[col] lookup against the current stable
+field key — no alias guessing, no schema-version branching.
 
-The normalization map is built per-agent from three sources (lowest → highest priority):
-  1. _HISTORICAL_ALIASES — hardcoded list of every known pre-DynamoDB rename
-  2. _field_aliases in DynamoDB — detected renames written by the validate_config_sync Lambda
-  3. _column_registry in DynamoDB — each {id, label} pair adds identity + label variants
+The normalization map is built per-agent from two sources (lowest → highest priority):
+  1. _HISTORICAL_ALIASES — hardcoded safety net for very old keys from the
+     Lambda era (validate_config_sync, deleted 2026-10-29). Covers pre-registry
+     label-as-key rows and pre-registry snake_case rows that pre-date prior_keys.
+  2. chatkit_production_field_registry (DynamoDB) — the ChatKit backend's
+     canonical registry. Each field entry carries key (current stable ID),
+     label (current display label), and prior_keys (every past storage key).
+     This is the authoritative mapping.
 
 Unknown keys not in the map pass through unchanged (forward compatibility).
 Pipeline metadata keys (run_id, agent_call_id, etc.) are always skipped.
@@ -22,8 +26,9 @@ log = logging.getLogger(__name__)
 _WEB_AGENT_ID = "web-tracking-agent"
 _DOC_AGENT_ID = "document-data-extraction"
 
-# Historical aliases not captured in DynamoDB _field_aliases.
-# Ported from LEGACY_ALIASES (AlertsTable.tsx) and DOC_FIELD_ALIASES (DocExtractionsTable.tsx).
+# Historical aliases from the Lambda era, before chatkit_production_field_registry
+# started seeding prior_keys. Kept as a safety net for rows written in that era
+# that were never re-normalized.
 # Format: {old_key: stable_id}  — resolved to the FINAL stable ID, not a chain.
 _HISTORICAL_ALIASES: dict[str, dict[str, str]] = {
     _WEB_AGENT_ID: {

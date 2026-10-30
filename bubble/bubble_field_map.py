@@ -1,10 +1,11 @@
 """
 Bubble Data API write field name mappings.
 
-Primary structure: dicts keyed by stable registry ID (the `id` field in DynamoDB's
-`_column_registry`). These IDs never change even when human-readable labels are renamed
-in Bubble Admin. The Bubble field name (the value) is what changes if Mori updates the
-Bubble data model — update the value here and the whole pipeline picks it up.
+Primary structure: dicts keyed by stable registry ID (the `key` field in the
+ChatKit backend's `chatkit_production_field_registry` DynamoDB table). These IDs
+never change even when human-readable labels are renamed in Bubble Admin. The
+Bubble field name (the value) is what changes if the Bubble data model is updated
+— update the value here and the whole pipeline picks it up.
 
 Bubble write field names are the exact display names from GET responses / Swagger Body
 definitions (confirmed via live API tests 2026-10-05). The underscore convention
