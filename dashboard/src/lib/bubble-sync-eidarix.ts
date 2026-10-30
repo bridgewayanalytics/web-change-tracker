@@ -162,10 +162,11 @@ async function resolveTopicIds(
 ): Promise<{ ids: string[]; nameToId: Map<string, string> }> {
   if (!topicNames.length) return { ids: [], nameToId: new Map() };
   const topics = await bubbleListAll("chronicletopic", CONTENT_SPACE_CONSTRAINT);
-  const nameToId = new Map(topics.map(t => [String(t.Title ?? "").trim(), String(t._id ?? "")]));
+  // Keyed by normalized name so NBSPs / collapsed-whitespace variants match.
+  const nameToId = new Map(topics.map(t => [normalizeTopicKey(t.Title), String(t._id ?? "")]));
   const ids: string[] = [];
   for (const name of topicNames) {
-    const id = nameToId.get(name);
+    const id = nameToId.get(normalizeTopicKey(name));
     if (id) ids.push(id);
     else console.warn("[bubble-sync] chronicle topic not found:", name);
   }
@@ -505,6 +506,18 @@ export function splitTopicNames(raw: unknown): string[] {
     .filter(s => s && s.toUpperCase() !== "N/A");
 }
 
+// Normalise a chronicle topic name for comparison. Agents emit regular ASCII
+// spaces, but some Bubble topic Titles contain non-breaking spaces (U+00A0) or
+// other Unicode whitespace that broke `===` / `Map.has()` lookups and produced
+// false "topic not found" warnings. `\s` in JS regex matches NBSP and the full
+// Unicode whitespace range, so replacing runs of `\s` with a single ASCII space
+// before lowercasing collapses the mismatch at compare time without mutating
+// the source string.
+export function normalizeTopicKey(raw: unknown): string {
+  if (raw == null) return "";
+  return String(raw).replace(/\s+/g, " ").trim().toLowerCase();
+}
+
 // Bubble Data API expects ISO 8601 UTC (e.g. "2026-06-11T18:00:00.000Z").
 function toUtcIso(raw: string): string {
   if (!raw || raw.toUpperCase() === "N/A") return "";
@@ -633,8 +646,8 @@ export async function validateSyncPlan(
 
     allTopicNames.length
       ? bubbleListAll("chronicletopic", CONTENT_SPACE_CONSTRAINT).then(topics => {
-          const nameToId = new Map(topics.map(t => [String(t.Title ?? "").trim(), String(t._id ?? "")]));
-          return allTopicNames.filter(n => !nameToId.has(n));
+          const nameToId = new Map(topics.map(t => [normalizeTopicKey(t.Title), String(t._id ?? "")]));
+          return allTopicNames.filter(n => !nameToId.has(normalizeTopicKey(n)));
         })
       : Promise.resolve([] as string[]),
 

@@ -211,6 +211,15 @@ function splitChronicleTopic(raw: unknown): string[] {
   return raw.split(/[;|]/).map(s => s.trim()).filter(Boolean);
 }
 
+// Normalize for compare-time: lowercase, collapse any Unicode whitespace
+// (incl. NBSP U+00A0, which several Bubble Titles contain) to a single ASCII
+// space, trim. Mirrors `normalizeTopicKey` in `lib/bubble-sync-eidarix.ts` —
+// kept duplicated because that module is server-only (reads `process.env`).
+function normalizeTopicKey(raw: unknown): string {
+  if (raw == null) return "";
+  return String(raw).replace(/\s+/g, " ").trim().toLowerCase();
+}
+
 const NA_SET = new Set(["n/a", "n/a.", "-", "none", ""]);
 function notNA(s: string): boolean {
   return !NA_SET.has(s.toLowerCase().trim());
@@ -1842,14 +1851,28 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
             // otherwise every topic looks "unresolved" until the fetch finishes.
             const topicList = bubbleOptions.chronicletopic;
             const topicsLoaded = Array.isArray(topicList);
+            // Normalize both sides so NBSP / collapsed-whitespace variants match
+            // (e.g. Bubble Title "ALM Derivatives & Derivative Investments"
+            // vs agent output "ALM Derivatives & Derivative Investments").
             const bubbleTopicNameSet = new Set(
-              (topicList ?? []).map(o => o.name.trim().toLowerCase())
+              (topicList ?? []).map(o => normalizeTopicKey(o.name))
             );
+            // normalized-key → canonical Bubble Title (preserving the real NBSPs
+            // etc.) so we can upgrade an agent-emitted topic to its exact
+            // Bubble spelling. Without this the SearchableCombobox fails to
+            // pre-check the row even when the topic actually matches.
+            const canonicalByKey = new Map(
+              (topicList ?? []).map(o => [normalizeTopicKey(o.name), o.name])
+            );
+            const canonicalizeTopics = (topics: string[] | undefined): string[] => {
+              if (!topicsLoaded || !topics) return topics ?? [];
+              return topics.map(t => canonicalByKey.get(normalizeTopicKey(t)) ?? t);
+            };
             const unresolvedTopics = (topics: string[] | undefined): string[] =>
               !topicsLoaded || !topics ? []
                 : topics.filter(t => {
                     const name = String(t).trim();
-                    return name && !bubbleTopicNameSet.has(name.toLowerCase());
+                    return name && !bubbleTopicNameSet.has(normalizeTopicKey(name));
                   });
             const renderTopicWarning = (topics: string[] | undefined) => {
               const missing = unresolvedTopics(topics);
@@ -1911,7 +1934,9 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
                   const baRef      = enriched.reference_id ? stripStatusPrefix(enriched.reference_id) : "";
                   const officialId = enriched.official_id ?? "";
                   const editedTopics = multiFromEditValue(itemEdits["Chronicle Topics"]);
-                  const topics = editedTopics ?? (enriched.chronicle_topics ?? []);
+                  // Upgrade to canonical Bubble spelling (handles NBSP) so the
+                  // combobox pre-selects correctly and the warning doesn't fire.
+                  const topics = canonicalizeTopics(editedTopics ?? (enriched.chronicle_topics ?? []));
 
                   const itemFields: FieldEntry[] = [
                     { label: "BA title",   agentField: "agenda_item_bridgeway_title[].agenda_item_title", source: "doc_extraction", value: baTitle,    readOnly: isDone },
@@ -1968,7 +1993,7 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
                   const naicTitle  = enriched.official_title ? stripStatusPrefix(enriched.official_title) : "";
                   const baRef      = enriched.reference_id ? stripStatusPrefix(enriched.reference_id) : "";
                   const officialId = enriched.official_id ?? "";
-                  const topics     = enriched.chronicle_topics ?? [];
+                  const topics     = canonicalizeTopics(enriched.chronicle_topics ?? []);
 
                   const itemFields: FieldEntry[] = [
                     { label: "BA title",   agentField: "agenda_item_bridgeway_title[].agenda_item_title", source: "doc_extraction", value: baTitle,    readOnly: true },
