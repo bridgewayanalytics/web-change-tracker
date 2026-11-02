@@ -452,12 +452,18 @@ def extract_page_change(
             f"Pipeline run time (Eastern): {run_time_et}"
         )
 
-        from bubble.org_tree import get_org_tree
-        org_tree = get_org_tree()
-        org_tree_block = (
-            f"=== ORGANIZATION REFERENCE ===\n{org_tree}\n\n"
-            if org_tree else ""
-        )
+        # ORG_TREE_INJECTION_ENABLED gates whether the full org hierarchy is dumped
+        # into the prompt. Default: true (back-compat). Set to "false"/"0" to force
+        # the agent to use search_knowledge_base against ba:organizations instead —
+        # used during the A/B window after the pgvector org sync landed 2026-11-02.
+        org_tree_block = ""
+        if os.environ.get("ORG_TREE_INJECTION_ENABLED", "true").strip().lower() not in ("false", "0", "no"):
+            from bubble.org_tree import get_org_tree
+            org_tree = get_org_tree()
+            org_tree_block = (
+                f"=== ORGANIZATION REFERENCE ===\n{org_tree}\n\n"
+                if org_tree else ""
+            )
         user_content = (
             f"=== TARGET CONTEXT ===\n{context_block}\n\n"
             f"{org_tree_block}"

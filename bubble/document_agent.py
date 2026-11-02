@@ -612,8 +612,15 @@ def extract_document_data(
         if not pdf_text and document_url:
             pdf_text = _fetch_pdf_text(document_url)
 
-        from bubble.org_tree import get_org_tree
-        org_tree = get_org_tree()
+        # ORG_TREE_INJECTION_ENABLED gates whether the full org hierarchy is dumped
+        # into the prompt. Default: true. Set to "false"/"0" to force the agent to
+        # use search_knowledge_base against ba:organizations instead (A/B window
+        # after pgvector org sync landed 2026-11-02).
+        if os.environ.get("ORG_TREE_INJECTION_ENABLED", "true").strip().lower() not in ("false", "0", "no"):
+            from bubble.org_tree import get_org_tree
+            org_tree = get_org_tree()
+        else:
+            org_tree = ""
 
         lines = [
             f"Document link label: {document_name}",
