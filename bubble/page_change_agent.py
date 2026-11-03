@@ -457,7 +457,7 @@ def extract_page_change(
         # the agent to use search_knowledge_base against ba:organizations instead —
         # used during the A/B window after the pgvector org sync landed 2026-11-02.
         org_tree_block = ""
-        if os.environ.get("ORG_TREE_INJECTION_ENABLED", "true").strip().lower() not in ("false", "0", "no"):
+        if os.environ.get("ORG_TREE_INJECTION_ENABLED", "false").strip().lower() in ("true", "1", "yes"):
             from bubble.org_tree import get_org_tree
             org_tree = get_org_tree()
             org_tree_block = (

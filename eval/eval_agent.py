@@ -98,7 +98,7 @@ def _build_group_user_message(
     # search_knowledge_base against ba:organizations to validate the organization
     # field. See A/B window started 2026-11-02.
     import os
-    if os.environ.get("ORG_TREE_INJECTION_ENABLED", "true").strip().lower() not in ("false", "0", "no"):
+    if os.environ.get("ORG_TREE_INJECTION_ENABLED", "false").strip().lower() in ("true", "1", "yes"):
         from bubble.org_tree import get_org_tree
         org_tree = get_org_tree()
         if org_tree:
