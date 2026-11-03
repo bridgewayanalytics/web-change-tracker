@@ -657,12 +657,11 @@ def extract_document_data(
                 ctx_parts.append(f"Source page URL: {source_url}")
             if ctx_parts:
                 lines.append("\n=== ALERT CONTEXT (page change alert that triggered this extraction) ===\n" + "\n".join(ctx_parts))
-        if before_html or after_html:
-            lines.append("\n=== PAGE CHANGE CONTEXT (HTML snapshots of the monitored page) ===")
-            if before_html:
-                lines.append(f"Before HTML (prior state):\n{before_html[:_HTML_CONTEXT_LIMIT]}")
-            if after_html:
-                lines.append(f"After HTML (new state with the document now present):\n{after_html[:_HTML_CONTEXT_LIMIT]}")
+        # Note: when pgvector is enabled the before/after HTML is uploaded to
+        # pgvector below (via ingest_page_snapshots) and the agent retrieves
+        # them via search_knowledge_base — we deliberately do NOT inline the
+        # HTML in the prompt in that case. The fallback path (pgvector disabled)
+        # inlines the HTML further down so the agent still has access.
         user_content = "\n".join(lines)
 
         _store_agent_context(doc_call_id, "document", user_content, system_prompt)
@@ -672,8 +671,18 @@ def extract_document_data(
         json_schema_strict = _get_output_json_schema_strict()
 
         if not _pgvector_enabled():
-            # Direct Responses API path with Structured Outputs
+            # Direct Responses API path with Structured Outputs.
+            # Agent has no search tools — so inline the HTML snapshots as the
+            # only way for it to see page-level posting metadata.
             log.info("document_agent: pgvector not available, running via direct API (model=%s) for: %s", model, document_name[:80])
+            fallback_lines = list(lines)
+            if before_html or after_html:
+                fallback_lines.append("\n=== PAGE CHANGE CONTEXT (HTML snapshots of the monitored page) ===")
+                if before_html:
+                    fallback_lines.append(f"Before HTML (prior state):\n{before_html[:_HTML_CONTEXT_LIMIT]}")
+                if after_html:
+                    fallback_lines.append(f"After HTML (new state with the document now present):\n{after_html[:_HTML_CONTEXT_LIMIT]}")
+            user_content = "\n".join(fallback_lines)
             from bubble.openai_client import chat_json
             messages = [
                 {"role": "system", "content": _get_base_system_prompt()},
@@ -719,6 +728,32 @@ def extract_document_data(
                     document_name[:80],
                 )
                 return []
+
+        # Ingest the before/after HTML snapshots so the agent can search them via
+        # the knowledge base instead of carrying the raw HTML in its prompt. One
+        # document per side (before, after), deterministic uuid per parent
+        # agent_call_id so repeated extractions / reruns are cached no-ops.
+        if before_html or after_html:
+            parent_acid = str((alert_context or {}).get("agent_call_id") or "").strip()
+            if parent_acid:
+                from bubble.page_snapshot_ingest import ingest_page_snapshots
+                snapshot_namespaces = ingest_page_snapshots(parent_acid, before_html, after_html)
+                if snapshot_namespaces:
+                    pgvector_namespaces = list(pgvector_namespaces) + snapshot_namespaces
+                    log.info(
+                        "document_agent: added %d page-snapshot namespace(s) for acid=%s",
+                        len(snapshot_namespaces), parent_acid[:12],
+                    )
+                else:
+                    log.warning(
+                        "document_agent: page snapshot ingest returned 0 namespaces for acid=%s — "
+                        "agent will have no HTML context (ingest likely failed)",
+                        parent_acid[:12],
+                    )
+            else:
+                log.debug(
+                    "document_agent: no parent agent_call_id in alert_context — skipping snapshot ingest",
+                )
 
         log.info("document_agent: running with pgvector (model=%s) for: %s", model, document_name[:80])
         try:
