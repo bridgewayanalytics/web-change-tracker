@@ -93,13 +93,19 @@ def _build_group_user_message(
     """
     parts = []
 
-    from bubble.org_tree import get_org_tree
-    org_tree = get_org_tree()
-    if org_tree:
-        parts += [
-            "\n## Organization Reference (valid org names — use this to evaluate the organization field)",
-            org_tree,
-        ]
+    # ORG_TREE_INJECTION_ENABLED gates whether the full org hierarchy is dumped
+    # into the QA grader's context. Default: true. When false, the grader relies on
+    # search_knowledge_base against ba:organizations to validate the organization
+    # field. See A/B window started 2026-11-02.
+    import os
+    if os.environ.get("ORG_TREE_INJECTION_ENABLED", "true").strip().lower() not in ("false", "0", "no"):
+        from bubble.org_tree import get_org_tree
+        org_tree = get_org_tree()
+        if org_tree:
+            parts += [
+                "\n## Organization Reference (valid org names — use this to evaluate the organization field)",
+                org_tree,
+            ]
 
     source_url = (rows[0].get("source_url") or "") if rows else ""
     if source_url:
