@@ -289,12 +289,9 @@ def _build_user_message(
             json.dumps(alert_context, indent=2, default=str),
         ]
 
-    if before_html or after_html:
-        parts.append("\n## Page Change Context (HTML snapshots of the monitored page)")
-        if before_html:
-            parts.append(f"Before HTML (prior state):\n{before_html[:_HTML_CONTEXT_LIMIT]}")
-        if after_html:
-            parts.append(f"After HTML (new state with the document now present):\n{after_html[:_HTML_CONTEXT_LIMIT]}")
+    # Page before/after HTML is ingested into pgvector (via ingest_page_snapshots
+    # in _prepare_eval_args) and surfaced to the agent via search_knowledge_base
+    # rather than being inlined here. See parallel change in bubble/document_agent.py.
 
     # ORG_TREE_INJECTION_ENABLED gates whether the full org hierarchy is dumped
     # into the QA grader's context. Default: true. When false, the grader relies on
@@ -498,6 +495,21 @@ def _prepare_eval_args(rows: list[dict], alert_row: dict | None = None) -> dict:
             if doc_namespace:
                 namespaces.append(doc_namespace)
                 log.info("doc_eval_agent: armed document namespace %s", doc_namespace)
+
+        # Ingest the before/after HTML snapshots so the QA grader can search
+        # them via the knowledge base — same path extract_document_data uses.
+        # Deterministic doc_uuid per (parent agent_call_id, side) means this
+        # is a cached no-op when the extraction agent already ingested in a
+        # prior rerun.
+        if (before_html or after_html) and agent_call_id and agent_call_id != "unknown":
+            from bubble.page_snapshot_ingest import ingest_page_snapshots
+            snapshot_namespaces = ingest_page_snapshots(agent_call_id, before_html or "", after_html or "")
+            if snapshot_namespaces:
+                namespaces.extend(snapshot_namespaces)
+                log.info(
+                    "doc_eval_agent: added %d page-snapshot namespace(s) for acid=%s",
+                    len(snapshot_namespaces), agent_call_id[:12],
+                )
 
     return {
         "system_prompt": system_prompt,
