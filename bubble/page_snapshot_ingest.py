@@ -56,9 +56,13 @@ def ingest_page_snapshots(
         if not html or not html.strip():
             continue
         doc_uuid = _snapshot_uuid(agent_call_id, side)
-        filename = f"page-{side}-{agent_call_id[:12]}.html"
+        # Backend ingest endpoint accepts text/plain (as used by doc_extraction_ingest
+        # for already-extracted PDF text). HTML is just text — the backend chunks + embeds
+        # the characters regardless. Using .txt + text/plain avoids a 400 Bad Request
+        # that an html mime type triggers.
+        filename = f"page-{side}-{agent_call_id[:12]}.txt"
         try:
-            resp = ingest_document(doc_uuid, filename, html.encode("utf-8"), "text/html")
+            resp = ingest_document(doc_uuid, filename, html.encode("utf-8"), "text/plain")
             status = resp.get("status")
             log.info(
                 "page_snapshot_ingest: side=%s status=%s doc_uuid=%s acid=%s",
