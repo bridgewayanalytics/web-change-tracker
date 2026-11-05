@@ -115,11 +115,10 @@ export async function GET(
       };
       return NextResponse.json({ status: "complete", result: docResult });
     } catch {
-      return NextResponse.json({
-        status: "complete",
-        result: null,
-        error: "Result not yet available in S3",
-      });
+      // ECS reported STOPPED but the final S3 PUT hasn't landed yet (tail race).
+      // Report as still-running so the dashboard keeps polling instead of
+      // surfacing a terminal "no result found" error to the user.
+      return NextResponse.json({ status: "running", lastStatus: "STOPPED" });
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
