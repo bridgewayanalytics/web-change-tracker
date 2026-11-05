@@ -994,7 +994,9 @@ export function DocExtractionsTable({ rows, onAccepted, schemaVersion = 0, hasQa
   const [configError, setConfigError] = useState<string | null>(null);
   const [activeTasks, setActiveTasks] = useState<Map<string, ActiveTask>>(new Map());
   // Pending QA trigger: set by the polling handler after auto-accept; consumed by a useEffect
-  const [pendingQaTrigger, setPendingQaTrigger] = useState<{ callId: string; libUrl: string } | null>(null);
+  // Queue (not single slot) so multiple rerun completions in the same React batch
+  // all get their QA auto-triggered. A single-value state would drop all but the last.
+  const [pendingQaTriggers, setPendingQaTriggers] = useState<Array<{ callId: string; libUrl: string }>>([]);
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 50;
 
@@ -1013,13 +1015,14 @@ export function DocExtractionsTable({ rows, onAccepted, schemaVersion = 0, hasQa
       .catch(() => {});
   }, [evalVersion, evalRefreshTrigger]);
 
-  // Trigger QA after auto-accept — runs in a clean React effect context, not inside setInterval
+  // Drain the queue each time it changes — fires one startQa per entry.
   useEffect(() => {
-    if (!pendingQaTrigger) return;
-    setPendingQaTrigger(null);
-    startQa(pendingQaTrigger.callId, pendingQaTrigger.libUrl || undefined);
+    if (pendingQaTriggers.length === 0) return;
+    const toRun = pendingQaTriggers;
+    setPendingQaTriggers([]);
+    for (const t of toRun) startQa(t.callId, t.libUrl || undefined);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingQaTrigger]);
+  }, [pendingQaTriggers]);
 
   // Poll in-flight QA tasks every 5s — one batched ECS call for all pending tasks
   useEffect(() => {
@@ -1268,8 +1271,13 @@ export function DocExtractionsTable({ rows, onAccepted, schemaVersion = 0, hasQa
               });
               if (acceptRes.ok) {
                 onAccepted?.();
-                // Only auto-trigger QA if QA already existed for this row when the rerun was started
-                if (agent_call_id && hasExistingQa) setPendingQaTrigger({ callId: agent_call_id, libUrl: library_item_url });
+                // Always auto-trigger QA after a successful accept. Previous code gated
+                // on hasExistingQa, which dropped the trigger on rows that had no prior
+                // eval OR when evalResults hadn't finished loading at click-time. Queue-
+                // append (not overwrite) so parallel completions each get their own run.
+                if (agent_call_id) {
+                  setPendingQaTriggers((prev) => [...prev, { callId: agent_call_id, libUrl: library_item_url }]);
+                }
               } else {
                 console.error("doc-rerun auto-accept failed", await acceptRes.text().catch(() => ""));
               }
