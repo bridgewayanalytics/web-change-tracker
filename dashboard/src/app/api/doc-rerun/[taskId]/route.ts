@@ -1,11 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ECSClient, DescribeTasksCommand } from "@aws-sdk/client-ecs";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { createHash } from "node:crypto";
 
 export const dynamic = "force-dynamic";
 
 const WCT_CLUSTER = "web-change-tracker-prod";
 const BUCKET = process.env.BUBBLE_ARTIFACT_BUCKET ?? "";
+
+function rerunResultKey(run_id: string, target_id: string, library_item_url: string): string {
+  const base = `alerts/reruns/${run_id}/${target_id}`;
+  if (library_item_url) {
+    const urlHash = createHash("sha256").update(library_item_url).digest("hex").slice(0, 16);
+    return `${base}/doc_${urlHash}.json`;
+  }
+  return `${base}/result.json`;
+}
 
 let ecs: ECSClient | null = null;
 let s3: S3Client | null = null;
@@ -26,6 +36,7 @@ export async function GET(
     const taskId = params.taskId;
     const run_id = request.nextUrl.searchParams.get("run_id") ?? "";
     const target_id = request.nextUrl.searchParams.get("target_id") ?? "";
+    const library_item_url = request.nextUrl.searchParams.get("library_item_url") ?? "";
 
     const res = await getEcs().send(
       new DescribeTasksCommand({ cluster: WCT_CLUSTER, tasks: [taskId] })
@@ -39,7 +50,7 @@ export async function GET(
       // works even when the browser tab closed before polling caught the
       // terminal state.
       if (run_id && target_id) {
-        const key = `alerts/reruns/${run_id}/${target_id}/result.json`;
+        const key = rerunResultKey(run_id, target_id, library_item_url);
         try {
           const s3res = await getS3().send(
             new GetObjectCommand({ Bucket: BUCKET, Key: key })
@@ -85,7 +96,7 @@ export async function GET(
     }
 
     // Fetch result.json — reads doc_rerun_rows / doc_original_rows written by spike.py
-    const key = `alerts/reruns/${run_id}/${target_id}/result.json`;
+    const key = rerunResultKey(run_id, target_id, library_item_url);
     try {
       const s3res = await getS3().send(
         new GetObjectCommand({ Bucket: BUCKET, Key: key })

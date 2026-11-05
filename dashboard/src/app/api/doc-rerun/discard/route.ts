@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { S3Client, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { createHash } from "node:crypto";
 
 export const dynamic = "force-dynamic";
 
@@ -11,19 +12,25 @@ function getS3() {
   return s3;
 }
 
+function rerunResultKey(run_id: string, target_id: string, library_item_url: string): string {
+  const base = `alerts/reruns/${run_id}/${target_id}`;
+  if (library_item_url) {
+    const urlHash = createHash("sha256").update(library_item_url).digest("hex").slice(0, 16);
+    return `${base}/doc_${urlHash}.json`;
+  }
+  return `${base}/result.json`;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { run_id, target_id } = body as { run_id?: string; target_id?: string };
+    const { run_id, target_id, library_item_url } = body as { run_id?: string; target_id?: string; library_item_url?: string };
 
     if (!run_id || !target_id) {
       return NextResponse.json({ error: "run_id and target_id are required" }, { status: 400 });
     }
 
-    // The same result.json is shared by both alerts and doc rerun — discard removes it entirely.
-    // If only discarding from doc table, we don't delete the file (the alerts rerun may still want it).
-    // This matches the pattern: result.json is ephemeral per-rerun.
-    const key = `alerts/reruns/${run_id}/${target_id}/result.json`;
+    const key = rerunResultKey(run_id, target_id, library_item_url ?? "");
     await getS3().send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
 
     return NextResponse.json({ ok: true });

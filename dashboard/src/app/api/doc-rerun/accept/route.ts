@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { createHash } from "node:crypto";
 import { bustDocExtractionsCache, type DocExtractionRow } from "@/lib/doc-extractions-cache";
 
 export const dynamic = "force-dynamic";
@@ -7,6 +8,15 @@ export const dynamic = "force-dynamic";
 const BUCKET = process.env.BUBBLE_ARTIFACT_BUCKET ?? "";
 const DOC_KEY = "alerts/document_extractions_table.jsonl";
 const EVAL_KEY = "alerts/doc_eval_results_table.jsonl";
+
+function rerunResultKey(run_id: string, target_id: string, library_item_url: string): string {
+  const base = `alerts/reruns/${run_id}/${target_id}`;
+  if (library_item_url) {
+    const urlHash = createHash("sha256").update(library_item_url).digest("hex").slice(0, 16);
+    return `${base}/doc_${urlHash}.json`;
+  }
+  return `${base}/result.json`;
+}
 
 let s3: S3Client | null = null;
 function getS3() {
@@ -23,8 +33,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "run_id and target_id are required" }, { status: 400 });
     }
 
-    // 1. Read rerun result
-    const resultKey = `alerts/reruns/${run_id}/${target_id}/result.json`;
+    // 1. Read rerun result (per-document file when URL is provided)
+    const resultKey = rerunResultKey(run_id, target_id, library_item_url ?? "");
     const resultRes = await getS3().send(
       new GetObjectCommand({ Bucket: BUCKET, Key: resultKey })
     );

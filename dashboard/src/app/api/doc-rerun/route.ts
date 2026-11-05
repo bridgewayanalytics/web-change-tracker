@@ -36,6 +36,7 @@ export async function POST(request: NextRequest) {
       { name: "RERUN_RUN_ID", value: run_id },
       { name: "RERUN_TARGET_ID", value: target_id },
       { name: "RERUN_MODE", value: "docs" },
+      ...(library_item_url ? [{ name: "RERUN_LIBRARY_ITEM_URL", value: library_item_url }] : []),
     ];
 
     const result = await getEcs().send(

@@ -612,10 +612,12 @@ function RerunResultGroup({
     setDiscarding(true);
     setActionError(null);
     try {
+      const firstRerun = reruns[0] as Record<string, unknown> | undefined;
+      const libUrl = firstRerun?.library_item_url ? String(firstRerun.library_item_url) : undefined;
       const res = await fetch("/api/doc-rerun/discard", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ run_id: result.run_id, target_id: result.target_id }),
+        body: JSON.stringify({ run_id: result.run_id, target_id: result.target_id, ...(libUrl ? { library_item_url: libUrl } : {}) }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Discard failed");
@@ -1248,7 +1250,7 @@ export function DocExtractionsTable({ rows, onAccepted, schemaVersion = 0, hasQa
       for (const [rowKey, { taskId, run_id, target_id, library_item_url, agent_call_id, hasExistingQa }] of Array.from(activeTasks.entries())) {
         try {
           const res = await fetch(
-            `/api/doc-rerun/${taskId}?run_id=${encodeURIComponent(run_id)}&target_id=${encodeURIComponent(target_id)}`
+            `/api/doc-rerun/${taskId}?run_id=${encodeURIComponent(run_id)}&target_id=${encodeURIComponent(target_id)}&library_item_url=${encodeURIComponent(library_item_url)}`
           );
           const data = await res.json();
           if (data.status === "running") continue;

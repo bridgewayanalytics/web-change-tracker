@@ -2547,6 +2547,23 @@ def _extract_doc_in_subprocess(
                 pass
 
 
+def _rerun_result_key(run_id: str, target_id: str, library_item_url: str = "") -> str:
+    """Return the S3 key for the rerun result file.
+
+    When library_item_url is set, each document gets its own result file keyed
+    by a short sha256 prefix of the URL. This lets multiple per-document reruns
+    for the same (run_id, target_id) run in parallel without clobbering each
+    other's output. Without a URL (alerts-mode or target-wide rerun) the legacy
+    shared path is used.
+    """
+    base = f"alerts/reruns/{run_id}/{target_id}"
+    if library_item_url:
+        import hashlib
+        url_hash = hashlib.sha256(library_item_url.encode("utf-8")).hexdigest()[:16]
+        return f"{base}/doc_{url_hash}.json"
+    return f"{base}/result.json"
+
+
 def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alerts", rerun_library_item_url: str = "", rerun_transcript_s3_key: str = "") -> None:
     """
     Re-evaluate a single stored alert using the current DynamoDB agent config.
@@ -2562,7 +2579,8 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
       pages/<target_id>/YYYY/MM/DD/<run_id>/meta.json
 
     Writes result to:
-      alerts/reruns/<run_id>/<target_id>/result.json
+      alerts/reruns/<run_id>/<target_id>/result.json           (target-wide reruns)
+      alerts/reruns/<run_id>/<target_id>/doc_<url_hash>.json   (single-document reruns)
 
     Does NOT modify alerts_table.jsonl — the dashboard handles accept/discard.
     """
@@ -2674,7 +2692,7 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
             "doc_rerun_rows": [],
             "error": "page_change_agent returned no meaningful output — the agent may have determined no change occurred",
         }
-        result_key = f"alerts/reruns/{rerun_run_id}/{rerun_target_id}/result.json"
+        result_key = _rerun_result_key(rerun_run_id, rerun_target_id, rerun_library_item_url)
         s3.put_object(
             Bucket=bucket,
             Key=result_key,
@@ -2961,7 +2979,7 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
         "doc_rerun_rows": doc_rerun_rows,
     }
 
-    result_key = f"alerts/reruns/{rerun_run_id}/{rerun_target_id}/result.json"
+    result_key = _rerun_result_key(rerun_run_id, rerun_target_id, rerun_library_item_url)
     s3.put_object(
         Bucket=bucket,
         Key=result_key,
