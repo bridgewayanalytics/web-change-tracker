@@ -1060,7 +1060,15 @@ export function DocExtractionsTable({ rows, onAccepted, schemaVersion = 0, hasQa
             return next;
           });
         }
-        if (anyComplete) setEvalVersion((v) => v + 1);
+        if (anyComplete) {
+          setEvalVersion((v) => v + 1);
+          // Also refetch the document extractions so the row's eval_row_key
+          // (stamped by eval/doc_result_store at QA write-time) updates. Without
+          // this, the row still carries a stale eval_row_key and getEvalForRow
+          // can miss the new entry — the user has to refresh manually to see
+          // scores. Parent uses onAccepted as its row-refetch trigger.
+          onAccepted?.();
+        }
         if (failed.length > 0) alert(`QA evaluation failed:\n${failed.join("\n")}`);
       } catch { /* keep polling */ }
     }, 5000);
