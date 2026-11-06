@@ -775,20 +775,53 @@ export async function syncAlert(
     // ── Agenda items ────────────────────────────────────────────────────────
     if (hasAgendaItems && (runAgenda || runLib)) {
       const existingAgendaIds = ((row.eidarix_agenda_item_ids as unknown[] | undefined) ?? []).map(String).filter(Boolean);
-      if (existingAgendaIds.length && action === "library_item") {
-        // Already created in a prior agenda_items step — pick them up
+      const previewsForAgenda = (plan.agenda_item_previews as Array<Record<string, unknown>> | undefined) ?? [];
+
+      // Resolve topic name → id for whatever topics the current previews point at.
+      // Needed for both CREATE (new items) and UPDATE (existing items whose topics drifted).
+      const agendaTopicNames = Array.from(new Set(
+        previewsForAgenda.flatMap(p => (p.chronicle_topics as string[] | undefined) ?? []).filter(Boolean),
+      ));
+      let agendaTopicNameToId = topicNameToId;
+      if (agendaTopicNames.some(n => !topicNameToId.has(n))) {
+        const { nameToId } = await resolveTopicIds(agendaTopicNames);
+        agendaTopicNameToId = new Map([...Array.from(topicNameToId), ...Array.from(nameToId)]);
+      }
+
+      if (existingAgendaIds.length === previewsForAgenda.length && existingAgendaIds.length > 0) {
+        // Agenda items were already created in a prior sync — reuse their IDs so we
+        // don't create duplicates. When the caller is re-running the agenda step
+        // (action="agenda_items"), PATCH each existing record's topics in case the
+        // user edited the chronicle topic in the modal after the initial create.
         agendaItemIds = existingAgendaIds;
-      } else {
-        // Ensure all agenda item topics are in the topicNameToId map
-        const previewsForTopics = (plan.agenda_item_previews as Array<Record<string, unknown>> | undefined) ?? [];
-        const agendaTopicNames = Array.from(new Set(
-          previewsForTopics.flatMap(p => (p.chronicle_topics as string[] | undefined) ?? []).filter(Boolean),
-        ));
-        let agendaTopicNameToId = topicNameToId;
-        if (agendaTopicNames.some(n => !topicNameToId.has(n))) {
-          const { nameToId } = await resolveTopicIds(agendaTopicNames);
-          agendaTopicNameToId = new Map([...Array.from(topicNameToId), ...Array.from(nameToId)]);
+        if (runAgenda) {
+          const emptyTopicId = await getEmptyTopicId();
+          for (let i = 0; i < previewsForAgenda.length; i++) {
+            const bubbleId = existingAgendaIds[i];
+            const preview = previewsForAgenda[i];
+            const topicNames = (preview.chronicle_topics as string[] | undefined) ?? [];
+            let topicIds = topicNames.map(n => agendaTopicNameToId.get(n)).filter((id): id is string => !!id);
+            if (!topicIds.length && emptyTopicId) topicIds = [emptyTopicId];
+            if (!topicIds.length) continue;
+            try {
+              const patchRes = await fetch(`${OBJ_BASE}/agendaitem/${bubbleId}`, {
+                method: "PATCH",
+                headers: { Authorization: `Bearer ${await getBubbleKey()}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ "topics - dt": topicIds }),
+              });
+              if (!patchRes.ok) {
+                console.warn("[bubble-sync] agendaitem topic PATCH failed id=%s status=%d", bubbleId, patchRes.status);
+              } else {
+                console.info("[bubble-sync] updated agendaitem %s topics=%j", bubbleId, topicIds);
+              }
+            } catch (err) {
+              console.warn("[bubble-sync] agendaitem topic PATCH threw id=%s err=%s", bubbleId, String(err));
+            }
+          }
+          return { ok: true, eidarix_agenda_item_ids: agendaItemIds, bubble_event_id: null, bubble_library_item_id: null };
         }
+      } else {
+        // No existing agenda items (or preview count changed — ambiguous mapping; create fresh)
         agendaItemIds = await resolveAgendaItems(row, agentCallId, agendaTopicNameToId);
         console.info(`[bubble-sync] resolved ${agendaItemIds.length} agenda item(s)`);
 
