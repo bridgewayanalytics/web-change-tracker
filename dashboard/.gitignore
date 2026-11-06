@@ -37,3 +37,6 @@ infra/terraform/terraform.tfvars
 # OS
 .DS_Store
 Thumbs.db
+
+# TypeScript incremental build cache (auto-regenerated, keeps showing up as modified)
+tsconfig.tsbuildinfo

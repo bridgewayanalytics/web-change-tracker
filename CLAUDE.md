@@ -57,12 +57,16 @@ When `RERUN_RUN_ID` and `RERUN_TARGET_ID` environment variables are set, `spike.
 
 1. Fetches stored before/after HTML from S3: `pages/<target_id>/YYYY/MM/DD/<run_id>/`
 2. Re-runs `extract_page_change()` + `extract_document_data()` with current DynamoDB config. Uses the **original row's `run_timestamp`** as the pipeline run time injected into the agent context (not the current wall-clock time) — ensures the agent sees the same temporal context as the original run.
-3. Writes result to `alerts/reruns/<run_id>/<target_id>/result.json` (never overwrites `alerts_table.jsonl`)
+3. Writes result to:
+   - `alerts/reruns/<run_id>/<target_id>/result.json` — target-wide reruns (alerts mode, or docs mode with no URL)
+   - `alerts/reruns/<run_id>/<target_id>/doc_<url_hash>.json` — single-document doc reruns (when `RERUN_LIBRARY_ITEM_URL` is set)
 4. The dashboard handles Accept (patches JSONL) or Discard (deletes result)
 
 Result schema includes: `run_id`, `target_id`, `rerun_timestamp`, `config_hash`, `original_rows`, `rerun_rows`, `doc_original_rows`, `doc_rerun_rows`.
 
 `RERUN_MODE` env var controls which agents run: `"alerts"` (page_change_agent only), `"docs"` (document_agent only), `"both"` (default).
+
+**Per-document scoping** (docs mode): when `RERUN_LIBRARY_ITEM_URL` is set, `_run_rerun` filters `library_items` by exact URL match and only re-extracts that one document. The S3 result key uses `_rerun_result_key()` which switches to a URL-hashed path, so parallel reruns for different documents on the same (run_id, target_id) don't clobber each other. Without the env var, the legacy target-wide behavior + shared `result.json` path is used.
 
 Full spec: `docs/rerun-feature.md`
 
@@ -110,6 +114,9 @@ Full spec: `docs/rerun-feature.md`
 | `scripts/backfill_bubble_action.py` | Backfill `bubble_action` on existing `alerts_table.jsonl` rows using the classifier (idempotent, `--force` to re-classify). Enriches with doc extraction keyed by `library_item_url` (not `agent_call_id`) — required for multi-document page changes where one call_id produces N library items. |
 | `scripts/backfill_recordings.py` | Backfill `recording_s3_key` on alerts that have `event_title`+`event_start_date_time` but no recording match yet. Two-pass: standard find_recording() then filename-based fallback for rows where event date is N/A. |
 | `scripts/backfill_transcripts.py` | Backfill `transcript_s3_key` on alerts that have a `recording_s3_key` but haven't been transcribed yet. Groups by `agent_call_id` to transcribe once per recording. `--local` flag uses local Whisper model. |
+| `scripts/check_ghost_files.py` | pgvector probe. Lists all namespaces + doc counts and searches for `01_calendar_items / 02_agenda_items / 03_library_items` filename references in any namespace. Diagnostic for ghost-file references in agent instructions. Run via ECS `python scripts/check_ghost_files.py`. |
+| `scripts/check_bubble_data_ns.py` | Lists documents in the `bubble-data` namespace. Quick visibility into what the extraction/QA agents can actually find in their knowledge base. |
+| `scripts/run_local_doc_qa.py` | One-off local doc QA runner. Loads DB + API creds from Secrets Manager/SSM in-process, sets `PGVECTOR_ENABLED`, then invokes `eval.run_doc_eval.run()` on the acids in the supplied file. |
 ## QA Evaluation Pipeline
 
 Ongoing automated evaluation of web tracking agent output. Triggered after each Newsreel publication. Evaluates rows where the associated event or library item exists in Bubble (i.e., `bubble_action` is set). One agent call per alert row.
@@ -128,7 +135,7 @@ Ongoing automated evaluation of web tracking agent output. Triggered after each 
 | File | Purpose |
 |------|---------|
 | `eval/run_eval.py` | Entry point — calls `_load_secrets()` to load OpenAI + DB creds from SSM, then orchestrates full eval run. `main()` wraps the `run()` call in a top-level try/except that logs the full traceback before re-raising, so eval failures are visible in CloudWatch. |
-| `eval/row_selector.py` | Loads eligible rows by querying Bubble for all calendar items and library items, then matching alert rows against them via `bubble_action.match_search`. A row qualifies when its corresponding Bubble record actually exists — meaning a human has made editorial decisions (chronicle topics, newsreel relevance) that provide eval ground truth. Rows specified via `--agent-call-ids` bypass the Bubble check entirely. Applies limit at the agent-call level but returns ALL rows per selected call (siblings included). |
+| `eval/row_selector.py` | Loads eligible rows. No publication gate — every row in `alerts_table.jsonl` is a candidate. Transcript rows (`alert_type == "New Meeting Transcript Available"`) are excluded. Rows are sorted by `run_timestamp` descending, deduped by `agent_call_id`, limited at the call level, then expanded to include all sibling rows per selected call. `--agent-call-ids` bypasses filtering entirely and returns the requested rows directly. **Prior behavior** (removed 2026-11-05): the selector queried Bubble for existing calendar/library items and only graded rows whose Bubble record existed — this gated QA on publication state and caused bulk runs to keep grading the same Aug backlog once newer rows outran their Bubble sync. |
 | `eval/html_fetcher.py` | Fetches before/after HTML snapshots from S3 for each row |
 | `eval/eval_agent.py` | Calls `chat:web-extraction-qa-agent` (DynamoDB config) — one call per group (all rows sharing an `agent_call_id`), returns per-row per-field scores keyed by `eval_row_key`. All rows from the same HTML page diff are evaluated together so the agent has full cross-row context and does not penalize any row for content belonging to a sibling. Injects the live org tree via `get_org_tree()` so the agent can verify organization field values against the full NAIC org hierarchy. HTML snapshots are passed directly; no reference_context. Two-step pgvector pattern (same as doc eval): Step 1 — agent free-text analysis with knowledge base search tools; Step 2 — `chat_json()` formats into per-row per-field JSON keyed by `eval_row_key`. |
 | `eval/result_store.py` | Upserts results into `alerts/eval_results_table.jsonl` keyed by `eval_row_key`. Single-row calls: key = `agent_call_id` (backward compatible). Sibling rows: key = `agent_call_id|library_item_url`. `delete_eval_result()` removes all entries for a given `agent_call_id`. |
