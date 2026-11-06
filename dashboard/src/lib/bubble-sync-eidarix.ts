@@ -802,7 +802,25 @@ export async function syncAlert(
 
     // ── Library item ────────────────────────────────────────────────────────
     if (runLib) {
-      if (libAction === "create") {
+      // UPDATE → CREATE auto-fallback: if the classifier said "update" but the
+      // record no longer matches in Bubble (common when the URL/title drifts
+      // between classification and sync), downgrade to CREATE so the user is
+      // not stuck in the "Cannot sync" loop in ContentGateModal.
+      let effectiveLibAction: string | null = libAction;
+      let existingLibIdForUpdate: string | null = null;
+      if (libAction === "update") {
+        const matchSearch = (lp.match_search ?? {}) as Record<string, string>;
+        existingLibIdForUpdate = await findLibraryItem(matchSearch);
+        if (!existingLibIdForUpdate) {
+          console.warn(
+            "[bubble-sync] libraryitem UPDATE match_search returned nothing — falling back to CREATE for %s",
+            JSON.stringify(matchSearch),
+          );
+          effectiveLibAction = "create";
+        }
+      }
+
+      if (effectiveLibAction === "create") {
         // Topic IDs for library item: union of agenda item topics + doc extraction topics
         const agendaTopicNames = getAgendaTopicNames(row);
         const libTopicNamesSet = new Set([...agendaTopicNames, ...lpTopicNames]);
@@ -841,12 +859,9 @@ export async function syncAlert(
         if (bubbleLibraryItemId) console.info("[bubble-sync] created libraryitem", bubbleLibraryItemId);
         else console.warn("[bubble-sync] create-library-item returned no id:", result);
 
-      } else if (libAction === "update") {
-        const matchSearch = (lp.match_search ?? {}) as Record<string, string>;
-        const existingLibId = await findLibraryItem(matchSearch);
-        if (!existingLibId) {
-          throw new Error(`No matched library item found for match_search=${JSON.stringify(matchSearch)}`);
-        }
+      } else if (effectiveLibAction === "update") {
+        // existingLibIdForUpdate was already resolved above
+        const existingLibId = existingLibIdForUpdate!;
         bubbleLibraryItemId = existingLibId;
         // PATCH chronicle topics onto existing record (trimmed payload — no overwriting core fields)
         const patchRes = await fetch(`${OBJ_BASE}/libraryitem/${existingLibId}`, {
@@ -885,7 +900,28 @@ export async function syncAlert(
         if (fallbackId) eventTopicIds = [fallbackId];
       }
 
-      if (eventAction === "create") {
+      // UPDATE → CREATE auto-fallback (mirrors the library item fix above):
+      // if the classifier said "update" but match_search no longer resolves a
+      // record in Bubble, downgrade to CREATE so the modal does not block.
+      let effectiveEventAction: string | null = eventAction;
+      let existingEventIdForUpdate: string | null = null;
+      if (eventAction === "update") {
+        const matchSearchProbe = { ...(ep.match_search ?? {}) } as Record<string, string>;
+        if (!matchSearchProbe.date) {
+          const rawDate = String(r.event_start_date_time ?? r.event_start_date_time_et ?? "").trim();
+          if (rawDate && rawDate.toUpperCase() !== "N/A") matchSearchProbe.date = rawDate.slice(0, 10);
+        }
+        existingEventIdForUpdate = await findCalendarItem(matchSearchProbe);
+        if (!existingEventIdForUpdate) {
+          console.warn(
+            "[bubble-sync] calendaritem UPDATE match_search returned nothing — falling back to CREATE for %s",
+            JSON.stringify(matchSearchProbe),
+          );
+          effectiveEventAction = "create";
+        }
+      }
+
+      if (effectiveEventAction === "create") {
         const calTypeId = await resolveCalendarItemTypeId("Meeting");
         const isFullDay = String(row.event_is_full_day ?? ep.is_full_day ?? "").trim() === "Full Day";
         const timeFields = computeEventTimeFields(startDt, endDt, isFullDay);
@@ -928,18 +964,9 @@ export async function syncAlert(
         bubbleEventId = createData.id;
         console.info("[bubble-sync] created calendaritem", bubbleEventId);
 
-      } else if (eventAction === "update") {
-        const matchSearch = { ...(ep.match_search ?? {}) } as Record<string, string>;
-        // bubble_action may have been stamped when date was missing — supplement from live row value
-        if (!matchSearch.date) {
-          const rr = row as Record<string, unknown>;
-          const rawDate = String(rr.event_start_date_time ?? rr.event_start_date_time_et ?? "").trim();
-          if (rawDate && rawDate.toUpperCase() !== "N/A") matchSearch.date = rawDate.slice(0, 10);
-        }
-        const existingEventId = await findCalendarItem(matchSearch);
-        if (!existingEventId) {
-          throw new Error(`No matched calendar item found for match_search=${JSON.stringify(matchSearch)}`);
-        }
+      } else if (effectiveEventAction === "update") {
+        // existingEventIdForUpdate was already resolved above
+        const existingEventId = existingEventIdForUpdate!;
         // PATCH only the linking fields — datetime/type/orgs already on the record
         const updatePayload: Record<string, unknown> = {
           "Topics - dt": eventTopicIds,
