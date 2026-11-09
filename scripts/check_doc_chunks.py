@@ -15,28 +15,42 @@ async def main():
     await init_pg_pool()
     pool = get_pg_pool()
 
-    docs = await pool.fetch("""
-        SELECT title, content_type, length(content) AS chars, updated_at
-        FROM documents
-        WHERE namespace = $1
-          AND (expires_at IS NULL OR expires_at > NOW())
-    """, namespace)
-    print(f"Documents in namespace: {len(docs)}")
-    for d in docs:
-        print(f"  [{d['content_type']}] {d['title']}  chars={d['chars']}  updated={d['updated_at']}")
+    # Inspect schema first
+    cols_docs = await pool.fetch("""
+        SELECT column_name, data_type FROM information_schema.columns
+        WHERE table_name = 'documents'
+        ORDER BY ordinal_position
+    """)
+    print("documents columns:", [c['column_name'] for c in cols_docs])
+    cols_chunks = await pool.fetch("""
+        SELECT column_name, data_type FROM information_schema.columns
+        WHERE table_name = 'chunks'
+        ORDER BY ordinal_position
+    """)
+    print("chunks columns:   ", [c['column_name'] for c in cols_chunks])
+    print()
 
-    chunks = await pool.fetch("""
-        SELECT c.id, c.ordinal, length(c.text) AS chars, c.text
-        FROM chunks c
-        JOIN documents d ON c.document_id = d.id
-        WHERE d.namespace = $1
-          AND (d.expires_at IS NULL OR d.expires_at > NOW())
-        ORDER BY c.ordinal
-    """, namespace)
-    print(f"\nChunks: {len(chunks)}")
+    docs = await pool.fetch(
+        "SELECT * FROM documents WHERE namespace = $1 LIMIT 5", namespace
+    )
+    print(f"Documents in namespace '{namespace}': {len(docs)}")
+    for d in docs:
+        d_dict = dict(d)
+        print(f"  {d_dict}")
+
+    print()
+    chunks = await pool.fetch(
+        """SELECT c.* FROM chunks c JOIN documents d ON c.document_id = d.id
+           WHERE d.namespace = $1 ORDER BY c.id""", namespace,
+    )
+    print(f"Chunks: {len(chunks)}")
     for c in chunks:
-        preview = c['text'].replace("\n", " ")[:200]
-        print(f"  [{c['ordinal']:>2}] chars={c['chars']:>5}  preview: {preview}")
+        c_dict = dict(c)
+        # Print meta + a content preview
+        text_key = next((k for k in c_dict if 'content' in k.lower() or 'text' in k.lower()), None)
+        txt = c_dict.get(text_key, '') if text_key else ''
+        preview = str(txt).replace("\n", " ")[:300]
+        print(f"  id={c_dict.get('id')}  chars={len(str(txt))}  preview: {preview}")
 
 
 asyncio.run(main())
