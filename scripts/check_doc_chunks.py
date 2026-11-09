@@ -40,17 +40,17 @@ async def main():
 
     print()
     chunks = await pool.fetch(
-        """SELECT c.* FROM document_chunks c JOIN documents d ON c.document_id = d.id
-           WHERE d.namespace = $1 ORDER BY c.id""", namespace,
+        """SELECT c.id, c.chunk_index, c.content, c.content_type, length(c.content) AS chars
+           FROM document_chunks c JOIN documents d ON c.document_id = d.id
+           WHERE d.namespace = $1 ORDER BY c.chunk_index""", namespace,
     )
     print(f"Chunks: {len(chunks)}")
     for c in chunks:
-        c_dict = dict(c)
-        # Print meta + a content preview
-        text_key = next((k for k in c_dict if 'content' in k.lower() or 'text' in k.lower()), None)
-        txt = c_dict.get(text_key, '') if text_key else ''
-        preview = str(txt).replace("\n", " ")[:300]
-        print(f"  id={c_dict.get('id')}  chars={len(str(txt))}  preview: {preview}")
+        txt = c['content'] or ''
+        print(f"  [idx={c['chunk_index']}] chars={c['chars']} content_type={c['content_type']}")
+        print(f"    FULL CONTENT:")
+        print(f"    {txt}")
+        print()
 
 
 asyncio.run(main())
