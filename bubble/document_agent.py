@@ -236,7 +236,14 @@ async def _run_with_pgvector(
     if not gathered:
         return {}
 
-    log.info("document_agent [STEP1_OUTPUT]: %s", gathered[:2000])
+    # Chunked logging so CloudWatch truncation doesn't hide the full Step 1 output
+    # (CloudWatch has no per-event char cap, but string arguments to log.info still
+    # go through python logging with no truncation — the old [:2000] was ours).
+    _s1_len = len(gathered)
+    log.info("document_agent [STEP1_OUTPUT] chars=%d (full output follows in chunks):", _s1_len)
+    _CHUNK = 4000
+    for _i in range(0, _s1_len, _CHUNK):
+        log.info("document_agent [STEP1_CHUNK %d-%d]: %s", _i, _i + _CHUNK, gathered[_i:_i + _CHUNK])
 
     # Step 2: enforce schema via Structured Outputs so output always matches DynamoDB schema
     if json_schema:
@@ -256,7 +263,7 @@ async def _run_with_pgvector(
             },
             {"role": "user", "content": gathered},
         ]
-        return chat_json(
+        _step2_result = chat_json(
             messages,
             model=model,
             reasoning_effort=reasoning_effort,
@@ -265,6 +272,18 @@ async def _run_with_pgvector(
             json_schema_strict=json_schema_strict,
             surface="document_data_extraction",
         )
+        # Log the Step 2 output (chunked) and a summary of the item count so the
+        # Step 1 vs Step 2 drop (if any) is immediately visible in CloudWatch.
+        try:
+            _s2_json = json.dumps(_step2_result)
+            _ai = _step2_result.get("agenda_items") if isinstance(_step2_result, dict) else None
+            _ai_count = len(_ai) if isinstance(_ai, list) else -1
+            log.info("document_agent [STEP2_OUTPUT] agenda_items_count=%d chars=%d:", _ai_count, len(_s2_json))
+            for _i in range(0, len(_s2_json), _CHUNK):
+                log.info("document_agent [STEP2_CHUNK %d-%d]: %s", _i, _i + _CHUNK, _s2_json[_i:_i + _CHUNK])
+        except Exception as _e:
+            log.warning("document_agent [STEP2_LOG] serialization failed: %s", _e)
+        return _step2_result
 
     # Fallback if no schema: parse free text
     return _parse_output(gathered)
