@@ -24,7 +24,7 @@ async def main():
     print("documents columns:", [c['column_name'] for c in cols_docs])
     cols_chunks = await pool.fetch("""
         SELECT column_name, data_type FROM information_schema.columns
-        WHERE table_name = 'chunks'
+        WHERE table_name = 'document_chunks'
         ORDER BY ordinal_position
     """)
     print("chunks columns:   ", [c['column_name'] for c in cols_chunks])
@@ -40,7 +40,7 @@ async def main():
 
     print()
     chunks = await pool.fetch(
-        """SELECT c.* FROM chunks c JOIN documents d ON c.document_id = d.id
+        """SELECT c.* FROM document_chunks c JOIN documents d ON c.document_id = d.id
            WHERE d.namespace = $1 ORDER BY c.id""", namespace,
     )
     print(f"Chunks: {len(chunks)}")
