@@ -1,18 +1,36 @@
 """
-Client for the chat backend's document-extraction ingestion API.
+Client for the ChatKit backend's hosted knowledge-base API.
 
-Uploads a document (as text/plain from already-extracted text, or raw PDF bytes)
-to the chat-api pgvector store so the document extraction agent can search the
-full document — not just the first 12,000 characters passed in the prompt.
+Three operations on the `/knowledge/document-extraction/{doc_uuid}` resource and
+one on `/knowledge/search`:
 
-The doc_uuid is deterministic per source URL, so:
-  - Re-uploads of the same document are no-ops (content-hash dedup → "cached")
-  - The QA agent re-derives the same uuid and searches the same indexed content
-  - Reruns of the same alert hit the same namespace without re-indexing
+  ingest_document(...)  POST  /knowledge/document-extraction/{uuid}
+                        Uploads text/plain (or raw PDF bytes). Content-hash
+                        dedup: re-uploading the same bytes returns status
+                        "cached" without re-indexing.
+  wait_until_ready(...) GET   /knowledge/document-extraction/{uuid}/status
+                        Polls until indexing completes.
+  document_text(...)    GET   /knowledge/document-extraction/{uuid}/text
+                        Fetches the stitched source (overlaps removed for
+                        text/plain, `--- Page N ---` markers for PDFs). This
+                        is what extraction + QA inline in the agent prompt.
+  search(...)           POST  /knowledge/search
+                        Hybrid + Decisions-API reranker over reference
+                        namespaces (chronicles, newsreels, guidelines, orgs).
+                        Trace_id writes a row to retrieval_traces for the
+                        admin dashboard.
+
+The doc_uuid is deterministic per source URL (sha256[:32]), so re-uploads of
+the same document are no-ops ("cached"), and QA re-derives the same uuid so it
+finds the document the extraction agent already ingested. Reruns of the same
+alert hit the same uuid without re-indexing.
+
+See docs/knowledge-base-integration.md for the full architecture.
 
 Environment variables:
-  CHAT_API_BASE          Base URL for the chat API (default: https://chat-api.bridgewayanalytics.com)
-  CHATKIT_INTERNAL_API_KEY  Shared API key (required when this feature is used)
+  CHAT_API_BASE             Base URL for the chat API
+                            (default: https://chat-api.bridgewayanalytics.com)
+  CHATKIT_INTERNAL_API_KEY  Shared API key (required)
 """
 
 import hashlib

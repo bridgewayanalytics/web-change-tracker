@@ -1,13 +1,14 @@
 """
-Pre-vectorize doc extraction PDFs into pgvector, then re-trigger QA evaluation.
+Pre-ingest doc extraction PDFs into the backend knowledge-base, then re-trigger
+QA evaluation.
 
-This is a one-time recovery script for rows where PDF vectorization previously
-failed (e.g. NAIC CDN 403s during bulk QA runs). It:
+One-time recovery script for rows where ingestion previously failed (e.g. NAIC
+CDN 403s during bulk QA runs). It:
 
   1. Loads all eligible doc extraction rows from S3
-  2. Checks which PDFs are not yet cached in pgvector (arm_if_ready = None)
-  3. Fetches + vectorizes each PDF one at a time with --delay seconds between
-     requests (avoids CDN rate-limiting)
+  2. Checks which PDFs are not yet indexed by the backend (arm_if_ready = None)
+  3. Fetches + ingests each PDF via ingest_document() with --delay seconds
+     between requests (avoids CDN rate-limiting)
   4. Deletes stale eval results for affected agent_call_ids so they'll be
      re-evaluated fresh
   5. Triggers QA evaluation via ECS (one task per batch of --batch-size IDs)
@@ -72,10 +73,8 @@ def _load_secrets() -> None:
             log.error("Could not load CHATKIT_INTERNAL_API_KEY from SSM: %s", e)
             sys.exit(1)
 
-    # DB creds needed for arm_if_ready (pgvector connection used internally by
-    # chat-api — the API key is sufficient; DB creds are only needed if we ever
-    # call pgvector search tools directly, which we don't here).
-    # Load OpenAI key anyway in case any transitive import needs it.
+    # The chat-api key alone is sufficient for ingest + arm; no direct DB access
+    # from this process. Load OpenAI key too in case transitive imports need it.
     try:
         from bubble.ssm_loader import load_openai_env_from_ssm, load_db_env_from_ssm
         load_openai_env_from_ssm()
@@ -177,7 +176,7 @@ def prevectorize(
     needs_vectorize: list[tuple[str, str, list[str]]] = []
     already_cached_call_ids: set[str] = set()
 
-    log.info("Checking pgvector cache status for each URL...")
+    log.info("Checking backend knowledge-base cache status for each URL...")
     for url, doc_name, call_ids in url_entries:
         ns = arm_if_ready(url)
         if ns:
