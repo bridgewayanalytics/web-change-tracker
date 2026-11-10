@@ -224,7 +224,11 @@ def _accept_doc_rerun_result(
 ) -> list[dict]:
     """
     Read the docs-mode rerun result and apply doc_rerun_rows to the full
-    document_extractions_table.jsonl: remove all doc_original_rows and append doc_rerun_rows.
+    document_extractions_table.jsonl: remove all doc_original_rows and insert
+    doc_rerun_rows at the position of the first removed row (preserves table order).
+    Mirrors dashboard /api/doc-rerun/accept behavior: force-copies identity fields
+    from the original row and stamps last_rerun_at on every rerun row so the
+    dashboard's "Re-eval: [time]" label surfaces correctly.
     Returns the updated all_doc_rows list.
     """
     result_key = f"alerts/reruns/{run_id}/{target_id}/result.json"
@@ -242,16 +246,42 @@ def _accept_doc_rerun_result(
         log.warning("accept_doc: no doc rows in %s — skipping", result_key)
         return all_doc_rows
 
+    first_orig = doc_original_rows[0] if doc_original_rows else {}
+    force_fields = ["run_id", "target_id", "run_timestamp", "source_url", "agent_call_id"]
+    last_rerun_at = datetime.now(timezone.utc).isoformat()
+    for row in doc_rerun_rows:
+        for f in force_fields:
+            v = first_orig.get(f)
+            if v is None and f == "run_id":
+                v = run_id
+            elif v is None and f == "target_id":
+                v = target_id
+            if v is not None:
+                row[f] = v
+        row["last_rerun_at"] = last_rerun_at
+
     # Identify rows to remove by (agent_call_id, library_item_url)
     remove_keys: set[tuple[str, str]] = set()
     for r in doc_original_rows:
         remove_keys.add((str(r.get("agent_call_id") or ""), str(r.get("library_item_url") or "")))
 
-    kept = [
-        r for r in all_doc_rows
-        if (str(r.get("agent_call_id") or ""), str(r.get("library_item_url") or "")) not in remove_keys
-    ]
-    kept.extend(doc_rerun_rows)
+    def _is_original(r: dict) -> bool:
+        return (
+            str(r.get("agent_call_id") or ""),
+            str(r.get("library_item_url") or ""),
+        ) in remove_keys
+
+    kept: list[dict] = []
+    inserted = False
+    for r in all_doc_rows:
+        if _is_original(r):
+            if not inserted:
+                kept.extend(doc_rerun_rows)
+                inserted = True
+        else:
+            kept.append(r)
+    if not inserted:
+        kept.extend(doc_rerun_rows)
 
     log.info(
         "accept_doc: replaced %d original rows with %d rerun rows for run_id=%s target_id=%s",
