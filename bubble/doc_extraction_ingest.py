@@ -47,13 +47,24 @@ def ingest_document(
     content: bytes,
     mime_type: str,
     force: bool = False,
+    ttl_hours: int | None = None,
 ) -> dict:
-    """Upload a document for indexing. Returns the API response dict."""
+    """Upload a document for indexing. Returns the API response dict.
+
+    ttl_hours: optional 1-8784 hour TTL after which the document and its chunks
+    are purged server-side. Use for per-pipeline-run ingests so abandoned
+    namespaces don't accumulate. Omit to persist until DELETE.
+    """
+    data: dict = {}
+    if force:
+        data["force"] = "true"
+    if ttl_hours is not None:
+        data["ttl_hours"] = str(int(ttl_hours))
     r = requests.post(
         f"{_CHAT_API_BASE}/knowledge/document-extraction/{doc_uuid}",
         headers=_headers(),
         files={"file": (filename, content, mime_type)},
-        data={"force": "true"} if force else {},
+        data=data,
         timeout=120,
     )
     r.raise_for_status()
@@ -168,3 +179,77 @@ def arm_if_ready(library_item_url: str) -> str | None:
     except Exception as e:
         log.debug("doc_extraction_ingest: status check failed for %s: %s", library_item_url[:80], e)
         return None
+
+
+def document_text(doc_uuid: str, timeout_s: int = 60) -> dict:
+    """Fetch the whole indexed document as one string, in reading order.
+
+    For text/plain ingests the backend removes the sliding-window overlaps
+    at each seam. For PDFs it inserts `--- Page N ---` markers. Use this to
+    inline the source document into an agent prompt rather than searching
+    for it after the fact.
+
+    Returns the API response dict with at least:
+      document_id (int), title (str), page_count (int), chunk_count (int),
+      char_count (int), text (str), overlaps_removed (int, text/plain only)
+
+    Raises requests.HTTPError on 4xx/5xx. 404 means the document is not
+    indexed (yet); call wait_until_ready() first.
+    """
+    r = requests.get(
+        f"{_CHAT_API_BASE}/knowledge/document-extraction/{doc_uuid}/text",
+        headers=_headers(),
+        timeout=timeout_s,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def search(
+    query: str,
+    namespaces: list[str],
+    *,
+    document_extraction_id: str | None = None,
+    document_id: int | None = None,
+    limit: int = 10,
+    trace_id: str | None = None,
+    timeout_s: int = 30,
+) -> dict:
+    """Server-side hybrid search + Decisions-API reranker.
+
+    namespaces is the list of reference collections to search (e.g.
+    ["ba:chronicles", "ba:newsreels", "ba:NAIC Guidelines", "naic-proceedings"]).
+    Do NOT pass "document-extraction:*" namespaces — pass document_extraction_id
+    instead and the server constructs the namespace string exactly as ingest does.
+
+    document_id scopes search within a single document found in a prior call.
+
+    trace_id is written to retrieval_traces.thread_id so every search in one
+    pipeline run reads back together in the admin dashboard — pass the pipeline
+    run_id.
+
+    Returns:
+      { "query": str, "namespaces": [str], "document_id": int | None,
+        "trace_id": str, "count": int, "results": [ ... ] }
+    Each result dict has: document_id, chunk_id, chunk_index, title, date, url,
+    content_type, page_no, page_end, section_path, section_pages, score, content.
+    """
+    body: dict = {
+        "query": query,
+        "namespaces": list(namespaces),
+        "limit": max(1, min(int(limit), 25)),
+    }
+    if document_extraction_id:
+        body["document_extraction_id"] = document_extraction_id
+    if document_id is not None:
+        body["document_id"] = int(document_id)
+    if trace_id:
+        body["trace_id"] = trace_id
+    r = requests.post(
+        f"{_CHAT_API_BASE}/knowledge/search",
+        headers=_headers(),
+        json=body,
+        timeout=timeout_s,
+    )
+    r.raise_for_status()
+    return r.json()

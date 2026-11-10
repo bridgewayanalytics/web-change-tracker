@@ -140,19 +140,18 @@ def get_config_hash() -> str:
 
 
 def _pgvector_enabled() -> bool:
-    if os.environ.get("PGVECTOR_ENABLED", "").strip().lower() not in ("1", "true", "yes"):
-        return False
-    required = ("DATABASE_IP", "DATABASE_NAME")
-    if not all(os.environ.get(k, "").strip() for k in required):
-        return False
-    return bool(
-        os.environ.get("DATABASE_PASSWORD_CHATKIT", "").strip()
-        or os.environ.get("DATABASE_PASSWORD", "").strip()
-    )
+    """Returns True when the ChatKit backend API is reachable.
+
+    Historical name kept because many call sites reference it. What this
+    actually gates is whether the hosted knowledge-base search endpoint is
+    usable (needs CHATKIT_INTERNAL_API_KEY). The direct-DB pgvector path and
+    its DB creds were removed 2026-11-09 — the backend now owns retrieval.
+    """
+    return bool(os.environ.get("CHATKIT_INTERNAL_API_KEY", "").strip())
 
 
 # ---------------------------------------------------------------------------
-# Agents SDK path (pgvector enabled)
+# Agents SDK path (backend knowledge-base API)
 # ---------------------------------------------------------------------------
 
 async def _run_with_pgvector(
@@ -160,78 +159,103 @@ async def _run_with_pgvector(
     user_content: str,
     model: str,
     reasoning_effort: str,
-    pgvector_namespaces: list[str],
+    reference_namespaces: list[str],
     json_schema: dict | None = None,
     json_schema_name: str = "document_extraction",
     json_schema_strict: bool = True,
+    trace_id: str | None = None,
+    source_document_id: int | None = None,
 ) -> dict:
     """
     Two-step extraction:
-      1. Run the Agents SDK with pgvector tools — lets the model search the knowledge
-         base and gather information as free text.
-      2. Make one Structured Outputs call to reformat the gathered information into
-         the exact DynamoDB schema, enforcing correct field names and types.
-    """
-    from agents import Agent, Runner, ModelSettings
-    from agents.model_settings import Reasoning
-    from bubble.pgvector.client import init_pg_pool, close_pg_pool
-    from bubble.pgvector.search_tool import (
-        set_pgvector_namespaces, set_rerank_surface,
-        search_knowledge_base, list_available_documents,
-    )
+      1. Run the Agents SDK with the backend's /knowledge/search endpoint as
+         the agent's search tool. The source document is already inlined into
+         user_content by the caller (via GET /knowledge/document-extraction/
+         {doc_uuid}/text), so search_knowledge_base only reaches the reference
+         collections (Chronicles, Newsreels, Guidelines, Proceedings, etc.).
+      2. Make one Structured Outputs call to reformat the gathered information
+         into the exact DynamoDB schema.
 
-    await init_pg_pool()
-    try:
-        set_pgvector_namespaces(pgvector_namespaces)
-        # Reranker uses its own fast model (nano) for speed — cost still rolls up to this
-        # agent's surface via set_rerank_surface so document_data_extraction gets the credit.
-        set_rerank_surface("document_data_extraction")
-        agent = Agent(
-            name=_CHAT_ID,
-            instructions=system_prompt,
-            tools=[search_knowledge_base, list_available_documents],
-            model=model,
-            model_settings=ModelSettings(
-                reasoning=Reasoning(effort=reasoning_effort),
-                verbosity=reasoning_effort,
-            ),
-        )
-        # Default Agents SDK max_turns is 10; gpt-6.1-sol frequently needs more
-        # pgvector tool calls to answer thoroughly, so bump it.
-        result = await Runner.run(agent, input=user_content, max_turns=25)
-        gathered = result.final_output or ""
-        from bubble.usage_telemetry import extract_agents_sdk_usage, post_usage
-        u = extract_agents_sdk_usage(result)
-        if u["requests"]:
-            post_usage(
-                "document_data_extraction", model,
-                u["input_tokens"], u["output_tokens"],
-                cached_input_tokens=u["cached_input_tokens"],
-                reasoning_tokens=u["reasoning_tokens"],
-                requests_count=u["requests"],
-            )
-    finally:
-        await close_pg_pool()
-        # Reset the reranker's httpx client so its connections don't persist across
-        # asyncio.run() calls. Each asyncio.run() creates a new event loop; httpx
-        # connections bound to the old loop cause native heap corruption (exit code 139).
-        from bubble.pgvector import reranker as _reranker_mod
-        if _reranker_mod._rerank_client is not None:
-            try:
-                await _reranker_mod._rerank_client.close()
-            except Exception:
-                pass
-            _reranker_mod._rerank_client = None
+    reference_namespaces must NOT include any document-extraction:* namespaces
+    — the source is already in the prompt.
+    """
+    from agents import Agent, Runner, ModelSettings, function_tool
+    from agents.model_settings import Reasoning
+    from bubble.doc_extraction_ingest import search as backend_search
+
+    @function_tool
+    async def search_knowledge_base(query: str) -> str:
+        """Search the reference knowledge base (Chronicles, Newsreels, NAIC Guidelines,
+        proceedings, organizations) for context relevant to the extraction. The source
+        document you are extracting from is already in your prompt — do NOT search
+        for its contents. Use this only to look up related prior Newsreels, existing
+        Chronicle Topics, calendar items, library items, or organization names.
+        Returns ranked hits with title, date, section, content."""
         try:
-            from agents.models import openai_provider as _op_mod
-            if _op_mod._http_client is not None:
-                try:
-                    await _op_mod._http_client.aclose()
-                except Exception:
-                    pass
-                _op_mod._http_client = None
-        except Exception:
-            pass
+            resp = backend_search(
+                query,
+                reference_namespaces,
+                document_id=source_document_id,  # None → searches reference namespaces
+                limit=10,
+                trace_id=trace_id,
+            )
+        except Exception as e:
+            log.warning("search_knowledge_base backend error: %s", e)
+            return f"(search failed: {e})"
+        results = resp.get("results") or []
+        if not results:
+            return "No matching content found in the reference knowledge base."
+        lines = []
+        for i, r in enumerate(results, start=1):
+            title = str(r.get("title") or "").strip() or "(untitled)"
+            date = str(r.get("date") or "").strip()
+            ct = str(r.get("content_type") or "").strip()
+            score = r.get("score")
+            page_lo = r.get("page_no")
+            page_hi = r.get("page_end")
+            pages = f" pp.{page_lo}-{page_hi}" if page_lo and page_hi else (f" p.{page_lo}" if page_lo else "")
+            section = ""
+            sp = r.get("section_path")
+            if isinstance(sp, list) and sp:
+                section = f" § {' > '.join(str(s) for s in sp)}"
+            doc_id = r.get("document_id")
+            header = f"[{i}] {title}"
+            if date: header += f" ({date})"
+            if ct: header += f" [{ct}]"
+            if pages: header += pages
+            if section: header += section
+            if doc_id is not None: header += f" — document {doc_id}"
+            if score is not None:
+                try: header += f" — score {float(score):.2f}"
+                except Exception: pass
+            content = str(r.get("content") or "").strip()
+            lines.append(header)
+            lines.append(content)
+            lines.append("")
+        return "\n".join(lines).rstrip()
+
+    agent = Agent(
+        name=_CHAT_ID,
+        instructions=system_prompt,
+        tools=[search_knowledge_base],
+        model=model,
+        model_settings=ModelSettings(
+            reasoning=Reasoning(effort=reasoning_effort),
+            verbosity=reasoning_effort,
+        ),
+    )
+    result = await Runner.run(agent, input=user_content, max_turns=25)
+    gathered = result.final_output or ""
+    from bubble.usage_telemetry import extract_agents_sdk_usage, post_usage
+    u = extract_agents_sdk_usage(result)
+    if u["requests"]:
+        post_usage(
+            "document_data_extraction", model,
+            u["input_tokens"], u["output_tokens"],
+            cached_input_tokens=u["cached_input_tokens"],
+            reasoning_tokens=u["reasoning_tokens"],
+            requests_count=u["requests"],
+        )
 
     if not gathered:
         return {}
@@ -732,60 +756,94 @@ def extract_document_data(
             log.info("document_agent: extracted %d row(s) for: %s", len(rows), document_name[:60])
             return rows
 
-        # Ingest the document into pgvector so the agent can search the full text,
-        # not just the 12k-char excerpt in the prompt. Deterministic doc_uuid means
-        # reruns and QA agent runs hit the same already-indexed namespace (no-op upload).
-        if document_url and document_url.strip():
-            from bubble.doc_extraction_ingest import ingest_and_arm
-            doc_namespace = ingest_and_arm(document_url, pdf_text, document_name)
-            if doc_namespace:
-                pgvector_namespaces = list(pgvector_namespaces) + [doc_namespace]
-            else:
-                log.warning(
-                    "document_agent: skipping extraction for %s — PDF could not be fetched or indexed "
-                    "(running without document namespace risks cross-contamination from shared knowledge base)",
-                    document_name[:80],
+        # Inline the source document into the user prompt instead of relying on
+        # knowledge-base retrieval to surface it. Ingest → wait for ready →
+        # fetch the stitched text (sliding-window overlap removed for text/plain,
+        # page markers for PDFs) → inline the whole thing. The deterministic
+        # doc_uuid means reruns + QA agent runs reuse the same cached document.
+        source_document_id: int | None = None
+        source_text_added = False
+        if document_url and document_url.strip() and pdf_text:
+            try:
+                from bubble.doc_extraction_ingest import (
+                    doc_uuid_for, ingest_document, wait_until_ready, document_text,
                 )
-                return []
-
-        # Ingest the before/after HTML snapshots so the agent can search them via
-        # the knowledge base instead of carrying the raw HTML in its prompt. One
-        # document per side (before, after), deterministic uuid per parent
-        # agent_call_id so repeated extractions / reruns are cached no-ops.
-        if before_html or after_html:
-            parent_acid = str((alert_context or {}).get("agent_call_id") or "").strip()
-            if parent_acid:
-                from bubble.page_snapshot_ingest import ingest_page_snapshots
-                snapshot_namespaces = ingest_page_snapshots(parent_acid, before_html, after_html)
-                if snapshot_namespaces:
-                    pgvector_namespaces = list(pgvector_namespaces) + snapshot_namespaces
+                doc_uuid = doc_uuid_for(document_url)
+                ingest_resp = ingest_document(
+                    doc_uuid, f"{doc_uuid}.txt", pdf_text.encode("utf-8"), "text/plain",
+                    ttl_hours=24 * 30,  # 30-day TTL — QA agent re-derives the same doc_uuid
+                )
+                status = ingest_resp.get("status")
+                log.info(
+                    "document_agent: ingest status=%s doc_uuid=%s document=%s",
+                    status, doc_uuid, document_name[:60],
+                )
+                if status != "cached":
+                    wait_until_ready(doc_uuid)
+                src = document_text(doc_uuid)
+                source_document_id = src.get("document_id")
+                src_body = (src.get("text") or "").strip()
+                if src_body:
+                    user_content += (
+                        f"\n\n=== SOURCE DOCUMENT — {src.get('title') or document_name} ===\n"
+                        f"(This is the complete, authoritative source text. "
+                        f"Do NOT search for its contents — extract fields directly from this text.)\n"
+                        f"{src_body}"
+                    )
+                    source_text_added = True
                     log.info(
-                        "document_agent: added %d page-snapshot namespace(s) for acid=%s",
-                        len(snapshot_namespaces), parent_acid[:12],
+                        "document_agent: inlined source document doc_id=%s chars=%s chunks=%s",
+                        source_document_id, src.get("char_count"), src.get("chunk_count"),
                     )
-                else:
-                    log.warning(
-                        "document_agent: page snapshot ingest returned 0 namespaces for acid=%s — "
-                        "agent will have no HTML context (ingest likely failed)",
-                        parent_acid[:12],
-                    )
-            else:
-                log.debug(
-                    "document_agent: no parent agent_call_id in alert_context — skipping snapshot ingest",
+            except Exception as e:
+                log.warning(
+                    "document_agent: failed to inline source document for %s — proceeding without: %s",
+                    document_name[:80], e,
                 )
+        elif document_url and document_url.strip() and not pdf_text:
+            log.warning(
+                "document_agent: skipping extraction for %s — PDF text unavailable (not fetched / 403 / render failed)",
+                document_name[:80],
+            )
+            return []
 
-        log.info("document_agent: running with pgvector (model=%s) for: %s", model, document_name[:80])
+        # Inline before/after HTML snapshots so the agent sees the page context
+        # (link labels, Updated: dates, etc.) without needing to search for them.
+        if before_html or after_html:
+            html_parts = []
+            if before_html:
+                html_parts.append(f"Before HTML (prior state):\n{before_html[:_HTML_CONTEXT_LIMIT]}")
+            if after_html:
+                html_parts.append(f"After HTML (new state with the document now present):\n{after_html[:_HTML_CONTEXT_LIMIT]}")
+            user_content += "\n\n=== PAGE CHANGE CONTEXT (HTML snapshots of the monitored page) ===\n" + "\n".join(html_parts)
+
+        # Filter reference namespaces: never pass document-extraction:* or
+        # page-snapshot:* — those contents are already inlined above.
+        reference_namespaces = [
+            ns for ns in pgvector_namespaces
+            if not str(ns).startswith("document-extraction:")
+            and not str(ns).startswith("page-snapshot:")
+        ]
+
+        trace_id = str((alert_context or {}).get("agent_call_id") or doc_call_id).strip()
+
+        log.info(
+            "document_agent: running (model=%s, source_inlined=%s, ref_namespaces=%d) for: %s",
+            model, source_text_added, len(reference_namespaces), document_name[:80],
+        )
         try:
             result = asyncio.run(_run_with_pgvector(
-                system_prompt, user_content, model, reasoning_effort, pgvector_namespaces,
+                system_prompt, user_content, model, reasoning_effort, reference_namespaces,
                 json_schema=json_schema,
                 json_schema_name=json_schema_name,
                 json_schema_strict=json_schema_strict,
+                trace_id=trace_id,
+                source_document_id=source_document_id,
             ))
-        except (TimeoutError, ConnectionError, OSError) as pool_err:
+        except Exception as api_err:
             log.warning(
-                "document_agent: pgvector pool unreachable (%s: %s) — falling back to direct API for: %s",
-                type(pool_err).__name__, pool_err or "<no msg>", document_name[:80],
+                "document_agent: backend search unavailable (%s: %s) — falling back to direct API for: %s",
+                type(api_err).__name__, api_err or "<no msg>", document_name[:80],
             )
             from bubble.openai_client import chat_json
             messages = [
