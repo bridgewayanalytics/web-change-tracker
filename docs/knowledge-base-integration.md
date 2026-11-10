@@ -83,8 +83,11 @@ metadata — accepting the prompt-size cost because search isn't available.
 4. If `status != "cached"`: `wait_until_ready(doc_uuid)`.
 5. `src = document_text(doc_uuid)` → `src["text"]` inlined under
    `=== SOURCE DOCUMENT — {title} ===` in the user prompt.
-6. `before_html` / `after_html` inlined under `=== PAGE CHANGE CONTEXT ===`.
-7. `reference_namespaces = config_namespaces - {document-extraction:*, page-snapshot:*}`.
+6. `page_ns = ingest_page_snapshots(agent_call_id, before_html, after_html)`
+   returns up to two `page-snapshot:<uuid>` namespaces (deterministic uuid per
+   `(acid, side)`, 30-day TTL). **HTML is NOT inlined** — it goes into the
+   knowledge base and the agent reaches it via search.
+7. `reference_namespaces = (config_namespaces − {document-extraction:*, page-snapshot:*}) + page_ns`.
 8. Agents SDK runs with one tool (`search_knowledge_base`) that calls
    `search(query, reference_namespaces, trace_id=agent_call_id, document_id=source_document_id)`.
 9. Step 2: `chat_json()` reformats the free-text to match the DynamoDB
@@ -94,13 +97,16 @@ metadata — accepting the prompt-size cost because search isn't available.
 
 Same shape as extraction: `_prepare_eval_args` ingests the source (cached
 no-op if the extraction agent already did it in this pipeline run), inlines
-it in `user_message`, filters namespaces, runs the Agents SDK with the HTTP
-search tool. `trace_id` = `agent_call_id` of the extraction being graded.
+it in `user_message`, ingests the page snapshots (also a cached no-op —
+reuses the extraction's `agent_call_id`), appends the returned namespaces to
+the search scope, runs the Agents SDK with the HTTP search tool. `trace_id`
+= `agent_call_id` of the extraction being graded.
 
 ### `bubble/page_change_agent.py` (WTA)
 
-No source document to inline per alert (the page-change HTML diff is already
-in `user_content`). Only swap applies: `search_knowledge_base` is now the
+The WTA's whole purpose is to diff the before/after HTML, so the HTML is
+inlined directly in `user_content` (no truncation, no vectorization). Only
+swap applies from the migration: `search_knowledge_base` is now the
 in-closure HTTP-backed function, scoped to reference namespaces only.
 
 ### `eval/eval_agent.py` (alerts QA)
@@ -160,7 +166,6 @@ context but still produces a schema-compliant output (no empty rows). A
 | `bubble/pgvector/search_tool.py` | hybrid SQL + reranker-call wiring — backend owns it now |
 | `bubble/pgvector/reranker.py` | the gpt-5-nano reranker whose `max_completion_tokens=200` budget was eaten by reasoning tokens → silent score=0.0 for every candidate |
 | `bubble/pgvector/client.py` + `tool_cache.py` | asyncpg pool + in-process cache — no direct DB access anymore |
-| `bubble/page_snapshot_ingest.py` | HTML snapshots are inlined in the prompt now, not ingested separately |
 | `scripts/check_doc_chunks.py`, `check_bubble_data_ns.py`, `check_ghost_files.py` | asyncpg-based probes replaced by the backend's chunk inspector on the admin dashboard |
 | `asyncpg>=0.29.0` (requirements.txt) | no direct DB client needed |
 | `PGVECTOR_ENABLED`, `DATABASE_IP`, `DATABASE_NAME`, `DATABASE_USERNAME`, `DATABASE_PASSWORD`, `DATABASE_PORT` (task-def env) | credentials no longer needed; `CHATKIT_INTERNAL_API_KEY` (already provisioned) is the only auth token |

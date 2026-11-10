@@ -18,10 +18,10 @@ Production system architecture for the NAIC web change-tracking pipeline.
  │  3. Run pluggable extractors (PDFs, meetings, events)           │
  │  4. SHA256 fingerprint → diff against DynamoDB state            │
  │  5. If changed → save before/after HTML to S3                   │
- │  6. page_change_agent (OpenAI + pgvector RAG)                   │
+ │  6. page_change_agent (OpenAI Agents SDK + hosted KB)           │
  │     └─ Structured alert(s) via Structured Outputs               │
  │  7. document_agent (per detected document, independently)       │
- │     └─ Two-step: Agents SDK + pgvector → Structured Outputs     │
+ │     └─ Two-step: Agents SDK + KB search → Structured Outputs    │
  │  8. Store results to S3 (JSONL, Excel, per-run snapshots)       │
  │  9. Email summary via SES                                       │
  └─────────────────────────────────────────────────────────────────┘
@@ -40,7 +40,7 @@ Production system architecture for the NAIC web change-tracking pipeline.
 | **EventBridge** | 6-hour cron schedule + dashboard-triggered reruns |
 | **DynamoDB** | Per-target page state (`web-change-tracker-state`) + agent configs (`chatkit_production_config`) |
 | **S3** | HTML snapshots, alert/doc JSONL, Excel exports, rerun results |
-| **PostgreSQL + pgvector** | Knowledge base for RAG (Chronicles, proceedings, guidelines, newsreels) |
+| **ChatKit backend `/knowledge/*` API** | Hosted knowledge base for RAG (Chronicles, Newsreels, Guidelines, orgs, proceedings). Hybrid search + Decisions-API reranker server-side. Agents call it via HTTP; no direct DB access from this repo. |
 | **SES** | Email delivery |
 | **ECR** | Docker image registry |
 | **CloudWatch** | Logs |
@@ -72,8 +72,9 @@ SHA256 fingerprint of extracted content is compared against the stored state in 
 Compares before/after HTML to produce structured alert JSON.
 
 - **Config:** DynamoDB key `chat:web-tracking-agent` in `chatkit_production_config`
-- **Model:** OpenAI (currently gpt-5.4)
-- **RAG:** pgvector hybrid search (semantic + lexical via RRF fusion, then reranked)
+- **Model:** OpenAI (currently gpt-6-luna)
+- **RAG:** HTTP to the ChatKit backend's `/knowledge/search` (hybrid semantic + lexical + Decisions-API reranker, server-side)
+- **HTML:** Before/after snapshots inlined in the user prompt — the WTA's whole job is to diff them, so inlining is the point
 - **Output:** Dynamic JSON Schema from DynamoDB, enforced via OpenAI Structured Outputs
 - **Multi-alert:** One page change can produce multiple alert rows (schema wraps fields in `alerts` array; pipeline unwraps)
 
@@ -82,8 +83,10 @@ Compares before/after HTML to produce structured alert JSON.
 Processes each detected document independently (never batched).
 
 - **Config:** DynamoDB key `chat:document-data-extraction`
-- **Two-step when pgvector available:** Step 1 — Agents SDK with pgvector tools for free-text analysis; Step 2 — Structured Outputs reformats to output schema
-- **Single-step fallback:** Direct Responses API call when pgvector unavailable
+- **Source document:** Ingested to the backend via `POST /knowledge/document-extraction/{uuid}`, then the stitched text is pulled via `GET .../text` and **inlined** in the user prompt under `=== SOURCE DOCUMENT ===`
+- **Page HTML:** Before/after snapshots ingested via `bubble/page_snapshot_ingest.py` into `page-snapshot:<uuid>` namespaces; the agent reaches them via `search_knowledge_base` (not inlined)
+- **Two-step:** Step 1 — Agents SDK with `search_knowledge_base` tool for free-text analysis; Step 2 — Structured Outputs reformats to output schema
+- **Degraded path:** When `CHATKIT_INTERNAL_API_KEY` is absent, a direct Responses API call with no search tools (HTML is inlined as the only way to see page metadata)
 - **Skips:** Items where the library item name is "N/A", "N/A.", or "-"
 
 ### 6. Storage
@@ -113,7 +116,7 @@ Agent output fields, column order, and column labels are driven entirely by Dyna
 | `output_requested_values` | Ordered human-readable column labels |
 | `instructions` | System prompt |
 | `model` | OpenAI model ID |
-| `pgvector_namespaces` | Knowledge base namespaces for RAG |
+| `pgvector_namespaces` | Knowledge base namespaces for RAG (legacy field name — now passed to the backend `/knowledge/search` API) |
 
 The Bubble admin UI writes `output_json_schema` + `output_requested_values` to DynamoDB. The dashboard's `/api/schema` endpoint reads these to render column headers.
 
@@ -170,17 +173,24 @@ changelog/
 
 ---
 
-## pgvector RAG
+## Knowledge base (ChatKit backend API)
 
-Knowledge base for agent context, hosted in PostgreSQL with the pgvector extension.
+Agent context comes from the ChatKit backend's hosted knowledge base, reached via HTTP. This repo has no direct database access — the backend owns chunking, embedding, hybrid retrieval, and reranking.
 
-**Namespaces:** `bubble-data`, `art-chronicles`, `art-newsreels`, `naic-guidelines`, `naic-proceedings`, `international-guidelines`, `ratings-agencies`
+**Endpoints used:**
+- `POST /knowledge/document-extraction/{uuid}` — ingest a document (text/plain or raw PDF/HTML)
+- `GET  /knowledge/document-extraction/{uuid}/text` — fetch stitched source text (for inlining)
+- `GET  /knowledge/document-extraction/{uuid}/status` — poll until indexed
+- `POST /knowledge/search` — hybrid semantic + lexical search with Decisions-API reranker
 
-**Search strategy:** Hybrid retrieval combining:
-1. Semantic search (halfvec cosine similarity on OpenAI embeddings)
-2. Lexical search (PostgreSQL tsquery)
-3. RRF (Reciprocal Rank Fusion) to merge results
-4. Reranking via OpenAI model
+**Reference namespaces** (searchable, populated by the backend team):
+`bubble-data`, `ba:chronicles`, `ba:newsreels`, `ba:NAIC Guidelines`, `naic-proceedings`, `ba:International Guidelines`, `ba:Rating Agencies`, `ba:organizations`
+
+**Per-call namespaces** (populated by this repo at invocation time):
+- `document-extraction:<uuid>` — one per source document (PDF or transcript); content inlined directly in the prompt, so the agent's search tool excludes these.
+- `page-snapshot:<uuid>` — one per `(agent_call_id, side)`; ingested via `bubble/page_snapshot_ingest.py` and appended to the agent's search scope so `Updated:` labels in link `title=` attributes are reachable without prompt-size cost.
+
+Auth: `CHATKIT_INTERNAL_API_KEY` (loaded from SSM in prod). Full HTTP contract: `docs/knowledge-base-integration.md`.
 
 ---
 

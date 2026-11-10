@@ -22,14 +22,15 @@ Alerts feed the [NAIC Dashboard](../NAICDashboard-) at `https://tracker.bridgewa
  │     ├─ SHA256 fingerprint → diff against DynamoDB state     │
  │     └─ If changed: save before/after HTML to S3             │
  │                                                             │
- │  3. page_change_agent (OpenAI + pgvector RAG)               │
- │     ├─ Compares before/after HTML                           │
+ │  3. page_change_agent (OpenAI Agents SDK + hosted KB)       │
+ │     ├─ Compares before/after HTML (HTML inlined in prompt)  │
  │     ├─ Outputs structured alert(s) via Structured Outputs   │
  │     └─ Schema fully dynamic — driven by DynamoDB config     │
  │                                                             │
  │  4. document_agent (per detected document)                  │
- │     ├─ Fetches PDF, extracts text                           │
- │     ├─ Two-step: Agents SDK + pgvector → Structured Outputs │
+ │     ├─ Fetches PDF, extracts text, inlines full source doc  │
+ │     ├─ Ingests before/after HTML to KB; agent searches it   │
+ │     ├─ Two-step: Agents SDK + KB search → Structured Output │
  │     └─ Matches to agenda items, chronicle topics            │
  │                                                             │
  │  5. Store results to S3                                     │
@@ -82,7 +83,7 @@ The result is written to `alerts/reruns/<run_id>/<target_id>/result.json`. The d
 | **EventBridge** | 6-hour cron trigger |
 | **DynamoDB** | Per-target page state + agent configs (`chatkit_production_config`) |
 | **S3** | HTML snapshots, alert/doc JSONL, Excel, rerun results |
-| **PostgreSQL + pgvector** | Knowledge base for RAG (Chronicles, proceedings, guidelines) |
+| **ChatKit backend `/knowledge/*` API** | Hosted knowledge base for RAG — hybrid search, chunking, Decisions-API reranking server-side. Agents call it via HTTP; no direct DB access from this repo. |
 | **SES** | Email delivery |
 | **CloudWatch** | Logs |
 
@@ -97,8 +98,8 @@ make install-playwright     # optional (falls back to requests)
 # Minimal run (no agents)
 python spike.py
 
-# With agents
-PAGE_CHANGE_AGENT_ENABLED=true PGVECTOR_ENABLED=true python spike.py
+# With agents (requires CHATKIT_INTERNAL_API_KEY in env or SSM)
+PAGE_CHANGE_AGENT_ENABLED=true python spike.py
 
 # Single target
 python spike.py --target-ids naic.e.life_rbc_wg
@@ -214,11 +215,11 @@ changelog/
 | Var | Description |
 |-----|-------------|
 | `PAGE_CHANGE_AGENT_ENABLED` | `true` to enable LLM agents |
-| `PGVECTOR_ENABLED` | `true` to enable knowledge base search |
+| `CHATKIT_INTERNAL_API_KEY` | Required for the backend `/knowledge/*` API (ingest + search). Absence triggers the degraded direct-API fallback with no KB access. Loaded from SSM at runtime in prod. |
 | `CHATKIT_CONFIG_TABLE` | DynamoDB config table (default: `chatkit_production_config`) |
 | `OPENAI_API_KEY` | Required for agents |
 | `OPENAI_FETCH_FROM_SSM` | `true` to load key from AWS SSM |
-| `DATABASE_IP`, `DATABASE_NAME`, `DATABASE_USERNAME_CHATKIT`, `DATABASE_PASSWORD_CHATKIT`, `DATABASE_PORT` | pgvector connection |
+| `ORG_TREE_INJECTION_ENABLED` | Default `false`. Agents resolve orgs via `search_knowledge_base` against `ba:organizations`. Set `true` only as a manual rollback to the legacy injected-tree path. |
 
 ### Email
 
@@ -249,7 +250,8 @@ web-change-tracker/
 │   ├── page_change_agent.py     # Page change agent (extract_page_change)
 │   ├── document_agent.py        # Document extraction agent (extract_document_data)
 │   ├── openai_client.py         # OpenAI Responses API client
-│   └── pgvector/                # pgvector search (hybrid RRF + reranking)
+│   ├── doc_extraction_ingest.py # HTTP client for backend /knowledge/* API
+│   └── page_snapshot_ingest.py  # Ingest before/after HTML to KB for search
 ├── scrape/
 │   ├── html_content_extractor.py
 │   ├── pdf_meeting_meta.py

@@ -1,5 +1,23 @@
 # Dashboard Redesign — Web Change Tracker Alerts Table
 
+> **Status (2026-11-10): HISTORICAL DESIGN SPEC.**
+>
+> This doc was the one-time implementation brief used to build the current
+> dashboard. It is retained as a reference for original intent only.
+>
+> Several details are stale against the shipped system:
+> - `candidate_chronicles` / `candidate_agenda_items` are **legacy fields**
+>   now in `SUPERSEDED_COLS` in `AlertsTable.tsx` — they come from a removed
+>   pgvector-based pre-matching step and are not written on new rows.
+> - The alerts schema is now dynamic (driven by DynamoDB `output_json_schema`),
+>   not the hardcoded list described here.
+> - The current source of truth for dashboard behavior is `dashboard/CLAUDE.md`.
+>
+> If you are implementing new work on the dashboard, read `dashboard/CLAUDE.md`
+> first and use this doc only for historical context.
+
+---
+
 ## What You Are Being Asked To Do
 
 The NAIC Dashboard currently shows an **event-centric view** of upcoming NAIC calendar items, pulling data from Bubble and an older S3 format (`bubble_reports/latest.json`). That system has been replaced.

@@ -322,8 +322,6 @@ Active vars that the current pipeline actually reads:
 | `SES_REGION` | From `var.region` | tfvars |
 | `AWS_REGION` | From `var.region` | tfvars |
 | `PAGE_CHANGE_AGENT_ENABLED` | `true` | Enables LLM agents |
-| `PGVECTOR_ENABLED` | `true` | Enables pgvector knowledge base search |
-| `DATABASE_PORT` | `5432` | pgvector DB port |
 | `OPENAI_API_KEY_SSM_PARAM` | `/web-change-tracker/prod/openai_api_key` | Param name only; app fetches value at runtime |
 | `OPENAI_MODEL_SSM_PARAM` | `/web-change-tracker/prod/openai_model` | Param name only |
 | `OPENAI_REASONING_EFFORT_SSM_PARAM` | `/web-change-tracker/prod/openai_reasoning_effort` | Param name only |
@@ -380,8 +378,6 @@ These env vars are actually read and acted upon by the current pipeline:
 | `SES_REGION` | tfvars `region` | SES region |
 | `AWS_REGION` | tfvars `region` | AWS region |
 | `PAGE_CHANGE_AGENT_ENABLED` | `true` | Enables LLM agents (required for alert pipeline) |
-| `PGVECTOR_ENABLED` | `true` | Enables pgvector knowledge base search |
-| `DATABASE_PORT` | `5432` | pgvector DB port |
 | `BUBBLE_ARTIFACT_BUCKET` | artifacts bucket id | S3 bucket for alerts output (may alias `CHANGELOG_BUCKET`) |
 | `HTML_SNAPSHOT_BUCKET` | snapshot bucket id | S3 bucket for before/after HTML snapshots |
 | `INGEST_API_URL` | `https://api.bridgewayanalytics.com` | Newsreel ingest API base URL |
@@ -396,10 +392,6 @@ These env vars are actually read and acted upon by the current pipeline:
 | `CHATKIT_INTERNAL_API_KEY` | `/web-change-tracker/prod/chatkit_internal_api_key` | SecureString |
 | `BUBBLE_API_URL` | `/web-change-tracker/prod/bubble_api_url` | String |
 | `BUBBLE_API_KEY` | `/web-change-tracker/prod/bubble_api_key` | SecureString |
-| `DATABASE_IP` | Secrets Manager | DB host |
-| `DATABASE_NAME` | Secrets Manager | DB name |
-| `DATABASE_USERNAME` | Secrets Manager | DB user |
-| `DATABASE_PASSWORD` | Secrets Manager | DB password |
 
 ### Legacy env vars (present in task definition, no effect)
 
@@ -407,6 +399,8 @@ These vars are still present in the ECS task definition and are accepted by `spi
 
 | Name | Former purpose |
 |------|---------------|
+| `PGVECTOR_ENABLED` | Previously gated the direct-DB pgvector knowledge-base search. Removed 2026-11-09 — the four agents now call the ChatKit backend's `/knowledge/*` HTTP API, which is always on when `CHATKIT_INTERNAL_API_KEY` is set. |
+| `DATABASE_IP` / `DATABASE_NAME` / `DATABASE_USERNAME` / `DATABASE_PASSWORD` / `DATABASE_PORT` | pgvector connection credentials. Removed 2026-11-09 — no direct DB access from this repo. |
 | `OPENAI_ENABLED` | Previously gated the AI enrichment path (superseded by `PAGE_CHANGE_AGENT_ENABLED`) |
 | `AI_ENRICHMENT_ENABLED` | Old Bubble enrichment path toggle |
 | `PROD_OBSERVE_MODE` | Old observe mode flag |
