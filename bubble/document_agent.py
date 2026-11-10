@@ -618,7 +618,13 @@ def should_run_for_alert(agent_output: dict) -> bool:
     return any(_item_has_real_name(item) for item in library_items)
 
 
-_HTML_CONTEXT_LIMIT = 8000  # chars per before/after HTML snippet injected into agent context
+_HTML_CONTEXT_LIMIT = 65536  # chars per before/after HTML snippet injected into agent context
+# Raised from 8000 → 65536 on 2026-11-10: NAIC committee pages carry nav/header
+# content in the first ~8k chars; the document download links with "Updated:
+# MM/DD/YYYY" labels in the <a title=...> attribute often sit past that cut.
+# When truncated, the agent can't see the authoritative publication date and
+# falls back to the PDF's internal "Draft date:" — the dominant date_published
+# failure mode observed in the 2026-11-10 doc-QA batch.
 
 
 def extract_document_data(
