@@ -264,16 +264,8 @@ def _store_agent_context(call_id: str, agent_type: str, user_content: str, syste
 
 
 def _pgvector_enabled() -> bool:
-    """True when PGVECTOR_ENABLED=true and DB credentials are present."""
-    if os.environ.get("PGVECTOR_ENABLED", "").strip().lower() not in ("1", "true", "yes"):
-        return False
-    required = ("DATABASE_IP", "DATABASE_NAME")
-    if not all(os.environ.get(k, "").strip() for k in required):
-        return False
-    return bool(
-        os.environ.get("DATABASE_PASSWORD_CHATKIT", "").strip()
-        or os.environ.get("DATABASE_PASSWORD", "").strip()
-    )
+    """Gates on backend /knowledge API reachability (see bubble.document_agent)."""
+    return bool(os.environ.get("CHATKIT_INTERNAL_API_KEY", "").strip())
 
 
 # ---------------------------------------------------------------------------
@@ -286,64 +278,85 @@ async def _run_with_pgvector(
     model: str,
     reasoning_effort: str,
     pgvector_namespaces: list[str],
+    trace_id: str | None = None,
 ) -> str:
-    """Run the agent with pgvector search tools via the OpenAI Agents SDK."""
-    from agents import Agent, Runner, ModelSettings
+    """Run the agent via the Agents SDK with the backend /knowledge/search endpoint
+    exposed as a function tool. No direct pgvector DB access — all retrieval goes
+    through the hosted ChatKit knowledge-base API."""
+    from agents import Agent, Runner, ModelSettings, function_tool
     from agents.model_settings import Reasoning
-    from bubble.pgvector.client import init_pg_pool, close_pg_pool
-    from bubble.pgvector.search_tool import (
-        set_pgvector_namespaces, set_rerank_surface,
-        search_knowledge_base, list_available_documents,
-    )
+    from bubble.doc_extraction_ingest import search as backend_search
 
-    await init_pg_pool()
-    try:
-        set_pgvector_namespaces(pgvector_namespaces)
-        # Reranker uses its own fast model (nano) for speed — cost still rolls up to this
-        # agent's surface via set_rerank_surface so web_tracking_agent gets the credit.
-        set_rerank_surface("web_tracking_agent")
+    # WTA never ingests a source document per alert (the HTML snapshots live in
+    # user_content already), so only the reference collections are searched.
+    reference_namespaces = [
+        ns for ns in pgvector_namespaces
+        if not str(ns).startswith("document-extraction:")
+        and not str(ns).startswith("page-snapshot:")
+    ]
 
-        agent = Agent(
-            name=_CHAT_ID,
-            instructions=system_prompt,
-            tools=[search_knowledge_base, list_available_documents],
-            model=model,
-            model_settings=ModelSettings(
-                reasoning=Reasoning(effort=reasoning_effort),
-                verbosity=reasoning_effort,  # match verbosity to effort level
-            ),
-        )
-        result = await Runner.run(agent, input=user_content)
-        from bubble.usage_telemetry import extract_agents_sdk_usage, post_usage
-        u = extract_agents_sdk_usage(result)
-        if u["requests"]:
-            post_usage(
-                "web_tracking_agent", model,
-                u["input_tokens"], u["output_tokens"],
-                cached_input_tokens=u["cached_input_tokens"],
-                reasoning_tokens=u["reasoning_tokens"],
-                requests_count=u["requests"],
-            )
-        return result.final_output or ""
-    finally:
-        await close_pg_pool()
-        from bubble.pgvector import reranker as _reranker_mod
-        if _reranker_mod._rerank_client is not None:
-            try:
-                await _reranker_mod._rerank_client.close()
-            except Exception:
-                pass
-            _reranker_mod._rerank_client = None
+    @function_tool
+    async def search_knowledge_base(query: str) -> str:
+        """Search the reference knowledge base (Chronicles, Newsreels, NAIC
+        Guidelines, proceedings, organizations) for context relevant to the
+        alert. Returns ranked hits with title, date, section, content."""
         try:
-            from agents.models import openai_provider as _op_mod
-            if _op_mod._http_client is not None:
-                try:
-                    await _op_mod._http_client.aclose()
-                except Exception:
-                    pass
-                _op_mod._http_client = None
-        except Exception:
-            pass
+            resp = backend_search(query, reference_namespaces, limit=10, trace_id=trace_id)
+        except Exception as e:
+            log.warning("search_knowledge_base backend error: %s", e)
+            return f"(search failed: {e})"
+        results = resp.get("results") or []
+        if not results:
+            return "No matching content found in the reference knowledge base."
+        lines = []
+        for i, r in enumerate(results, start=1):
+            title = str(r.get("title") or "").strip() or "(untitled)"
+            date = str(r.get("date") or "").strip()
+            ct = str(r.get("content_type") or "").strip()
+            score = r.get("score")
+            page_lo = r.get("page_no"); page_hi = r.get("page_end")
+            pages = f" pp.{page_lo}-{page_hi}" if page_lo and page_hi else (f" p.{page_lo}" if page_lo else "")
+            section = ""
+            sp = r.get("section_path")
+            if isinstance(sp, list) and sp:
+                section = f" § {' > '.join(str(s) for s in sp)}"
+            doc_id = r.get("document_id")
+            header = f"[{i}] {title}"
+            if date: header += f" ({date})"
+            if ct: header += f" [{ct}]"
+            if pages: header += pages
+            if section: header += section
+            if doc_id is not None: header += f" — document {doc_id}"
+            if score is not None:
+                try: header += f" — score {float(score):.2f}"
+                except Exception: pass
+            lines.append(header)
+            lines.append(str(r.get("content") or "").strip())
+            lines.append("")
+        return "\n".join(lines).rstrip()
+
+    agent = Agent(
+        name=_CHAT_ID,
+        instructions=system_prompt,
+        tools=[search_knowledge_base],
+        model=model,
+        model_settings=ModelSettings(
+            reasoning=Reasoning(effort=reasoning_effort),
+            verbosity=reasoning_effort,
+        ),
+    )
+    result = await Runner.run(agent, input=user_content)
+    from bubble.usage_telemetry import extract_agents_sdk_usage, post_usage
+    u = extract_agents_sdk_usage(result)
+    if u["requests"]:
+        post_usage(
+            "web_tracking_agent", model,
+            u["input_tokens"], u["output_tokens"],
+            cached_input_tokens=u["cached_input_tokens"],
+            reasoning_tokens=u["reasoning_tokens"],
+            requests_count=u["requests"],
+        )
+    return result.final_output or ""
 
 
 # ---------------------------------------------------------------------------
@@ -475,16 +488,17 @@ def extract_page_change(
 
         pgvector_pool_failed = False
         if _pgvector_enabled():
-            log.info("page_change_agent: running with pgvector tools (model=%s, call_id=%s)", model, agent_call_id[:8])
+            log.info("page_change_agent: running with backend search (model=%s, call_id=%s)", model, agent_call_id[:8])
             try:
                 raw = asyncio.run(_run_with_pgvector(
                     system_prompt, user_content, model, reasoning_effort,
                     pgvector_namespaces if isinstance(pgvector_namespaces, list) else [],
+                    trace_id=agent_call_id,
                 ))
-            except (TimeoutError, ConnectionError, OSError) as pool_err:
+            except Exception as api_err:
                 log.warning(
-                    "page_change_agent: pgvector pool unreachable (%s: %s) — falling back to non-pgvector mode (call_id=%s)",
-                    type(pool_err).__name__, pool_err or "<no msg>", agent_call_id[:8],
+                    "page_change_agent: backend search unavailable (%s: %s) — falling back to direct API (call_id=%s)",
+                    type(api_err).__name__, api_err or "<no msg>", agent_call_id[:8],
                 )
                 pgvector_pool_failed = True
                 raw = None

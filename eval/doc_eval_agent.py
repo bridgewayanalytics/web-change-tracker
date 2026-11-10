@@ -74,15 +74,8 @@ def _get_pgvector_namespaces() -> list[str]:
 
 
 def _pgvector_enabled() -> bool:
-    if os.environ.get("PGVECTOR_ENABLED", "").strip().lower() not in ("1", "true", "yes"):
-        return False
-    required = ("DATABASE_IP", "DATABASE_NAME")
-    if not all(os.environ.get(k, "").strip() for k in required):
-        return False
-    return bool(
-        os.environ.get("DATABASE_PASSWORD_CHATKIT", "").strip()
-        or os.environ.get("DATABASE_PASSWORD", "").strip()
-    )
+    """Gates on backend /knowledge API reachability (see bubble.document_agent)."""
+    return bool(os.environ.get("CHATKIT_INTERNAL_API_KEY", "").strip())
 
 
 _NAIC_HEADERS = {
@@ -338,32 +331,81 @@ async def _run_agent_async(
     namespaces: list[str],
     eval_row_keys: list[str],
     field_names: list[str] | None = None,
+    trace_id: str | None = None,
+    source_document_id: int | None = None,
 ) -> dict:
-    """Run the agents SDK inside an ALREADY-running event loop (no pool management here)."""
-    from agents import Agent, Runner, ModelSettings
-    from agents.model_settings import Reasoning
-    from bubble.pgvector.search_tool import (
-        set_pgvector_namespaces, set_rerank_surface,
-        search_knowledge_base,
-        list_available_documents,
-    )
+    """Run the agents SDK inside an ALREADY-running event loop.
 
-    set_pgvector_namespaces(namespaces)
-    # Reranker uses its own fast model (nano) for speed — cost still rolls up to this
-    # agent's surface via set_rerank_surface so document_qa_eval gets the credit.
-    set_rerank_surface("document_qa_eval")
+    Uses the backend's /knowledge/search endpoint (via the HTTP client in
+    bubble.doc_extraction_ingest) as the agent's search tool. Source document
+    is inlined into user_content by the caller, so the tool only reaches
+    the reference collections (chronicles / newsreels / guidelines / orgs).
+    """
+    from agents import Agent, Runner, ModelSettings, function_tool
+    from agents.model_settings import Reasoning
+    from bubble.doc_extraction_ingest import search as backend_search
+
+    @function_tool
+    async def search_knowledge_base(query: str) -> str:
+        """Search the reference knowledge base (Chronicles, Newsreels, NAIC
+        Guidelines, proceedings, organizations) for context relevant to the QA.
+        The source document is already in your prompt — do NOT search for its
+        contents. Use this only to look up related prior Newsreels, Chronicle
+        Topics, calendar items, library items, or organization names. Returns
+        ranked hits with title, date, section, content."""
+        try:
+            resp = backend_search(
+                query,
+                namespaces,
+                document_id=source_document_id,
+                limit=10,
+                trace_id=trace_id,
+            )
+        except Exception as e:
+            log.warning("search_knowledge_base backend error: %s", e)
+            return f"(search failed: {e})"
+        results = resp.get("results") or []
+        if not results:
+            return "No matching content found in the reference knowledge base."
+        lines = []
+        for i, r in enumerate(results, start=1):
+            title = str(r.get("title") or "").strip() or "(untitled)"
+            date = str(r.get("date") or "").strip()
+            ct = str(r.get("content_type") or "").strip()
+            score = r.get("score")
+            page_lo = r.get("page_no")
+            page_hi = r.get("page_end")
+            pages = f" pp.{page_lo}-{page_hi}" if page_lo and page_hi else (f" p.{page_lo}" if page_lo else "")
+            section = ""
+            sp = r.get("section_path")
+            if isinstance(sp, list) and sp:
+                section = f" § {' > '.join(str(s) for s in sp)}"
+            doc_id = r.get("document_id")
+            header = f"[{i}] {title}"
+            if date: header += f" ({date})"
+            if ct: header += f" [{ct}]"
+            if pages: header += pages
+            if section: header += section
+            if doc_id is not None: header += f" — document {doc_id}"
+            if score is not None:
+                try: header += f" — score {float(score):.2f}"
+                except Exception: pass
+            content = str(r.get("content") or "").strip()
+            lines.append(header)
+            lines.append(content)
+            lines.append("")
+        return "\n".join(lines).rstrip()
+
     agent = Agent(
         name=_CHAT_ID,
         instructions=system_prompt,
-        tools=[search_knowledge_base, list_available_documents],
+        tools=[search_knowledge_base],
         model=model,
         model_settings=ModelSettings(
             reasoning=Reasoning(effort=reasoning_effort),
             verbosity=reasoning_effort,
         ),
     )
-    # Default Agents SDK max_turns is 10; gpt-6.1-sol often uses more pgvector
-    # tool calls for thorough QA, so bump it (mirrors document_agent.py).
     result = await Runner.run(agent, input=user_content, max_turns=25)
     gathered = result.final_output or ""
 
@@ -486,30 +528,62 @@ def _prepare_eval_args(rows: list[dict], alert_row: dict | None = None) -> dict:
                 seen_fields.add(k)
 
     namespaces: list[str] | None = None
+    source_document_id: int | None = None
     if _pgvector_enabled():
-        namespaces = list(_get_pgvector_namespaces())
-        if vectorization_url and vectorization_url.strip() and vectorization_url != "N/A":
-            from bubble.doc_extraction_ingest import ingest_and_arm
-            doc_label = str(first.get("library_item_title") or vectorization_url.split("/")[-1])
-            doc_namespace = ingest_and_arm(vectorization_url, doc_text, doc_label)
-            if doc_namespace:
-                namespaces.append(doc_namespace)
-                log.info("doc_eval_agent: armed document namespace %s", doc_namespace)
+        # Reference namespaces only — document-extraction:* and page-snapshot:*
+        # are intentionally excluded because the source document and page HTML
+        # are inlined into user_message below.
+        namespaces = [
+            ns for ns in _get_pgvector_namespaces()
+            if not str(ns).startswith("document-extraction:")
+            and not str(ns).startswith("page-snapshot:")
+        ]
 
-        # Ingest the before/after HTML snapshots so the QA grader can search
-        # them via the knowledge base — same path extract_document_data uses.
-        # Deterministic doc_uuid per (parent agent_call_id, side) means this
-        # is a cached no-op when the extraction agent already ingested in a
-        # prior rerun.
-        if (before_html or after_html) and agent_call_id and agent_call_id != "unknown":
-            from bubble.page_snapshot_ingest import ingest_page_snapshots
-            snapshot_namespaces = ingest_page_snapshots(agent_call_id, before_html or "", after_html or "")
-            if snapshot_namespaces:
-                namespaces.extend(snapshot_namespaces)
-                log.info(
-                    "doc_eval_agent: added %d page-snapshot namespace(s) for acid=%s",
-                    len(snapshot_namespaces), agent_call_id[:12],
+        # Ingest source document (if not already indexed — deterministic doc_uuid
+        # makes this a cached no-op when the extraction agent already ingested it)
+        # then pull the stitched text and inline it under the SOURCE DOCUMENT
+        # heading already emitted by _build_user_message.
+        if vectorization_url and vectorization_url.strip() and vectorization_url != "N/A":
+            try:
+                from bubble.doc_extraction_ingest import (
+                    doc_uuid_for, ingest_document, wait_until_ready, document_text,
                 )
+                duuid = doc_uuid_for(vectorization_url)
+                if doc_text:
+                    resp = ingest_document(
+                        duuid, f"{duuid}.txt", doc_text.encode("utf-8"), "text/plain",
+                        ttl_hours=24 * 30,
+                    )
+                    if resp.get("status") != "cached":
+                        wait_until_ready(duuid)
+                src = document_text(duuid)
+                source_document_id = src.get("document_id")
+                src_body = (src.get("text") or "").strip()
+                if src_body:
+                    user_message += (
+                        f"\n\n=== SOURCE DOCUMENT — {src.get('title') or vectorization_url} ===\n"
+                        f"(Complete, authoritative source text. Do NOT search for its contents.)\n"
+                        f"{src_body}"
+                    )
+                    log.info(
+                        "doc_eval_agent: inlined source document doc_id=%s chars=%s",
+                        source_document_id, src.get("char_count"),
+                    )
+            except Exception as e:
+                log.warning(
+                    "doc_eval_agent: failed to inline source document for %s: %s",
+                    vectorization_url[:80], e,
+                )
+
+        # Inline the before/after HTML snapshots the same way — the QA grader
+        # often needs page-level context (link labels, Updated: dates, etc).
+        if before_html or after_html:
+            html_blocks = []
+            if before_html:
+                html_blocks.append(f"Before HTML (prior state):\n{before_html}")
+            if after_html:
+                html_blocks.append(f"After HTML (new state):\n{after_html}")
+            user_message += "\n\n=== PAGE CHANGE CONTEXT ===\n" + "\n".join(html_blocks)
 
     return {
         "system_prompt": system_prompt,
@@ -521,6 +595,8 @@ def _prepare_eval_args(rows: list[dict], alert_row: dict | None = None) -> dict:
         "field_names": field_names,
         "namespaces": namespaces,
         "doc_text": doc_text,
+        "trace_id": agent_call_id if agent_call_id != "unknown" else None,
+        "source_document_id": source_document_id,
     }
 
 
@@ -537,18 +613,23 @@ async def _run_group_async(rows: list[dict], prepared: dict) -> list[dict]:
 
     if namespaces is not None:
         log.info(
-            "doc_eval_agent: running with pgvector (model=%s namespaces=%s) agent_call_id=%s rows=%d",
-            model, namespaces, agent_call_id, len(rows),
+            "doc_eval_agent: running (model=%s, ref_namespaces=%d) agent_call_id=%s rows=%d",
+            model, len(namespaces), agent_call_id, len(rows),
         )
         try:
-            raw = await _run_agent_async(system_prompt, user_message, model, reasoning_effort, namespaces, eval_row_keys, field_names)
+            raw = await _run_agent_async(
+                system_prompt, user_message, model, reasoning_effort, namespaces,
+                eval_row_keys, field_names,
+                trace_id=prepared.get("trace_id"),
+                source_document_id=prepared.get("source_document_id"),
+            )
             if not isinstance(raw, dict):
                 return [{"error": "Agent returned non-dict response"}]
             return _flatten_scores(raw, rows, eval_row_keys)
         except Exception as e:
             import traceback
             log.error(
-                "Doc eval agent (pgvector) failed agent_call_id=%s type=%s msg=%r\n%s",
+                "Doc eval agent failed agent_call_id=%s type=%s msg=%r\n%s",
                 agent_call_id, type(e).__name__, str(e), traceback.format_exc(),
             )
             return [{"error": f"{type(e).__name__}: {e}"}]
@@ -590,50 +671,16 @@ def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None
     """
     Run the doc extraction QA agent on one extraction call group.
 
-    Single-call entry point (used by dashboard reruns). Opens and closes the pgvector
-    pool within this call. For bulk evaluation, use the batch path in run_doc_eval.py
-    which calls asyncio.run() once for the entire batch to avoid repeated event-loop
-    creation/destruction causing native heap corruption (exit 139).
+    Single-call entry point (used by dashboard reruns). After the 2026-11-09
+    migration off the direct-DB pgvector fork there is no asyncpg pool to open
+    or close here — all retrieval goes through the backend /knowledge HTTP API.
     """
     if not rows:
         return []
     prepared = _prepare_eval_args(rows, alert_row)
 
     async def _single():
-        from bubble.pgvector.client import init_pg_pool, close_pg_pool
-        if prepared["namespaces"] is not None:
-            try:
-                await init_pg_pool()
-            except (TimeoutError, ConnectionError, OSError) as pool_err:
-                log.warning(
-                    "doc_eval_agent: pgvector pool unreachable (%s: %s) — falling back to non-pgvector mode agent_call_id=%s",
-                    type(pool_err).__name__, pool_err or "<no msg>",
-                    rows[0].get("agent_call_id", "unknown"),
-                )
-                prepared["namespaces"] = None
-        try:
-            return await _run_group_async(rows, prepared)
-        finally:
-
-            if prepared["namespaces"] is not None:
-                await close_pg_pool()
-                from bubble.pgvector import reranker as _reranker_mod
-                if _reranker_mod._rerank_client is not None:
-                    try:
-                        await _reranker_mod._rerank_client.close()
-                    except Exception:
-                        pass
-                    _reranker_mod._rerank_client = None
-                try:
-                    from agents.models import openai_provider as _op_mod
-                    if _op_mod._http_client is not None:
-                        try:
-                            await _op_mod._http_client.aclose()
-                        except Exception:
-                            pass
-                        _op_mod._http_client = None
-                except Exception:
-                    pass
+        return await _run_group_async(rows, prepared)
 
     try:
         return asyncio.run(_single())

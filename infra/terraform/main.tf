@@ -377,10 +377,10 @@ resource "aws_ecs_task_definition" "app" {
       # RunSpec prod observe: bubble enrich on, refs blocked, debug artifacts, dry-run Bubble (validated at startup)
       { name = "PROD_OBSERVE_MODE", value = "true" },
       { name = "AI_ENRICHMENT_ENABLED", value = "true" },
-      # Page change agent: pgvector on — DB host/creds from Secrets Manager, port direct Postgres
+      # All four agents retrieve knowledge via the hosted ChatKit backend
+      # (POST /knowledge/search, GET /knowledge/document-extraction/{uuid}/text).
+      # Auth = x-api-key = CHATKIT_INTERNAL_API_KEY (from SSM, below).
       { name = "PAGE_CHANGE_AGENT_ENABLED", value = "true" },
-      { name = "PGVECTOR_ENABLED", value = "true" },
-      { name = "DATABASE_PORT", value = "5432" },
       { name = "ARTIFACT_OUTPUT_DIR", value = "debug" },
       { name = "AI_REFERENCE_FIELDS_BLOCKED", value = "true" },
       { name = "RUN_SPEC_VALIDATION_FAIL_FAST", value = "false" },
@@ -395,15 +395,13 @@ resource "aws_ecs_task_definition" "app" {
       { name = "INGEST_API_URL", value = "https://api.bridgewayanalytics.com" }
     ]
 
-    # Bubble credentials from SSM; DB credentials from Secrets Manager — never in plaintext env.
+    # Bubble + ChatKit credentials from SSM. Direct-DB pgvector access was
+    # removed 2026-11-09; all retrieval goes through the ChatKit backend now,
+    # so DATABASE_* secrets and PGVECTOR_ENABLED are gone from this definition.
     secrets = [
       { name = "BUBBLE_API_URL",              valueFrom = local.bubble_ssm_param_arns[0] },
       { name = "BUBBLE_API_KEY",              valueFrom = local.bubble_ssm_param_arns[1] },
-      { name = "CHATKIT_INTERNAL_API_KEY",    valueFrom = local.chatkit_internal_api_key_arn },
-      { name = "DATABASE_IP",            valueFrom = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:bridgeway/database-KubYXW:DATABASE_IP::" },
-      { name = "DATABASE_NAME",          valueFrom = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:bridgeway/database-KubYXW:DATABASE_NAME::" },
-      { name = "DATABASE_USERNAME",      valueFrom = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:bridgeway/database-KubYXW:DATABASE_USERNAME::" },
-      { name = "DATABASE_PASSWORD",      valueFrom = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:bridgeway/database-KubYXW:DATABASE_PASSWORD::" }
+      { name = "CHATKIT_INTERNAL_API_KEY",    valueFrom = local.chatkit_internal_api_key_arn }
     ]
 
     essential = true

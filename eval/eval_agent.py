@@ -186,50 +186,85 @@ async def _run_with_pgvector(
     corruption (double free / SIGSEGV) that occurs when background async tasks from
     the Agents SDK linger on a persistent loop and race with pool teardown.
     """
-    from bubble.pgvector.client import init_pg_pool, close_pg_pool
-    await init_pg_pool()
-    try:
-        from agents import Agent, Runner, ModelSettings
-        from agents.model_settings import Reasoning
-        from bubble.pgvector.search_tool import (
-            set_pgvector_namespaces, set_rerank_surface,
-            search_knowledge_base,
-            list_available_documents,
-        )
+    # Filter out any `document-extraction:*` / `page-snapshot:*` from the config —
+    # alerts QA extracts from HTML snapshots inlined in user_content, not from a
+    # per-alert source document.
+    reference_namespaces = [
+        ns for ns in namespaces
+        if not str(ns).startswith("document-extraction:")
+        and not str(ns).startswith("page-snapshot:")
+    ]
+    _trace_id = (eval_row_keys[0] if eval_row_keys else "") or None
 
-        set_pgvector_namespaces(namespaces)
-        # Reranker uses its own fast model (nano) for speed — cost still rolls up to this
-        # agent's surface via set_rerank_surface so web_tracking_qa_eval gets the credit.
-        set_rerank_surface("web_tracking_qa_eval")
-        agent = Agent(
-            name=_CHAT_ID,
-            instructions=system_prompt,
-            tools=[search_knowledge_base, list_available_documents],
-            model=model,
-            model_settings=ModelSettings(
-                reasoning=Reasoning(effort=reasoning_effort),
-                verbosity=reasoning_effort,
-            ),
-        )
-        result = await Runner.run(agent, input=user_content)
-        gathered = result.final_output or ""
+    from agents import Agent, Runner, ModelSettings, function_tool
+    from agents.model_settings import Reasoning
+    from bubble.doc_extraction_ingest import search as backend_search
 
-        # Telemetry — Step 1 (Agents SDK with pgvector tools)
+    @function_tool
+    async def search_knowledge_base(query: str) -> str:
+        """Search the reference knowledge base (Chronicles, Newsreels, NAIC
+        Guidelines, proceedings, organizations) for context relevant to the QA.
+        Returns ranked hits with title, date, section, content."""
         try:
-            from bubble.usage_telemetry import extract_agents_sdk_usage, post_usage
-            u = extract_agents_sdk_usage(result)
-            if u["requests"]:
-                post_usage(
-                    "web_tracking_qa_eval", model,
-                    u["input_tokens"], u["output_tokens"],
-                    cached_input_tokens=u["cached_input_tokens"],
-                    reasoning_tokens=u["reasoning_tokens"],
-                    requests_count=u["requests"],
-                )
-        except Exception:
-            pass  # telemetry must never break the eval
-    finally:
-        await close_pg_pool()
+            resp = backend_search(query, reference_namespaces, limit=10, trace_id=_trace_id)
+        except Exception as e:
+            log.warning("search_knowledge_base backend error: %s", e)
+            return f"(search failed: {e})"
+        results = resp.get("results") or []
+        if not results:
+            return "No matching content found in the reference knowledge base."
+        lines = []
+        for i, r in enumerate(results, start=1):
+            title = str(r.get("title") or "").strip() or "(untitled)"
+            date = str(r.get("date") or "").strip()
+            ct = str(r.get("content_type") or "").strip()
+            score = r.get("score")
+            page_lo = r.get("page_no"); page_hi = r.get("page_end")
+            pages = f" pp.{page_lo}-{page_hi}" if page_lo and page_hi else (f" p.{page_lo}" if page_lo else "")
+            section = ""
+            sp = r.get("section_path")
+            if isinstance(sp, list) and sp:
+                section = f" § {' > '.join(str(s) for s in sp)}"
+            doc_id = r.get("document_id")
+            header = f"[{i}] {title}"
+            if date: header += f" ({date})"
+            if ct: header += f" [{ct}]"
+            if pages: header += pages
+            if section: header += section
+            if doc_id is not None: header += f" — document {doc_id}"
+            if score is not None:
+                try: header += f" — score {float(score):.2f}"
+                except Exception: pass
+            lines.append(header)
+            lines.append(str(r.get("content") or "").strip())
+            lines.append("")
+        return "\n".join(lines).rstrip()
+
+    agent = Agent(
+        name=_CHAT_ID,
+        instructions=system_prompt,
+        tools=[search_knowledge_base],
+        model=model,
+        model_settings=ModelSettings(
+            reasoning=Reasoning(effort=reasoning_effort),
+            verbosity=reasoning_effort,
+        ),
+    )
+    result = await Runner.run(agent, input=user_content)
+    gathered = result.final_output or ""
+    try:
+        from bubble.usage_telemetry import extract_agents_sdk_usage, post_usage
+        u = extract_agents_sdk_usage(result)
+        if u["requests"]:
+            post_usage(
+                "web_tracking_qa_eval", model,
+                u["input_tokens"], u["output_tokens"],
+                cached_input_tokens=u["cached_input_tokens"],
+                reasoning_tokens=u["reasoning_tokens"],
+                requests_count=u["requests"],
+            )
+    except Exception:
+        pass
 
     if not gathered:
         return {"error": "Agent returned empty output"}
