@@ -48,20 +48,30 @@ direct database access.
 
 ## Core principle
 
-**Inline the source. Search the references.**
+**Inline the source document. Search everything else.**
 
-- The *authoritative source* the agent is extracting from (PDF, transcript, HTML
-  snapshot) goes **into the prompt** as one complete stitched block. The agent
-  never has to search for its own source document.
+- The *authoritative source document* the agent is extracting from (PDF or
+  transcript) goes **into the prompt** as one complete stitched block. The
+  agent never has to search for its own source document.
+- *Before/after HTML snapshots* are ingested per-pipeline-run into
+  `page-snapshot:<uuid>` namespaces (deterministic uuid per
+  `(agent_call_id, side)`) and the agent reaches them via
+  `search_knowledge_base`. This lets the agent surface the `Updated:
+  MM/DD/YYYY` label in a download link's `title=` attribute without having
+  to prompt-slice ~20 KB of raw HTML — the regression we corrected on
+  2026-11-10 after accidentally re-introducing HTML inlining during the
+  pgvector-to-backend migration.
 - The *reference collections* (`ba:chronicles`, `ba:newsreels`, `ba:NAIC Guidelines`,
   `naic-proceedings`, `ba:organizations`, `ba:International Guidelines`,
   `ba:Rating Agencies`, `bubble-data`) remain in a search index. The agent gets
   one tool — `search_knowledge_base` — that POSTs to `/knowledge/search` for
-  those namespaces only.
+  those namespaces + the per-call page-snapshot namespaces.
 
-This pattern mirrors how the chat portal handles pinned uploads: the full text
-is treated as authoritative context, and search is reserved for broader library
-lookups.
+Degraded path: when `CHATKIT_INTERNAL_API_KEY` is missing (backend unreachable),
+`document_agent` falls through to a direct Responses API call with no search
+tools. In that path only, the full before/after HTML is inlined under
+`=== PAGE CHANGE CONTEXT ===` as the only way the agent can see link
+metadata — accepting the prompt-size cost because search isn't available.
 
 ## Per-agent behavior
 

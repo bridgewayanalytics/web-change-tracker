@@ -174,7 +174,9 @@ def _fetch_pdf_text(url: str) -> str | None:
 
 
 _ALERT_INCLUDE_KEYS = {"organization", "alert_type", "event_title", "event_start_date_time", "source_url"}
-_HTML_CONTEXT_LIMIT = 8000  # chars per before/after HTML snippet
+# before/after HTML snapshots are ingested into the backend knowledge base via
+# bubble.page_snapshot_ingest and reached through search_knowledge_base — not
+# inlined into the QA prompt. See docs/knowledge-base-integration.md.
 
 _NA_VALUES = frozenset({"N/A", "N/A.", "-", ""})
 
@@ -530,9 +532,9 @@ def _prepare_eval_args(rows: list[dict], alert_row: dict | None = None) -> dict:
     namespaces: list[str] | None = None
     source_document_id: int | None = None
     if _pgvector_enabled():
-        # Reference namespaces only — document-extraction:* and page-snapshot:*
-        # are intentionally excluded because the source document and page HTML
-        # are inlined into user_message below.
+        # Reference namespaces come from DynamoDB config; strip per-call
+        # ingested namespaces (document-extraction:* / page-snapshot:*) because
+        # those are provisioned per-invocation below.
         namespaces = [
             ns for ns in _get_pgvector_namespaces()
             if not str(ns).startswith("document-extraction:")
@@ -575,15 +577,23 @@ def _prepare_eval_args(rows: list[dict], alert_row: dict | None = None) -> dict:
                     vectorization_url[:80], e,
                 )
 
-        # Inline the before/after HTML snapshots the same way — the QA grader
-        # often needs page-level context (link labels, Updated: dates, etc).
-        if before_html or after_html:
-            html_blocks = []
-            if before_html:
-                html_blocks.append(f"Before HTML (prior state):\n{before_html}")
-            if after_html:
-                html_blocks.append(f"After HTML (new state):\n{after_html}")
-            user_message += "\n\n=== PAGE CHANGE CONTEXT ===\n" + "\n".join(html_blocks)
+        # Ingest before/after HTML snapshots into the knowledge base so the
+        # QA agent can search them (same pattern as extraction). Reusing the
+        # extraction's agent_call_id means the ingest hits the same
+        # deterministic uuid and comes back "cached".
+        if agent_call_id and agent_call_id != "unknown" and (before_html or after_html):
+            try:
+                from bubble.page_snapshot_ingest import ingest_page_snapshots
+                page_ns = ingest_page_snapshots(
+                    agent_call_id, before_html or "", after_html or "",
+                )
+                if page_ns:
+                    namespaces.extend(page_ns)
+            except Exception as e:
+                log.warning(
+                    "doc_eval_agent: page snapshot ingest failed for acid=%s: %s",
+                    agent_call_id[:12], e,
+                )
 
     return {
         "system_prompt": system_prompt,

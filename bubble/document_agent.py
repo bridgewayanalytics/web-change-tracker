@@ -618,13 +618,9 @@ def should_run_for_alert(agent_output: dict) -> bool:
     return any(_item_has_real_name(item) for item in library_items)
 
 
-_HTML_CONTEXT_LIMIT = 65536  # chars per before/after HTML snippet injected into agent context
-# Raised from 8000 → 65536 on 2026-11-10: NAIC committee pages carry nav/header
-# content in the first ~8k chars; the document download links with "Updated:
-# MM/DD/YYYY" labels in the <a title=...> attribute often sit past that cut.
-# When truncated, the agent can't see the authoritative publication date and
-# falls back to the PDF's internal "Draft date:" — the dominant date_published
-# failure mode observed in the 2026-11-10 doc-QA batch.
+# before/after HTML snapshots are ingested into the backend knowledge base via
+# bubble.page_snapshot_ingest and reached through search_knowledge_base — not
+# inlined into the agent prompt. See docs/knowledge-base-integration.md.
 
 
 def extract_document_data(
@@ -721,16 +717,17 @@ def extract_document_data(
 
         if not _pgvector_enabled():
             # Direct Responses API path with Structured Outputs.
-            # Agent has no search tools — so inline the HTML snapshots as the
-            # only way for it to see page-level posting metadata.
+            # Agent has no search tools in this degraded path — so inline the
+            # full HTML snapshots (no truncation) as the only way for it to see
+            # page-level posting metadata (Updated: labels, link titles, etc.).
             log.info("document_agent: pgvector not available, running via direct API (model=%s) for: %s", model, document_name[:80])
             fallback_lines = list(lines)
             if before_html or after_html:
                 fallback_lines.append("\n=== PAGE CHANGE CONTEXT (HTML snapshots of the monitored page) ===")
                 if before_html:
-                    fallback_lines.append(f"Before HTML (prior state):\n{before_html[:_HTML_CONTEXT_LIMIT]}")
+                    fallback_lines.append(f"Before HTML (prior state):\n{before_html}")
                 if after_html:
-                    fallback_lines.append(f"After HTML (new state with the document now present):\n{after_html[:_HTML_CONTEXT_LIMIT]}")
+                    fallback_lines.append(f"After HTML (new state with the document now present):\n{after_html}")
             user_content = "\n".join(fallback_lines)
             from bubble.openai_client import chat_json
             messages = [
@@ -813,23 +810,37 @@ def extract_document_data(
             )
             return []
 
-        # Inline before/after HTML snapshots so the agent sees the page context
-        # (link labels, Updated: dates, etc.) without needing to search for them.
-        if before_html or after_html:
-            html_parts = []
-            if before_html:
-                html_parts.append(f"Before HTML (prior state):\n{before_html[:_HTML_CONTEXT_LIMIT]}")
-            if after_html:
-                html_parts.append(f"After HTML (new state with the document now present):\n{after_html[:_HTML_CONTEXT_LIMIT]}")
-            user_content += "\n\n=== PAGE CHANGE CONTEXT (HTML snapshots of the monitored page) ===\n" + "\n".join(html_parts)
+        # Ingest before/after HTML snapshots into the knowledge base so the
+        # agent can search them via search_knowledge_base. Reaching the
+        # "Updated: MM/DD/YYYY" label in an <a title=...> attribute via
+        # retrieval is more reliable than prompt-slicing — NAIC committee
+        # pages routinely place those labels past a 10 KB mark (regression
+        # evidence from 2026-11-10).
+        acid_for_snapshots = str((alert_context or {}).get("agent_call_id") or "").strip()
+        page_snapshot_namespaces: list[str] = []
+        if acid_for_snapshots and (before_html or after_html):
+            try:
+                from bubble.page_snapshot_ingest import ingest_page_snapshots
+                page_snapshot_namespaces = ingest_page_snapshots(
+                    acid_for_snapshots, before_html or "", after_html or "",
+                )
+            except Exception as e:
+                log.warning(
+                    "document_agent: page snapshot ingest failed for acid=%s: %s — proceeding without",
+                    acid_for_snapshots[:12], e,
+                )
 
-        # Filter reference namespaces: never pass document-extraction:* or
-        # page-snapshot:* — those contents are already inlined above.
+        # Reference search scope: strip per-call namespaces from the
+        # config-declared list (they're populated per-invocation, not via
+        # DynamoDB), then add the page-snapshot namespaces we just ingested.
+        # document-extraction:* stays filtered because the source document is
+        # inlined above.
         reference_namespaces = [
             ns for ns in pgvector_namespaces
             if not str(ns).startswith("document-extraction:")
             and not str(ns).startswith("page-snapshot:")
         ]
+        reference_namespaces.extend(page_snapshot_namespaces)
 
         trace_id = str((alert_context or {}).get("agent_call_id") or doc_call_id).strip()
 
