@@ -366,7 +366,11 @@ async function resolveAgendaItems(
     const status = String(item.status ?? "New").trim();
     const isNew = status.toLowerCase() === "new";
     const topicNames = (item.chronicle_topics as string[] | undefined) ?? [];
-    const topicIds = topicNames.map(n => topicNameToId.get(n)).filter((id): id is string => !!id);
+    // `topicNameToId` is keyed by `normalizeTopicKey(Bubble.Title)` (NBSP-safe lookup) —
+    // must normalize the agent-emitted name on the lookup side too, otherwise every
+    // agenda item falls back to the "Calendar Events with no Topic" record even when
+    // the chronicle topic exists exactly in Bubble.
+    const topicIds = topicNames.map(n => topicNameToId.get(normalizeTopicKey(n))).filter((id): id is string => !!id);
 
     if (!isNew) {
       const existingId = await findAgendaItemByTitle(title);
@@ -783,7 +787,9 @@ export async function syncAlert(
         previewsForAgenda.flatMap(p => (p.chronicle_topics as string[] | undefined) ?? []).filter(Boolean),
       ));
       let agendaTopicNameToId = topicNameToId;
-      if (agendaTopicNames.some(n => !topicNameToId.has(n))) {
+      // Same normalization requirement as the lookup site — otherwise this always
+      // triggers a redundant refetch even when every topic is already in the map.
+      if (agendaTopicNames.some(n => !topicNameToId.has(normalizeTopicKey(n)))) {
         const { nameToId } = await resolveTopicIds(agendaTopicNames);
         agendaTopicNameToId = new Map([...Array.from(topicNameToId), ...Array.from(nameToId)]);
       }
