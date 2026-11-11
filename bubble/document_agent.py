@@ -416,18 +416,134 @@ def _render_html_to_pdf_text(url: str) -> str | None:
     return None
 
 
+def _docx_bytes_to_text(data: bytes) -> str:
+    """Extract plain text from a .docx binary via python-docx.
+
+    Walks paragraphs and table cells in document order and joins non-empty
+    strings with newlines. Mirrors the shape of _extract_plain_text() for PDFs
+    so the downstream ingest pipeline is format-agnostic.
+    """
+    import io
+    from docx import Document
+    doc = Document(io.BytesIO(data))
+    lines: list[str] = []
+    for para in doc.paragraphs:
+        txt = (para.text or "").strip()
+        if txt:
+            lines.append(txt)
+    for table in doc.tables:
+        for row in table.rows:
+            row_cells = []
+            for cell in row.cells:
+                txt = (cell.text or "").strip()
+                if txt:
+                    row_cells.append(txt)
+            if row_cells:
+                lines.append(" | ".join(row_cells))
+    return "\n".join(lines)
+
+
+def _fetch_docx_text(url: str) -> str | None:
+    """Fetch a .docx file and extract text via python-docx. Returns None on failure.
+
+    Same strategy as _fetch_single_pdf's PDF path: requests first (fast),
+    Playwright expect_download() fallback for Cloudflare-protected URLs.
+    """
+    # --- requests path ---
+    try:
+        import requests as _requests
+        resp = _requests.get(url, timeout=30, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Referer": "https://content.naic.org/",
+            "Accept": "application/vnd.openxmlformats-officedocument.wordprocessingml.document,*/*",
+        })
+        if resp.status_code == 200:
+            try:
+                text = _docx_bytes_to_text(resp.content)
+            except Exception as e:
+                log.warning("document_agent: docx parse failed for %s: %s", url[:80], e)
+                text = ""
+            if text and text.strip():
+                log.info("document_agent: fetched DOCX text (%d chars) from %s", len(text), url[:80])
+                return text.strip()
+            log.warning("document_agent: DOCX fetched but extracted no text from %s", url[:80])
+            return None
+        log.info("document_agent: requests got %s for DOCX %s — trying Playwright", resp.status_code, url[:80])
+    except Exception as e:
+        log.info("document_agent: requests failed for DOCX %s (%s) — trying Playwright", url[:80], e)
+
+    # --- Playwright fallback ---
+    try:
+        import os
+        import tempfile
+        from playwright.sync_api import sync_playwright
+        docx_bytes: bytes | None = None
+
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+            )
+            ctx = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                extra_http_headers={
+                    "Accept": "application/vnd.openxmlformats-officedocument.wordprocessingml.document,*/*",
+                    "Referer": "https://content.naic.org/",
+                },
+                accept_downloads=True,
+            )
+            page = ctx.new_page()
+            tmp_path = None
+            try:
+                with page.expect_download(timeout=60000) as dl_info:
+                    try:
+                        page.goto(url, timeout=30000)
+                    except Exception:
+                        pass  # download trigger raises — expected
+                download = dl_info.value
+                tmp_path = tempfile.mktemp(suffix=".docx")
+                download.save_as(tmp_path)
+                with open(tmp_path, "rb") as fh:
+                    docx_bytes = fh.read()
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                browser.close()
+
+        if docx_bytes:
+            try:
+                text = _docx_bytes_to_text(docx_bytes)
+            except Exception as e:
+                log.warning("document_agent: docx parse failed for %s: %s", url[:80], e)
+                return None
+            if text and text.strip():
+                log.info("document_agent: fetched DOCX via Playwright (%d chars) from %s", len(text), url[:80])
+                return text.strip()
+            log.warning("document_agent: Playwright DOCX extracted no text from %s", url[:80])
+    except Exception as e:
+        log.warning("document_agent: Playwright DOCX fetch failed for %s: %s", url[:80], e)
+
+    return None
+
+
 def _fetch_single_pdf(url: str) -> str | None:
     """Fetch and extract text from a URL. Returns None on any failure.
 
-    For PDF URLs: tries requests first (fast), falls back to Playwright expect_download()
-    for Cloudflare-protected PDFs.
-    For HTML URLs: uses Playwright page.pdf() to render the page to PDF, then extracts text.
+    Routing:
+      .pdf   → requests, then Playwright expect_download() fallback
+      .docx  → _fetch_docx_text (requests + Playwright + python-docx)
+      other  → _render_html_to_pdf_text (treated as an HTML page)
     """
     url = url.strip()
     if not url:
         return None
 
-    is_pdf = url.lower().split("?")[0].endswith(".pdf")
+    url_lower = url.lower().split("?")[0]
+    is_pdf = url_lower.endswith(".pdf")
+    is_docx = url_lower.endswith(".docx")
+
+    if is_docx:
+        return _fetch_docx_text(url)
 
     if not is_pdf:
         return _render_html_to_pdf_text(url)
