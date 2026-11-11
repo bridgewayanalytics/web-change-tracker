@@ -22,6 +22,7 @@ Structure (all under CHANGELOG_BUCKET, falling back to BUBBLE_ARTIFACT_BUCKET):
 Never raises — all failures are logged as warnings.
 """
 
+import copy
 import json
 import logging
 import os
@@ -158,6 +159,39 @@ def _build_rows_for_single_alert(
         row = dict(base)
         for key, val in item.items():
             row[f"library_item_{key}"] = val
+        # `bubble_action` was stamped on the alert dict by classify_alert BEFORE
+        # this fan-out, using the alert's top-level library_item_url. Every row
+        # inherits that single preview via the `base` copy above, so without
+        # repointing here each sibling row's `library_item_preview.url` /
+        # `filename` / `match_search.url` would reflect the FIRST library item,
+        # not the row's own. Deep-copy then patch per row.
+        ba = row.get("bubble_action")
+        if isinstance(ba, dict) and isinstance(ba.get("library_item_preview"), dict):
+            ba = copy.deepcopy(ba)
+            lp = ba["library_item_preview"]
+            row_url = str(row.get("library_item_url") or "").strip()
+            row_filename = str(
+                row.get("library_item_file_name")
+                or row.get("library_items_file_name")
+                or ""
+            ).strip()
+            if row_url:
+                lp["url"] = row_url
+                if isinstance(lp.get("match_search"), dict):
+                    lp["match_search"]["url"] = row_url
+                if isinstance(lp.get("fields"), dict) and "URL" in lp["fields"]:
+                    lp["fields"]["URL"] = row_url
+                if isinstance(lp.get("field_ids"), dict) and "URL" in lp["field_ids"]:
+                    lp["field_ids"]["URL"] = row_url
+            if row_filename:
+                lp["filename"] = row_filename
+                if isinstance(lp.get("fields"), dict) and "File" in lp["fields"]:
+                    lp["fields"]["File"] = row_filename
+                if isinstance(lp.get("field_ids"), dict):
+                    for k in ("file name", "filename"):
+                        if k in lp["field_ids"]:
+                            lp["field_ids"][k] = row_filename
+            row["bubble_action"] = ba
         rows.append(row)
 
     return rows
