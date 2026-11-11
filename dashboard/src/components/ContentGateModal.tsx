@@ -1297,9 +1297,10 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
   function updateAgendaItemField(idx: number, label: string, value: string) {
     setAgendaItemEdits(prev => ({ ...prev, [idx]: { ...(prev[idx] ?? {}), [label]: value } }));
   }
-  // Apply per-field edits and deletions — these drive the UI and what gets patched to the API
-  function applyAgendaEdits(item: AgendaItemPreview, i: number): AgendaItemPreview {
-    const edits = agendaItemEdits[i] ?? {};
+  // Apply per-field edits and deletions — these drive the UI and what gets patched to the API.
+  // Only New items are editable; existing items are link-only, so this is called with an empty
+  // edits map for them (keeps the pipeline uniform without allowing overrides).
+  function applyAgendaEdits(item: AgendaItemPreview, i: number, edits: Record<string, string>): AgendaItemPreview {
     const out: AgendaItemPreview = { ...item };
     if (edits["BA title"]       !== undefined) out.title          = edits["BA title"];
     if (edits["NAIC Title"]     !== undefined) out.official_title = edits["NAIC Title"];
@@ -1311,7 +1312,7 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     return out;
   }
   const activeNewAgendaItems: AgendaItemPreview[] = newAgendaItems
-    .map((item, i) => applyAgendaEdits(item, i))
+    .map((item, i) => applyAgendaEdits(item, i, agendaItemEdits[i] ?? {}))
     .filter((_, i) => !deletedNewIndices.has(i));
   const activeExistingAgendaItems: AgendaItemPreview[] = existingAgendaItems
     .filter((_, i) => !deletedExistingIndices.has(i));
@@ -1331,7 +1332,7 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     [isAgendaSynthesized, existingAgendaItems, docExtractionRows],
   );
   const displayedActiveNewAgenda: AgendaItemPreview[] = enrichedNewAgendaItems
-    .map((item, i) => applyAgendaEdits(item, i))
+    .map((item, i) => applyAgendaEdits(item, i, agendaItemEdits[i] ?? {}))
     .filter((_, i) => !deletedNewIndices.has(i));
   const displayedActiveExistingAgenda: AgendaItemPreview[] = enrichedExistingAgendaItems
     .filter((_, i) => !deletedExistingIndices.has(i));
