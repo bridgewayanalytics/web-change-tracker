@@ -427,6 +427,48 @@ the dashboard ECS task — no Lambda intermediary.
 Clicking individual section buttons calls `action: "agenda_items"`, `"library_item"`,
 or `"event"` — each runs just that step and stamps the resulting ID on the row.
 
+### Pre-write snapshots
+
+Bubble's Data API exposes no record-version endpoint — once a PATCH lands, the
+prior field values are unrecoverable unless we captured them out of band. To
+guarantee a recovery path, every PATCH against an **existing** Bubble record is
+preceded by `snapshotBubbleRecord(type, id, base?)`, which:
+
+- GETs the full current body of the record.
+- Writes it to CloudWatch at INFO under tag `[bubble-sync][SNAPSHOT]`, one line
+  per record, JSON-stringified.
+- Returns the body (also usable in-process if we ever want to diff it against
+  the outgoing payload).
+
+Non-fatal: a failed snapshot warns and returns `null`; the PATCH still proceeds.
+CREATE paths and the post-create Ref# PATCH on freshly made agenda items
+are intentionally not snapshotted — the record didn't exist a millisecond
+earlier so there's nothing to preserve.
+
+Hooked at three sites:
+
+| Line | PATCH target | Scenario |
+|---|---|---|
+| ~1045 | `calendaritem/<id>` | Event UPDATE (trimmed PATCH of `Topics - dt`, `Agenda`, `attached agenda items`, `Eiderix Ref`) |
+| ~933 | `libraryitem/<id>` | Library item UPDATE — PATCH `Topics - dt` |
+| ~840 | `agendaitem/<id>` | Agenda topic refresh when `eidarix_agenda_item_ids` already stamped |
+
+**Recovery recipe**:
+
+```bash
+AWS_PROFILE=bridgeway aws logs tail /ecs/naic-dashboard --since 24h \
+  | grep "SNAPSHOT.*<type>/<bubble_id>"
+```
+
+Everything after `pre-state=` is the JSON body that was live immediately
+before the subsequent PATCH on the next log line. CloudWatch retention on
+that log group is ~30 days.
+
+**Scope caveat**: this safeguard only covers writes issued through
+`syncAlert()` from the dashboard. Out-of-band CLI PATCHes (e.g. operator-driven
+`curl` undo) bypass it — operators must snapshot manually (`GET obj/<type>/<id>`)
+before running destructive PATCHes.
+
 ### Payloads
 
 All writes send:

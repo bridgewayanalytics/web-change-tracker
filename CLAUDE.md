@@ -354,6 +354,8 @@ The `match_search` dict is used by the executor to find existing records before 
 
 Dashboard shows the **Actions** button on rows with `bubble_action` set, which opens the Content Gate modal (`ContentGateModal.tsx`). The modal publishes to Bubble by hitting `POST /api/bubble/sync` which runs the TypeScript executor `src/lib/bubble-sync-eidarix.ts` **in-process** inside the dashboard ECS task — no Lambda, no ECS RunTask, no polling. Full technical reference: `dashboard/src/components/docs/content-gate.md`.
 
+**Pre-write snapshots (TS executor only):** every PATCH against an existing Bubble record is preceded by `snapshotBubbleRecord(type, id)`, which GETs the live body and logs it to `/ecs/naic-dashboard` under `[bubble-sync][SNAPSHOT]` before the overwrite. Hooked at the 3 UPDATE sites (`calendaritem`, `libraryitem`, `agendaitem`). Only recovery path for overwritten fields since Bubble's Data API exposes no record-history endpoint. Out-of-band CLI PATCHes (not through `syncAlert()`) bypass this — snapshot manually with a Data API GET before any ad-hoc PATCH/DELETE. The Python `bubble/bubble_sync.py` executor does **not** currently snapshot; add the same safeguard there if it's ever rewired to a live flow.
+
 The Python `bubble/bubble_sync.py` module is the equivalent executor for the pipeline-side use case (not reached from the dashboard today). The TypeScript executor is the current source of truth for all dashboard-triggered writes.
 
 **Executor sequence in `bubble_sync.py`:**
