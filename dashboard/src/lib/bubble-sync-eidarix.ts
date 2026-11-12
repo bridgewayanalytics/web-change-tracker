@@ -97,6 +97,33 @@ async function bubbleSearch(
   return data.response?.results ?? [];
 }
 
+// Pre-write snapshot: dump the full current state of a Bubble record to
+// CloudWatch BEFORE we PATCH it. Lets operators recover the pre-state by
+// grepping the log for `[bubble-sync][SNAPSHOT]` and the record id, since
+// Bubble's Data API exposes no record-history endpoint. Non-fatal: a failed
+// snapshot logs a warning and returns null so the caller can still proceed.
+async function snapshotBubbleRecord(
+  type: string,
+  id: string,
+  base: string = OBJ_BASE,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const res = await bubbleGet(`${base}/${type}/${id}`);
+    if (!res.ok) {
+      console.warn(`[bubble-sync][SNAPSHOT] GET ${type}/${id} failed status=${res.status}`);
+      return null;
+    }
+    const data = await res.json() as { response?: Record<string, unknown> };
+    const body = data.response ?? {};
+    // Full body on one line so grep can recover it with: `[SNAPSHOT] <type>/<id>`
+    console.info(`[bubble-sync][SNAPSHOT] ${type}/${id} pre-state=${JSON.stringify(body)}`);
+    return body;
+  } catch (err) {
+    console.warn(`[bubble-sync][SNAPSHOT] GET ${type}/${id} threw: ${String(err)}`);
+    return null;
+  }
+}
+
 async function eidarixWfPost(
   workflow: string,
   payload: Record<string, unknown>,
@@ -810,6 +837,8 @@ export async function syncAlert(
             if (!topicIds.length && emptyTopicId) topicIds = [emptyTopicId];
             if (!topicIds.length) continue;
             try {
+              // Snapshot BEFORE PATCH so prior `topics - dt` is recoverable.
+              await snapshotBubbleRecord("agendaitem", bubbleId);
               const patchRes = await fetch(`${OBJ_BASE}/agendaitem/${bubbleId}`, {
                 method: "PATCH",
                 headers: { Authorization: `Bearer ${await getBubbleKey()}`, "Content-Type": "application/json" },
@@ -902,6 +931,9 @@ export async function syncAlert(
         // existingLibIdForUpdate was already resolved above
         const existingLibId = existingLibIdForUpdate!;
         bubbleLibraryItemId = existingLibId;
+        // Snapshot BEFORE PATCH so the pre-overwrite `Topics - dt` value is
+        // recoverable from CloudWatch.
+        await snapshotBubbleRecord("libraryitem", existingLibId);
         // PATCH chronicle topics onto existing record (trimmed payload — no overwriting core fields)
         const patchRes = await fetch(`${OBJ_BASE}/libraryitem/${existingLibId}`, {
           method: "PATCH",
@@ -1014,6 +1046,10 @@ export async function syncAlert(
         if (agendaItemIds.length) updatePayload["attached agenda items"] = agendaItemIds;
         if (bubbleLibraryItemId) updatePayload["Agenda"] = [bubbleLibraryItemId];
 
+        // Snapshot BEFORE the PATCH so the overwritten field values are
+        // recoverable from CloudWatch. PATCH replaces each listed field
+        // wholesale — without this, any prior user-curated data is lost.
+        await snapshotBubbleRecord("calendaritem", existingEventId, OBJ_VERSIONED);
         console.info("[bubble-sync] UPDATE calendaritem via Data API PATCH", existingEventId, JSON.stringify(updatePayload));
         const patchRes = await fetch(`${OBJ_VERSIONED}/calendaritem/${existingEventId}`, {
           method: "PATCH",
