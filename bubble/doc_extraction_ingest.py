@@ -269,10 +269,15 @@ def search(
     if document_id is not None:
         body["document_id"] = int(document_id)
     if trace_id:
-        # Backend caps trace_id at 128 chars. Eval agents often pass composite
-        # eval_row_keys ("<uuid>|<filename>|<id>") that routinely exceed that.
-        tid = str(trace_id)[:128]
-        body["trace_id"] = tid
+        # Backend requires trace_id to be 1-128 chars from [A-Za-z0-9._-].
+        # Eval agents pass composite eval_row_keys like
+        #   "<uuid>|<library_item_url>|<standardized_id>"
+        # which violates both the charset (|, :, /) and the length cap.
+        # Replace disallowed chars with '_' and clamp to 128.
+        import re as _re
+        tid = _re.sub(r"[^A-Za-z0-9._-]", "_", str(trace_id))[:128]
+        if tid:
+            body["trace_id"] = tid
     r = requests.post(
         f"{_CHAT_API_BASE}/knowledge/search",
         headers=_headers(),
