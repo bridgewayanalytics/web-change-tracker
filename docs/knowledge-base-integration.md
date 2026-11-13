@@ -146,10 +146,39 @@ the `thread_id` = the `trace_id` we pass. Our convention:
 | `document_agent` | parent alert's `agent_call_id`, falling back to a per-extraction `doc_call_id` |
 | `doc_eval_agent` | extraction's `agent_call_id` |
 | `page_change_agent` | the WTA `agent_call_id` generated at the top of the call |
-| `eval_agent` | first `eval_row_key` in the group |
+| `eval_agent` | first `eval_row_key` in the group (sanitized — see "Backend validation rules" below) |
 
 So one pipeline run's searches across all agents group together in the admin
 dashboard's conversation drawer.
+
+## Backend validation rules (enforced on `/knowledge/search`)
+
+The backend rejects requests with `422 Unprocessable Entity` when any of
+these constraints are violated. All four are handled centrally in
+`bubble/doc_extraction_ingest.search()` so individual agents never need to
+worry about them, but you should know about them before you change the
+wrapper:
+
+| Field | Rule | How the wrapper handles it |
+|---|---|---|
+| `query` | 1–2000 chars | Strips whitespace, clamps to 1800 (headroom); empty queries fall back to the literal `"query"` |
+| `trace_id` | 1–128 chars, `[A-Za-z0-9._-]` only | Replaces any other character with `_`, then clamps to 128 |
+| `namespaces` | must be non-empty OR include a `document_extraction_id` | Caller's responsibility; the wrapper does not synthesize namespaces |
+| `limit` | 1–25 | Clamped to `max(1, min(limit, 25))` |
+
+The wrapper also surfaces the full response body in any raised `HTTPError`,
+so a failure mode like "trace_id must be 1-128 chars: letters, digits, '.', '_',
+'-'" lands directly in CloudWatch (`WARNING eval.eval_agent search_knowledge_base
+backend error: 422 ...`) rather than a bare `422 Client Error` with no detail.
+
+**Historical note (2026-11-13):** the WTA QA agent (`eval/eval_agent.py`) was
+the only caller passing a composite `eval_row_key` as the trace_id — all three
+other agents pass a plain `agent_call_id` UUID which trivially satisfies both
+the length and charset rules. The `eval_row_key` contains `|`, `:`, and `/`
+and is often 150-250 chars, so every QA search silently 422'd. For weeks the
+visible symptom was "WTA QA scores unusually many fields Partially Correct"
+because the agent couldn't retrieve reference material to validate against.
+See commits `966fa14`, `2e5b7d7`, `e089f7b`.
 
 ## Fallback when the backend is unreachable
 
