@@ -220,6 +220,25 @@ function normalizeTopicKey(raw: unknown): string {
   return String(raw).replace(/\s+/g, " ").trim().toLowerCase();
 }
 
+// Mirrors `lookupTopicWithArticle` in `lib/bubble-sync-eidarix.ts`. Agents
+// occasionally prepend "The " to topic names when the Bubble title doesn't
+// carry it (or drop it when Bubble has it). Three narrow probes — exact
+// normalized, "the "-stripped, "the "-prepended — covers both directions.
+function lookupTopicWithArticle<T>(nameMap: Map<string, T>, rawName: string): T | undefined {
+  const base = normalizeTopicKey(rawName);
+  if (!base) return undefined;
+  const exact = nameMap.get(base);
+  if (exact !== undefined) return exact;
+  if (base.startsWith("the ")) {
+    const stripped = nameMap.get(base.slice(4));
+    if (stripped !== undefined) return stripped;
+  } else {
+    const prepended = nameMap.get("the " + base);
+    if (prepended !== undefined) return prepended;
+  }
+  return undefined;
+}
+
 const NA_SET = new Set(["n/a", "n/a.", "-", "none", ""]);
 function notNA(s: string): boolean {
   return !NA_SET.has(s.toLowerCase().trim());
@@ -1855,9 +1874,9 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
             // Normalize both sides so NBSP / collapsed-whitespace variants match
             // (e.g. Bubble Title "ALM Derivatives & Derivative Investments"
             // vs agent output "ALM Derivatives & Derivative Investments").
-            const bubbleTopicNameSet = new Set(
-              (topicList ?? []).map(o => normalizeTopicKey(o.name))
-            );
+            // (bubbleTopicNameSet removed — all lookups now go through
+            // `lookupTopicWithArticle(canonicalByKey, name)` so we don't need
+            // the separate Set.)
             // normalized-key → canonical Bubble Title (preserving the real NBSPs
             // etc.) so we can upgrade an agent-emitted topic to its exact
             // Bubble spelling. Without this the SearchableCombobox fails to
@@ -1867,13 +1886,13 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
             );
             const canonicalizeTopics = (topics: string[] | undefined): string[] => {
               if (!topicsLoaded || !topics) return topics ?? [];
-              return topics.map(t => canonicalByKey.get(normalizeTopicKey(t)) ?? t);
+              return topics.map(t => lookupTopicWithArticle(canonicalByKey, t) ?? t);
             };
             const unresolvedTopics = (topics: string[] | undefined): string[] =>
               !topicsLoaded || !topics ? []
                 : topics.filter(t => {
                     const name = String(t).trim();
-                    return name && !bubbleTopicNameSet.has(normalizeTopicKey(name));
+                    return name && lookupTopicWithArticle(canonicalByKey, name) === undefined;
                   });
             const renderTopicWarning = (topics: string[] | undefined) => {
               const missing = unresolvedTopics(topics);

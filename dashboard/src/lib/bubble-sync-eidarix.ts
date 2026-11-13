@@ -193,7 +193,7 @@ async function resolveTopicIds(
   const nameToId = new Map(topics.map(t => [normalizeTopicKey(t.Title), String(t._id ?? "")]));
   const ids: string[] = [];
   for (const name of topicNames) {
-    const id = nameToId.get(normalizeTopicKey(name));
+    const id = lookupTopicWithArticle(nameToId, name);
     if (id) ids.push(id);
     else console.warn("[bubble-sync] chronicle topic not found:", name);
   }
@@ -396,8 +396,12 @@ async function resolveAgendaItems(
     // `topicNameToId` is keyed by `normalizeTopicKey(Bubble.Title)` (NBSP-safe lookup) —
     // must normalize the agent-emitted name on the lookup side too, otherwise every
     // agenda item falls back to the "Calendar Events with no Topic" record even when
-    // the chronicle topic exists exactly in Bubble.
-    const topicIds = topicNames.map(n => topicNameToId.get(normalizeTopicKey(n))).filter((id): id is string => !!id);
+    // the chronicle topic exists exactly in Bubble. `lookupTopicWithArticle` also
+    // probes "The "-strip/-prepend variants so an agent-prepended "The " doesn't
+    // silently drop us onto the fallback topic.
+    const topicIds = topicNames
+      .map(n => lookupTopicWithArticle(topicNameToId, n))
+      .filter((id): id is string => !!id);
 
     if (!isNew) {
       const existingId = await findAgendaItemByTitle(title);
@@ -549,6 +553,30 @@ export function normalizeTopicKey(raw: unknown): string {
   return String(raw).replace(/\s+/g, " ").trim().toLowerCase();
 }
 
+// Leading-article-tolerant topic lookup. Agents occasionally prepend "The " to
+// topic names (e.g. "The U.S. Department of the Treasury…") when the Bubble
+// title doesn't carry it, or drop it when Bubble has it ("The NAIC Investment
+// Oversight Framework"). Three narrow probes — exact normalized, "the "-stripped,
+// "the "-prepended — covers both directions without fuzzy matching or risk of
+// matching a semantically different topic.
+export function lookupTopicWithArticle<T>(
+  nameMap: Map<string, T>,
+  rawName: string,
+): T | undefined {
+  const base = normalizeTopicKey(rawName);
+  if (!base) return undefined;
+  const exact = nameMap.get(base);
+  if (exact !== undefined) return exact;
+  if (base.startsWith("the ")) {
+    const stripped = nameMap.get(base.slice(4));
+    if (stripped !== undefined) return stripped;
+  } else {
+    const prepended = nameMap.get("the " + base);
+    if (prepended !== undefined) return prepended;
+  }
+  return undefined;
+}
+
 // Bubble Data API expects ISO 8601 UTC (e.g. "2026-06-11T18:00:00.000Z").
 function toUtcIso(raw: string): string {
   if (!raw || raw.toUpperCase() === "N/A") return "";
@@ -678,7 +706,7 @@ export async function validateSyncPlan(
     allTopicNames.length
       ? bubbleListAll("chronicletopic", CONTENT_SPACE_CONSTRAINT).then(topics => {
           const nameToId = new Map(topics.map(t => [normalizeTopicKey(t.Title), String(t._id ?? "")]));
-          return allTopicNames.filter(n => !nameToId.has(normalizeTopicKey(n)));
+          return allTopicNames.filter(n => lookupTopicWithArticle(nameToId, n) === undefined);
         })
       : Promise.resolve([] as string[]),
 
@@ -816,7 +844,7 @@ export async function syncAlert(
       let agendaTopicNameToId = topicNameToId;
       // Same normalization requirement as the lookup site — otherwise this always
       // triggers a redundant refetch even when every topic is already in the map.
-      if (agendaTopicNames.some(n => !topicNameToId.has(normalizeTopicKey(n)))) {
+      if (agendaTopicNames.some(n => lookupTopicWithArticle(topicNameToId, n) === undefined)) {
         const { nameToId } = await resolveTopicIds(agendaTopicNames);
         agendaTopicNameToId = new Map([...Array.from(topicNameToId), ...Array.from(nameToId)]);
       }
