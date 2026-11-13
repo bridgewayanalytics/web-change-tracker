@@ -269,7 +269,10 @@ def search(
     if document_id is not None:
         body["document_id"] = int(document_id)
     if trace_id:
-        body["trace_id"] = trace_id
+        # Backend caps trace_id at 128 chars. Eval agents often pass composite
+        # eval_row_keys ("<uuid>|<filename>|<id>") that routinely exceed that.
+        tid = str(trace_id)[:128]
+        body["trace_id"] = tid
     r = requests.post(
         f"{_CHAT_API_BASE}/knowledge/search",
         headers=_headers(),
