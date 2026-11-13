@@ -565,14 +565,28 @@ export function lookupTopicWithArticle<T>(
 ): T | undefined {
   const base = normalizeTopicKey(rawName);
   if (!base) return undefined;
+  // 1. exact normalized
   const exact = nameMap.get(base);
   if (exact !== undefined) return exact;
+  // 2. leading-article toggle
   if (base.startsWith("the ")) {
     const stripped = nameMap.get(base.slice(4));
     if (stripped !== undefined) return stripped;
   } else {
     const prepended = nameMap.get("the " + base);
     if (prepended !== undefined) return prepended;
+  }
+  // 3. unique-prefix-with-separator probe. Agents sometimes truncate before a
+  // conjunction / punctuation (e.g. "Liquidity Stress Tests (LSTs)" when Bubble
+  // has "Liquidity Stress Tests (LSTs) & Macroprudential Risks"). Accept only
+  // when exactly one Bubble title starts with `base + separator` — multiple
+  // matches is ambiguous and must fall through to the "not found" warning so
+  // a human picks explicitly.
+  const separators = [" &", " and ", " – ", " — ", " - ", ", ", ": "];
+  for (const sep of separators) {
+    const prefix = base + sep;
+    const matches = Array.from(nameMap.entries()).filter(([k]) => k.startsWith(prefix));
+    if (matches.length === 1) return matches[0][1];
   }
   return undefined;
 }

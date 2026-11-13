@@ -236,6 +236,14 @@ function lookupTopicWithArticle<T>(nameMap: Map<string, T>, rawName: string): T 
     const prepended = nameMap.get("the " + base);
     if (prepended !== undefined) return prepended;
   }
+  // Unique-prefix-with-separator probe — handles agent truncation before a
+  // conjunction ("Liquidity Stress Tests (LSTs)" vs Bubble "… (LSTs) & Macroprudential Risks").
+  const separators = [" &", " and ", " – ", " — ", " - ", ", ", ": "];
+  for (const sep of separators) {
+    const prefix = base + sep;
+    const matches = Array.from(nameMap.entries()).filter(([k]) => k.startsWith(prefix));
+    if (matches.length === 1) return matches[0][1];
+  }
   return undefined;
 }
 
