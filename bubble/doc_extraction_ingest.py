@@ -252,8 +252,15 @@ def search(
     Each result dict has: document_id, chunk_id, chunk_index, title, date, url,
     content_type, page_no, page_end, section_path, section_pages, score, content.
     """
+    # Backend enforces query length 1-2000 chars. Agents sometimes paraphrase
+    # the field being verified into the query, which can blow past 2000 and
+    # get rejected 422. Clamp to 1800 (headroom) and strip whitespace so an
+    # all-whitespace query doesn't slip past the min=1 check.
+    q = (query or "").strip() or "query"
+    if len(q) > 1800:
+        q = q[:1800]
     body: dict = {
-        "query": query,
+        "query": q,
         "namespaces": list(namespaces),
         "limit": max(1, min(int(limit), 25)),
     }
@@ -269,5 +276,17 @@ def search(
         json=body,
         timeout=timeout_s,
     )
-    r.raise_for_status()
+    if not r.ok:
+        # Include response body in the raised exception so WARNING logs capture
+        # the actual validation error (e.g. "String should have at most 2000
+        # characters") rather than a generic "422 Client Error" that forces a
+        # curl reproduction to diagnose.
+        try:
+            detail = r.text[:400]
+        except Exception:
+            detail = ""
+        raise requests.HTTPError(
+            f"{r.status_code} {r.reason} for POST {_CHAT_API_BASE}/knowledge/search — {detail}",
+            response=r,
+        )
     return r.json()
