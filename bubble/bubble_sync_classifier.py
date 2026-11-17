@@ -49,6 +49,22 @@ _NOT_APPLICABLE = frozenset({
 })
 
 # Maps alert_type → (event_action, library_item_action, create_agenda_items)
+# "Preliminary — <X>" / "Preliminary - <X>" / plain "Preliminary" alerts fire when
+# the web-tracking agent sees a draft or still-settling change. They carry the same
+# payload shape as the underlying type (e.g. "Preliminary — New Materials" matches
+# "New Materials"), so classify them against the underlying map by stripping the
+# prefix. Em-dash + hyphen covered. Bare "Preliminary" defaults to Materials.
+import re as _re
+_PRELIMINARY_RE = _re.compile(r"^\s*Preliminary\s*[—-]\s*", flags=_re.IGNORECASE)
+def _strip_preliminary(alert_type: str) -> str:
+    if not alert_type:
+        return alert_type
+    stripped = _PRELIMINARY_RE.sub("", alert_type).strip()
+    if stripped.lower() == "preliminary" or not stripped:
+        return "New Materials"
+    return stripped
+
+
 _TYPE_MAP: dict[str, tuple[str | None, str | None, bool]] = {
     "New Meeting":                              ("create", None,     False),
     "Updated Meeting":                          ("update", None,     False),
@@ -243,7 +259,7 @@ def _build_event_preview(alert: dict, alert_type: str, event_action: str | None)
             field_ids[CI.TIMEZONE] = "America/New_York"
         else:
             # Only change is linking/updating a library item — executor handles this dynamically
-            link_label = _EVENT_AGENDA_LINK_LABEL.get(alert_type, "→ Update document reference")
+            link_label = _EVENT_AGENDA_LINK_LABEL.get(_strip_preliminary(alert_type), "→ Update document reference")
             fields = {"Agenda": link_label}
             field_ids = {}  # relevant_resources_list_custom_resource filled by executor after lib item is created/found
 
@@ -274,10 +290,12 @@ def _build_library_item_preview(alert: dict, alert_type: str, lib_action: str | 
     url = _str(alert.get("library_item_url"))
     filename = _str(alert.get("library_items_file_name"))
     org = _org_list(alert)
-    item_type = _LIBRARY_ITEM_TYPE.get(alert_type, "Document")
+    # Strip "Preliminary — " prefix so the type maps resolve to the underlying variant.
+    normalized_type = _strip_preliminary(alert_type)
+    item_type = _LIBRARY_ITEM_TYPE.get(normalized_type, "Document")
 
     # backward-compat
-    what_changes = _LIB_UPDATE_CHANGES.get(alert_type, ["Update metadata and references"]) if lib_action == "update" else []
+    what_changes = _LIB_UPDATE_CHANGES.get(normalized_type, ["Update metadata and references"]) if lib_action == "update" else []
 
     if lib_action == "create":
         fields: dict[str, str] = {}
@@ -601,7 +619,12 @@ def classify_alert(alert: dict) -> BubbleSyncPlan:
     if alert_type in _NOT_APPLICABLE:
         return BubbleSyncPlan(applicable=False)
 
-    ev_action, lib_action, agenda = _TYPE_MAP.get(alert_type, ("update", "create", False))
+    # Normalise "Preliminary — <X>" variants to their underlying type for
+    # classification + Bubble-mapping purposes. Row still stores the full
+    # original alert_type; only the dictionary lookups use the stripped form.
+    normalized_type = _strip_preliminary(alert_type)
+
+    ev_action, lib_action, agenda = _TYPE_MAP.get(normalized_type, ("update", "create", False))
 
     # Suppress event action if the agent reported no associated event
     if ev_action is not None:

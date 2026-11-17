@@ -724,10 +724,19 @@ def _item_has_real_name(item: dict) -> bool:
     return name not in _NA_VALUES
 
 
+import re as _re_doc
+_PRELIMINARY_RE_DOC = _re_doc.compile(r"^\s*Preliminary\s*[—-]\s*", flags=_re_doc.IGNORECASE)
+def _strip_preliminary_doc(t: str) -> str:
+    stripped = _PRELIMINARY_RE_DOC.sub("", t).strip()
+    return stripped if stripped and stripped.lower() != "preliminary" else "New Materials"
+
+
 def should_run_for_alert(agent_output: dict) -> bool:
     """Return True if the agent output indicates document extraction is warranted."""
     alert_type = (agent_output.get("alert_type") or "").strip()
-    if alert_type in DOCUMENT_ALERT_TYPES:
+    # "Preliminary — <X>" / "Preliminary - <X>" alerts carry the same payload shape
+    # as their underlying type — strip the prefix so the membership check covers them.
+    if _strip_preliminary_doc(alert_type) in DOCUMENT_ALERT_TYPES:
         return True
     # Old-schema fallback: only trigger if at least one library item has a real name
     library_items = agent_output.get("library_items") or []
