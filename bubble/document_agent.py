@@ -26,8 +26,11 @@ log = logging.getLogger(__name__)
 
 _CHAT_ID = "document-data-extraction"
 
-# Alert types that indicate new/updated documents and should trigger extraction.
-# Covers all alert types that result in a library item (create or update).
+# Alert types historically used to gate document extraction. Retained as a
+# reference list only — the gate is now URL-based (see should_run_for_alert
+# below). Downstream consumers (dashboard, QA rubric) still reference these
+# strings for display/scoring, so the list is useful documentation even though
+# the pipeline no longer branches on it.
 DOCUMENT_ALERT_TYPES = frozenset({
     "New Agenda",
     "New Materials",
@@ -724,21 +727,23 @@ def _item_has_real_name(item: dict) -> bool:
     return name not in _NA_VALUES
 
 
-import re as _re_doc
-_PRELIMINARY_RE_DOC = _re_doc.compile(r"^\s*Preliminary\s*[—-]\s*", flags=_re_doc.IGNORECASE)
-def _strip_preliminary_doc(t: str) -> str:
-    stripped = _PRELIMINARY_RE_DOC.sub("", t).strip()
-    return stripped if stripped and stripped.lower() != "preliminary" else "New Materials"
-
-
 def should_run_for_alert(agent_output: dict) -> bool:
-    """Return True if the agent output indicates document extraction is warranted."""
-    alert_type = (agent_output.get("alert_type") or "").strip()
-    # "Preliminary — <X>" / "Preliminary - <X>" alerts carry the same payload shape
-    # as their underlying type — strip the prefix so the membership check covers them.
-    if _strip_preliminary_doc(alert_type) in DOCUMENT_ALERT_TYPES:
+    """Return True if the agent output points at a real document URL.
+
+    URL-based gate: if the WTA emitted a populated library_item_url, extract.
+    The alert_type is advisory for downstream classification; extraction
+    eligibility is determined by whether a document URL exists.
+
+    Previously (pre 2026-11-17) this gated on DOCUMENT_ALERT_TYPES membership
+    plus a regex-based "Preliminary — <type>" prefix strip. That approach
+    silently dropped documents whenever the agent used a new alert_type
+    variant the frozenset didn't know about — most recently all the
+    Preliminary-suffix and em-dash variations introduced on 2026-11-13.
+    """
+    url = str(agent_output.get("library_item_url") or "").strip().upper()
+    if url and url not in _NA_URL_VALUES:
         return True
-    # Old-schema fallback: only trigger if at least one library item has a real name
+    # Old-schema fallback: pre-flat-schema rows carried library_items[]
     library_items = agent_output.get("library_items") or []
     return any(_item_has_real_name(item) for item in library_items)
 
