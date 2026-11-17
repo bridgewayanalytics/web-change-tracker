@@ -329,10 +329,16 @@ def _build_library_item_preview(alert: dict, alert_type: str, lib_action: str | 
         field_ids = {}
         match_search = {}
 
-    # Chronicle topics from the alert's agenda items (page change agent output)
+    # Chronicle topics from the alert's agenda items (page change agent output).
+    # Same current-first fallback chain as the other sites that read this field.
     _topics: list[str] = []
     _seen: set[str] = set()
-    for _item in (alert.get("agenda_item_title_chronicle_topics") or []):
+    _agenda_items_src = (
+        alert.get("agenda_item_title")
+        or alert.get("agenda_item_title_chronicle_topics")
+        or []
+    )
+    for _item in _agenda_items_src:
         if not isinstance(_item, dict):
             continue
         for _t in (_item.get("chronicle_topics") or []):
@@ -360,7 +366,15 @@ def _build_library_item_preview(alert: dict, alert_type: str, lib_action: str | 
 
 
 def _build_agenda_previews(alert: dict) -> list[dict]:
-    items = alert.get("agenda_item_title_chronicle_topics") or alert.get("agenda_item_title_and_chronicle_topics")
+    # Current flat schema (post-2026-10 chronicle_topic split) stores agenda
+    # titles in `agenda_item_title`. Historical rows used
+    # `agenda_item_title_chronicle_topics` or `agenda_item_title_and_chronicle_topics`
+    # — fall through so both generations classify correctly.
+    items = (
+        alert.get("agenda_item_title")
+        or alert.get("agenda_item_title_chronicle_topics")
+        or alert.get("agenda_item_title_and_chronicle_topics")
+    )
     official_titles = alert.get("agenda_item_title_official") or []
     standardized_ids = alert.get("agenda_item_standardized_id") or []
     if not isinstance(items, list):
@@ -594,9 +608,16 @@ def classify_alert(alert: dict) -> BubbleSyncPlan:
         if _is_na(alert.get("event_title")) and _is_na(alert.get("event_start_date_time") or alert.get("event_start_date_time_et")):
             ev_action = None
 
-    # Override agenda=True if the alert has real agenda items the type map doesn't expect
+    # Override agenda=True if the alert has real agenda items the type map doesn't expect.
+    # Must check the current flat-schema key (`agenda_item_title`) first; falling back to the
+    # historical names keeps old rows classifying correctly through re-runs/backfill.
     if not agenda:
-        for _item in (alert.get("agenda_item_title_chronicle_topics") or []):
+        agenda_items_field = (
+            alert.get("agenda_item_title")
+            or alert.get("agenda_item_title_chronicle_topics")
+            or []
+        )
+        for _item in agenda_items_field:
             if isinstance(_item, dict) and not _is_na(_item.get("agenda_item_title") or ""):
                 agenda = True
                 break
