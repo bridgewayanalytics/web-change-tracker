@@ -573,19 +573,38 @@ def enrich_with_doc_extraction(bubble_action: dict, extraction: dict) -> None:
                 for item in filtered
             ]
 
-    # -- Library item CREATE preview --
-    if bubble_action.get("library_item") != "create":
-        return
     lp = bubble_action.get("library_item_preview")
     if not isinstance(lp, dict):
         return
 
-    fields = dict(lp.get("fields") or {})
-    field_ids = dict(lp.get("field_ids") or {})
-
     def _val(key: str) -> str:
         v = str(extraction.get(key) or "").strip()
         return "" if v.lower() in _DOC_NA else v
+
+    # -- Title overlay (applies to BOTH CREATE and UPDATE) --
+    # Prefer the document-extraction agent's title (it actually read the PDF)
+    # over the page-change agent's preliminary title (inferred from the HTML
+    # listing). We update the display preview + Name field but deliberately
+    # DO NOT touch match_search.title — that's keyed on what Bubble already
+    # has, so changing it would break the UPDATE lookup of the existing record.
+    doc_title = _val("library_item_title") or _val("document_title")
+    if doc_title:
+        fields_pre = dict(lp.get("fields") or {})
+        field_ids_pre = dict(lp.get("field_ids") or {})
+        lp["title"] = doc_title
+        if "Name" in fields_pre:
+            fields_pre["Name"] = doc_title
+        if LI.NAME in field_ids_pre:
+            field_ids_pre[LI.NAME] = doc_title
+        lp["fields"] = fields_pre
+        lp["field_ids"] = field_ids_pre
+
+    # -- Library item CREATE preview --
+    if bubble_action.get("library_item") != "create":
+        return
+
+    fields = dict(lp.get("fields") or {})
+    field_ids = dict(lp.get("field_ids") or {})
 
     description = _val("document_description")
     date_pub = _val("date_published")
