@@ -244,6 +244,14 @@ function lookupTopicWithArticle<T>(nameMap: Map<string, T>, rawName: string): T 
     const matches = Array.from(nameMap.entries()).filter(([k]) => k.startsWith(prefix));
     if (matches.length === 1) return matches[0][1];
   }
+  // Unique word-boundary suffix probe — agent sometimes drops a leading
+  // qualifier word (e.g. "RBC Covariance & Asset Concentration Risk" vs
+  // Bubble "Life RBC Covariance & Asset Concentration Risk").
+  if (base.includes(" ")) {
+    const suffix = " " + base;
+    const matches = Array.from(nameMap.entries()).filter(([k]) => k.endsWith(suffix));
+    if (matches.length === 1) return matches[0][1];
+  }
   return undefined;
 }
 

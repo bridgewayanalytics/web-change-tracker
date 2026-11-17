@@ -588,6 +588,16 @@ export function lookupTopicWithArticle<T>(
     const matches = Array.from(nameMap.entries()).filter(([k]) => k.startsWith(prefix));
     if (matches.length === 1) return matches[0][1];
   }
+  // 5. Unique word-boundary suffix probe — agent sometimes drops a leading
+  // qualifier word (e.g. "RBC Covariance & Asset Concentration Risk" vs
+  // Bubble "Life RBC Covariance & Asset Concentration Risk"). Require the
+  // agent name to be multi-word to avoid matching short suffixes like "Risk"
+  // which could collide with many topics. Still uniqueness-gated.
+  if (base.includes(" ")) {
+    const suffix = " " + base;
+    const matches = Array.from(nameMap.entries()).filter(([k]) => k.endsWith(suffix));
+    if (matches.length === 1) return matches[0][1];
+  }
   return undefined;
 }
 
