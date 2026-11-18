@@ -605,6 +605,7 @@ function buildLibFields(
   agendaItems: AgendaItemPreview[],
   changedLabels: Set<string>,
   derivedDate: string,
+  docExtractionRows: Array<Record<string, unknown>> = [],
 ): FieldEntry[] {
   const title    = safeStr(lp.title);
   const url      = safeStr(lp.url);
@@ -612,6 +613,18 @@ function buildLibFields(
   const group    = Array.isArray(lp.group)
     ? (lp.group as string[]).filter(Boolean).join(", ")
     : safeStr(lp.group);
+
+  // Title source: the classifier's enrich step overlays `lp.title` from the
+  // doc-extraction agent whenever a `library_item_title` / `document_title`
+  // is present on any matching extraction row. Reflect that in the badge so
+  // users know which agent's output they're looking at.
+  const docTitle = docExtractionRows.find(d => {
+    const t = safeStr((d as Record<string, unknown>).library_item_title)
+            || safeStr((d as Record<string, unknown>).document_title);
+    return t && notNA(t);
+  });
+  const titleSource: FieldSource = docTitle ? "doc_extraction" : "web_tracking";
+  const titleAgentField = docTitle ? "library_item_title" : "library_item_preliminary_title.title";
 
   const topics = allLibraryItemTopics(lp, agendaItems);
 
@@ -628,7 +641,7 @@ function buildLibFields(
   const orgList = Array.isArray(lp.group) ? (lp.group as string[]).filter(Boolean) : (notNA(group) ? [group] : []);
 
   const entries: FieldEntry[] = [
-    mk("Name",          "library_item_preliminary_title.title", notNA(title)    ? title    : "—",   { source: "web_tracking" }),
+    mk("Name",          titleAgentField, notNA(title) ? title : "—", { source: titleSource }),
     mk("URL",           "library_item_url",                     notNA(url)      ? url      : "—",   { source: "web_tracking" }),
     mk("Type",          "alert_type (classifier)",              notNA(type)     ? type     : "—",   { source: "web_tracking", combobox: { type: "libraryitemtype", mode: "single" } }),
     {
@@ -1428,9 +1441,9 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
   );
 
   const libFields = useMemo(
-    () => buildLibFields(libPreview, displayedAgendaItems, libChangedLabels, derivedDate),
+    () => buildLibFields(libPreview, displayedAgendaItems, libChangedLabels, derivedDate, docExtractionRows),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [libPreview, displayedAgendaItems, libChangedLabels, derivedDate],
+    [libPreview, displayedAgendaItems, libChangedLabels, derivedDate, docExtractionRows],
   );
 
   const [eventEdits, setEventEdits]               = useState<Record<string, string>>({});
@@ -1831,7 +1844,16 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
   const documentFields: FieldEntry[] = [
     { label: "Destination", agentField: "—", source: "derived", value: "Newsreel Knowledge Base", readOnly: true },
   ];
-  if (libItemTitle && libItemTitle !== "N/A") documentFields.push({ label: "Title", agentField: "library_item_preliminary_title.title", source: "web_tracking", value: libItemTitle, readOnly: true });
+  if (libItemTitle && libItemTitle !== "N/A") {
+    const vsDocTitle = docExtractionRows.find(d => {
+      const t = safeStr((d as Record<string, unknown>).library_item_title)
+              || safeStr((d as Record<string, unknown>).document_title);
+      return t && notNA(t);
+    });
+    const vsTitleSource: FieldSource = vsDocTitle ? "doc_extraction" : "web_tracking";
+    const vsTitleField = vsDocTitle ? "library_item_title" : "library_item_preliminary_title.title";
+    documentFields.push({ label: "Title", agentField: vsTitleField, source: vsTitleSource, value: libItemTitle, readOnly: true });
+  }
   if (libItemUrl) documentFields.push({ label: "URL", agentField: "library_item_url", source: "web_tracking", value: libItemUrl, readOnly: true });
 
   const transcriptFields: FieldEntry[] = [
