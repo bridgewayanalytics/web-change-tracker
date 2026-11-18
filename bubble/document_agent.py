@@ -351,17 +351,63 @@ def _parse_output(raw: str) -> dict:
 # PDF fetch helper
 # ---------------------------------------------------------------------------
 
-def _render_html_to_pdf_text(url: str) -> str | None:
-    """Render an HTML page to text for vectorization.
+_BROWSERY_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,image/apng,*/*;q=0.8"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Cache-Control": "max-age=0",
+}
 
-    Primary path: Playwright — goto with domcontentloaded, then extract page.inner_text()
-    directly (more reliable than PDF in headless ECS). Falls back to page.pdf() if inner_text
-    is empty (e.g. JS-rendered content not yet in DOM).
-    Last resort: requests + BeautifulSoup (blocked on some NAIC pages, but worth trying).
+# CSS selectors in priority order — real body containers used on NAIC + other
+# content sites. `_wait_for_article_text()` tries each one briefly before
+# falling back to `body` so we do not read an unpopulated shell.
+_ARTICLE_SELECTORS = (
+    "article",
+    "main",
+    "[role='main']",
+    "#block-system-main .node__content",  # Drupal content region (NAIC)
+    ".node__content",
+    "#main-content",
+    ".field--name-body",
+    ".content",
+    "#content",
+)
+
+
+def _render_html_to_pdf_text(url: str) -> str | None:
+    """Render an HTML page to text for the document-extraction agent.
+
+    Three failure modes we've hit on NAIC pages drove the current shape:
+    (a) Playwright reading `page.inner_text("body")` immediately after
+        `domcontentloaded` returns an empty shell because the article body
+        is injected by client-side JS *after* DOM parse. Fix: wait for a
+        real article selector to appear, then optionally for networkidle,
+        before reading text.
+    (b) Requests fallback getting HTTP 403 with a bare Mozilla User-Agent —
+        NAIC's WAF wants a full browser-like header set (Accept,
+        Accept-Language, Sec-Fetch-*). Fix: send `_BROWSERY_HEADERS`.
+    (c) Playwright's page.pdf() producing blank text on headless ECS fonts.
+        Only used as a last resort after inner_text() failed, but kept
+        because some pages don't have `article`/`main` and PDF beats empty.
     """
     from scrape.pdf_meeting_meta import _extract_plain_text
 
     # --- Playwright path ---
+    inner_text: str = ""
+    pdf_bytes: bytes | None = None
     try:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as pw:
@@ -370,21 +416,49 @@ def _render_html_to_pdf_text(url: str) -> str | None:
                 args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
             )
             ctx = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                user_agent=_BROWSERY_HEADERS["User-Agent"],
+                extra_http_headers={
+                    k: v for k, v in _BROWSERY_HEADERS.items() if k != "User-Agent"
+                },
+                viewport={"width": 1280, "height": 900},
             )
             page = ctx.new_page()
             try:
-                # domcontentloaded fires as soon as the DOM is parsed — much faster than
-                # networkidle, which waits for all network activity to quiesce (can be 30s+
-                # on pages with analytics/polling). Article text is always in the DOM.
-                page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                # Extract text directly from the live DOM — more reliable than PDF in headless
-                # ECS environments where font subsetting can produce blank PDF text extraction.
-                inner_text = page.inner_text("body")
+                # `domcontentloaded` fires as soon as the DOM is parsed — fast,
+                # but may precede JS-rendered content. Follow with a short
+                # selector wait so the actual article body is populated before
+                # we read it. Avoids the "0 text extracted" outcome on NAIC
+                # newsroom articles.
+                page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                matched_selector = None
+                for sel in _ARTICLE_SELECTORS:
+                    try:
+                        page.wait_for_selector(sel, timeout=5_000, state="attached")
+                        matched_selector = sel
+                        break
+                    except Exception:
+                        continue
+                # Give JS one more beat — networkidle has a short timeout so we
+                # don't hang on long-polling analytics scripts. Non-fatal on
+                # timeout; we still try to read text.
+                try:
+                    page.wait_for_load_state("networkidle", timeout=4_000)
+                except Exception:
+                    pass
+                # Prefer the article wrapper's text if we found one — avoids
+                # picking up nav/footer boilerplate. Fall back to body.
+                target_selector = matched_selector or "body"
+                try:
+                    inner_text = page.inner_text(target_selector) or ""
+                except Exception:
+                    inner_text = page.inner_text("body") or ""
                 if inner_text and len(inner_text.strip()) > 200:
-                    log.info("document_agent: extracted HTML inner_text (%d chars) from %s", len(inner_text), url[:80])
+                    log.info(
+                        "document_agent: extracted HTML inner_text (%d chars, selector=%s) from %s",
+                        len(inner_text), target_selector, url[:80],
+                    )
                     return inner_text.strip()
-                # DOM text is too short — try PDF render as fallback
+                # inner_text still too short — try PDF render as last resort.
                 pdf_bytes = page.pdf(format="A4")
             finally:
                 browser.close()
@@ -401,14 +475,22 @@ def _render_html_to_pdf_text(url: str) -> str | None:
     try:
         import requests as _requests
         from bs4 import BeautifulSoup
-        resp = _requests.get(url, timeout=20, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        })
+        resp = _requests.get(url, timeout=20, headers=_BROWSERY_HEADERS)
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, "html.parser")
             for tag in soup(["script", "style", "nav", "header", "footer"]):
                 tag.decompose()
-            text = soup.get_text(separator="\n", strip=True)
+            # Prefer article/main container text when present, same priority
+            # as the Playwright path, so requests doesn't dilute output with
+            # site chrome.
+            container = None
+            for sel in _ARTICLE_SELECTORS:
+                try:
+                    container = soup.select_one(sel)
+                except Exception:
+                    container = None
+                if container: break
+            text = (container or soup).get_text(separator="\n", strip=True)
             if text and text.strip():
                 log.info("document_agent: extracted HTML text via requests (%d chars) from %s", len(text), url[:80])
                 return text.strip()
