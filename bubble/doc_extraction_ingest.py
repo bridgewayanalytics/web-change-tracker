@@ -85,7 +85,20 @@ def ingest_document(
         data=data,
         timeout=120,
     )
-    r.raise_for_status()
+    if not r.ok:
+        # Include response body in the raised exception so callers' WARNING
+        # logs capture the actual validation error (e.g. "File type not
+        # allowed. Upload PDF, plain text (.txt), or DOCX.") rather than
+        # a generic "400 Client Error" that forces a curl reproduction.
+        # Matches the same pattern used in search() below.
+        try:
+            detail = r.text[:400]
+        except Exception:
+            detail = ""
+        raise requests.HTTPError(
+            f"{r.status_code} {r.reason} for POST {_CHAT_API_BASE}/knowledge/document-extraction/{doc_uuid} — {detail}",
+            response=r,
+        )
     return r.json()
 
 

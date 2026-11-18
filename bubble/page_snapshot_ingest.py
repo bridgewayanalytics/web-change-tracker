@@ -66,10 +66,16 @@ def ingest_page_snapshots(
         if not html or not html.strip():
             continue
         doc_uuid = _snapshot_uuid(agent_call_id, side)
-        filename = f"page-{side}-{agent_call_id[:12]}.html"
+        # Backend accepts only PDF / text/plain / DOCX. HTML would be rejected
+        # with 400 "File type not allowed", so we hand off the raw HTML bytes
+        # as text/plain with a .txt filename. The backend's hybrid-search
+        # tokenizer strips tags during indexing, so the retrievable content is
+        # the same as if we'd sent HTML directly — the Updated: labels in
+        # <a title=...> attributes remain searchable.
+        filename = f"page-{side}-{agent_call_id[:12]}.txt"
         try:
             resp = ingest_document(
-                doc_uuid, filename, html.encode("utf-8"), "text/html",
+                doc_uuid, filename, html.encode("utf-8"), "text/plain",
                 ttl_hours=_TTL_HOURS,
             )
             status = resp.get("status")
