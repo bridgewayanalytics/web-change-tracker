@@ -427,47 +427,201 @@ the dashboard ECS task — no Lambda intermediary.
 Clicking individual section buttons calls `action: "agenda_items"`, `"library_item"`,
 or `"event"` — each runs just that step and stamps the resulting ID on the row.
 
-### Pre-write snapshots
+### Pre- and post-write snapshots
 
 Bubble's Data API exposes no record-version endpoint — once a PATCH lands, the
-prior field values are unrecoverable unless we captured them out of band. To
-guarantee a recovery path, every PATCH against an **existing** Bubble record is
-preceded by `snapshotBubbleRecord(type, id, base?)`, which:
+prior field values are unrecoverable unless we captured them out of band. The
+executor uses `snapshotBubbleRecord(type, id, base?, phase?)` to GET the full
+record body and log it to CloudWatch, both **before** and **after** every
+PATCH against an existing record:
 
-- GETs the full current body of the record.
-- Writes it to CloudWatch at INFO under tag `[bubble-sync][SNAPSHOT]`, one line
-  per record, JSON-stringified.
-- Returns the body (also usable in-process if we ever want to diff it against
-  the outgoing payload).
+- Before PATCH: logged at INFO under tag `[bubble-sync][SNAPSHOT-pre]` with
+  `pre-state={…}` on the same line.
+- After successful PATCH: logged at INFO under tag `[bubble-sync][SNAPSHOT-post]`
+  with `post-state={…}` on the same line.
 
-Non-fatal: a failed snapshot warns and returns `null`; the PATCH still proceeds.
-CREATE paths and the post-create Ref# PATCH on freshly made agenda items
-are intentionally not snapshotted — the record didn't exist a millisecond
-earlier so there's nothing to preserve.
+The pre/post pair gives operators a verifiable before/after audit trail for
+every executor-driven write, and lets a reverter PATCH the pre-state back
+field-for-field if a sync needs to be undone.
 
-Hooked at three sites:
+Non-fatal: a failed snapshot warns and returns `null`; the PATCH still
+proceeds. CREATE paths and the post-create Ref# PATCH on freshly made agenda
+items are intentionally not snapshotted — the record didn't exist a
+millisecond earlier so there's nothing to preserve.
 
-| Line | PATCH target | Scenario |
-|---|---|---|
-| ~1045 | `calendaritem/<id>` | Event UPDATE (trimmed PATCH of `Topics - dt`, `Agenda`, `attached agenda items`, `Eiderix Ref`) |
-| ~933 | `libraryitem/<id>` | Library item UPDATE — PATCH `Topics - dt` |
-| ~840 | `agendaitem/<id>` | Agenda topic refresh when `eidarix_agenda_item_ids` already stamped |
+Hooked at three PATCH sites in `bubble-sync-eidarix.ts` (pre- and post- at
+each):
+
+| PATCH target | Scenario |
+|---|---|
+| `calendaritem/<id>` | Event UPDATE (trimmed PATCH of `Topics - dt`, `Agenda`, `attached agenda items`, `Eiderix Ref`) |
+| `libraryitem/<id>` | Library item UPDATE — PATCH `Topics - dt` |
+| `agendaitem/<id>` | Agenda topic refresh when `eidarix_agenda_item_ids` already stamped |
 
 **Recovery recipe**:
 
 ```bash
+# Find the pre- and post- pair for a specific record around a given time
 AWS_PROFILE=bridgeway aws logs tail /ecs/naic-dashboard --since 24h \
-  | grep "SNAPSHOT.*<type>/<bubble_id>"
+  | grep -E "SNAPSHOT-(pre|post).*<type>/<bubble_id>"
 ```
 
-Everything after `pre-state=` is the JSON body that was live immediately
-before the subsequent PATCH on the next log line. CloudWatch retention on
-that log group is ~30 days.
+Everything after `pre-state=` on the `SNAPSHOT-pre` line is the JSON body
+that was live immediately before the subsequent PATCH; everything after
+`post-state=` on the matching `SNAPSHOT-post` line is the body immediately
+after. CloudWatch retention on `/ecs/naic-dashboard` is ~30 days.
 
-**Scope caveat**: this safeguard only covers writes issued through
-`syncAlert()` from the dashboard. Out-of-band CLI PATCHes (e.g. operator-driven
-`curl` undo) bypass it — operators must snapshot manually (`GET obj/<type>/<id>`)
-before running destructive PATCHes.
+**Out-of-band CLI writes: use `scripts/bubble_safe_write.py`**
+
+Operator-driven `curl -X PATCH` / `curl -X DELETE` against the Bubble Data
+API bypasses the executor snapshot — this is the gap the Nov 10 incident
+exposed. The safe-write wrapper closes that gap by persisting pre- and
+post-state snapshots to S3 before any ad-hoc write:
+
+```bash
+# Inspect (snapshot + print, no write)
+AWS_PROFILE=bridgeway python scripts/bubble_safe_write.py \
+  --type calendaritem --id 1789598655253x668569308291924000 --inspect
+
+# PATCH — snapshots pre, applies PATCH, snapshots post
+AWS_PROFILE=bridgeway python scripts/bubble_safe_write.py \
+  --type calendaritem --id 1789598655253x668569308291924000 \
+  --patch '{"Topics - dt": ["<topic_id>"]}'
+
+# DELETE — snapshots pre, then DELETEs (no post; record is gone)
+AWS_PROFILE=bridgeway python scripts/bubble_safe_write.py \
+  --type agendaitem --id 1780749123275x739856002318684200 --delete
+```
+
+Snapshots land in `s3://<CHANGELOG_BUCKET>/snapshots/bubble/<type>/<id>/<utc-iso>_<phase>.json`.
+The script fetches the Bubble API key from env (`BUBBLE_API_KEY`) or SSM
+(`/naic-dashboard/prod/bubble_api_key`) with the same precedence as the
+executor. **Operators: never `curl -X PATCH` or `curl -X DELETE` a Bubble
+record without using this wrapper (or equivalent pre-state capture).**
+
+### Observability — structured event metrics
+
+`bubble-sync-eidarix.ts` emits `[METRIC] <event> {…json…}` lines at the
+regression-prone paths — one per event so CloudWatch Log metric filters
+can count them without parsing freeform strings. Events currently
+instrumented:
+
+| Event | When it fires | Why it matters |
+|---|---|---|
+| `sync_error` | Top-level `catch` in `syncAlert()` | Any > 0 is unusual — unhandled exception. |
+| `patch_failed` | Bubble Data API PATCH returned non-OK (`libraryitem`, `agendaitem`) | Should never happen in steady state. |
+| `agenda_item_not_found` | `findAgendaItemByTitle()` miss for an Existing/Updated preview | Classifier marked the item as existing but Bubble can't find it by title. |
+| `patch_fallback_to_create` | UPDATE `match_search` returned nothing — fell back to CREATE | URL/title drift between classification and sync. |
+| `topic_fallback_used` | Agenda item create path fell onto the empty-topic chronicletopic | Lookup failed for all provided topic names. |
+| `topic_not_found` | A topic name failed all five lookup probes | Agent/Bubble drift — covered more fully by the modal warning strip. |
+| `org_not_found` | Org name failed `matchOrgName` | Classifier had an org the Bubble org table doesn't know. |
+
+Terraform in `dashboard/infra/terraform/cloudwatch.tf` provisions one
+`aws_cloudwatch_log_metric_filter` per event, counting hits into namespace
+`NaicDashboard/BubbleSync`. View in the AWS console under CloudWatch →
+Metrics → NaicDashboard/BubbleSync. Attach alarms once baselines settle
+(the Pipeline-side pattern in `infra/terraform/cloudwatch.tf` wires SNS
+email alerts and is a template for adding alarms here).
+
+Operator recipe — eyeball the current rate:
+
+```bash
+AWS_PROFILE=bridgeway aws cloudwatch get-metric-statistics \
+  --namespace NaicDashboard/BubbleSync \
+  --metric-name patch_fallback_to_create \
+  --start-time $(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ) \
+  --end-time $(date -u +%Y-%m-%dT%H:%M:%SZ) \
+  --period 3600 --statistics Sum
+```
+
+### Topic name matching
+
+Agent-emitted chronicle topic names drift from Bubble's canonical `Title` in
+several ways. `lookupTopicWithArticle(nameMap, rawName)` applies five probes
+in order; each uses `normalizeTopicKey` (collapses any Unicode whitespace —
+including U+00A0 NBSP — to a single ASCII space, lowercases, trims) and each
+is uniqueness-gated so ambiguous drift falls through to the "not found"
+warning rather than silently matching the wrong topic:
+
+1. **Exact normalized.** `"Foo Bar"` ↔ `"Foo Bar"`, modulo invisible
+   whitespace differences (fixes the NBSP class of mismatch where Bubble
+   Titles like `"ALM Derivatives & Derivative Investments"` carry an
+   embedded NBSP).
+2. **Leading-article toggle.** `"The Foo"` ↔ `"Foo"` in either direction.
+   Catches agent-prepended or agent-dropped `"The "` (e.g. agent emits
+   `"The U.S. Department of the Treasury…"` but Bubble stores it without
+   the article; or agent emits `"NAIC Investment Oversight Framework"` and
+   Bubble has `"The NAIC Investment Oversight Framework"`).
+3. **Unique prefix with separator.** If exactly one Bubble key equals
+   `base + <sep> + <suffix>` for a conjunction/punctuation separator
+   (`" &"`, `" and "`, `" – "`, `" — "`, `" - "`, `", "`, `": "`),
+   accept it. Catches agent truncation like `"Liquidity Stress Tests (LSTs)"`
+   → Bubble `"Liquidity Stress Tests (LSTs) & Macroprudential Risks"`.
+4. **Unique word-boundary suffix.** If the agent name is multi-word (contains
+   a space, so single-word matches like bare `"Risk"` are refused) and
+   exactly one Bubble key ends with `" " + base`, accept it. Catches
+   agent-dropped leading qualifier words like `"RBC Covariance & Asset
+   Concentration Risk"` → Bubble `"Life RBC Covariance & Asset Concentration
+   Risk"`.
+5. **Not found.** Modal shows the per-mini-card warning strip
+   `"1 chronicle topic not found — Calendar Events with no Topic fallback
+   will be used"`; executor writes the `empty topic = true` chronicletopic
+   record ID.
+
+`canonicalizeTopics(topics)` in the modal uses the same probe chain to
+upgrade each agent-emitted topic string to its canonical Bubble Title
+before passing to the `SearchableCombobox`, so the dropdown pre-checks
+the right row and the displayed chip is the real Bubble spelling.
+
+Mirrored helpers:
+- Server-side: `lookupTopicWithArticle` in `src/lib/bubble-sync-eidarix.ts`,
+  wired at `resolveTopicIds` (write path), `validateSyncPlan` (pre-flight
+  warning), and the agenda-item-create topic resolution.
+- Client-side: duplicated in `src/components/ContentGateModal.tsx` because
+  the executor reads `process.env` and must stay server-only; shared
+  normalization semantics though.
+
+### "Preliminary — <X>" alert type normalization
+
+The web-tracking agent emits `"Preliminary — <X>"`, `"Preliminary - <X>"`
+(em-dash + hyphen variants), and bare `"Preliminary"` for still-settling
+announcements. These carry the same payload shape as their underlying
+type, so the classifier (`bubble/bubble_sync_classifier.py`) and
+`document_agent.should_run_for_alert()` strip the prefix via
+`_strip_preliminary()` before every dictionary lookup (`_TYPE_MAP`,
+`_LIBRARY_ITEM_TYPE`, `_LIB_UPDATE_CHANGES`, `_EVENT_AGENDA_LINK_LABEL`,
+`DOCUMENT_ALERT_TYPES`). The row **still stores** the full original
+`alert_type`; only the dictionary lookups use the stripped form. Bare
+`"Preliminary"` defaults to `"New Materials"` so it still classifies.
+Backfill via `scripts/backfill_bubble_action.py --force` will pick up
+any historical Preliminary rows.
+
+### Current flat-schema agenda-item field
+
+`_build_agenda_previews()` and the agenda-flag override in `classify_alert()`
+read `alert.get("agenda_item_title")` first, falling back to the historical
+`agenda_item_title_chronicle_topics` and `agenda_item_title_and_chronicle_topics`.
+Any time the DynamoDB schema's agenda-item field name is renamed, the current
+name must be added to the head of that fallback chain — the classifier does
+not read the schema directly.
+
+### Title overlay from document-extraction agent
+
+`enrich_with_doc_extraction()` (same module) overlays
+`library_item_preview.title`, `fields["Name"]`, and `field_ids[LI.NAME]`
+from the doc-extraction row's `library_item_title` (fallback
+`document_title`) whenever a matching extraction exists. Applies to BOTH
+CREATE and UPDATE paths. Intentionally does **not** touch
+`match_search.title` — that's keyed on what Bubble already stores for the
+UPDATE lookup and rewriting it would break the record match.
+
+The modal's **Name** field (and the vector-store section's **Title** field)
+compute the source badge dynamically from `docExtractionRows`: if any
+matching extraction row has a non-N/A `library_item_title` /
+`document_title`, badge the field as `doc_extraction` with
+`agentField = "library_item_title"`. Otherwise fall back to
+`web_tracking` + `library_item_preliminary_title.title`. Keeps the
+badge honest about which agent's output the user is looking at.
 
 ### Payloads
 

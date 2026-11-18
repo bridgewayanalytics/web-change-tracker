@@ -97,29 +97,46 @@ async function bubbleSearch(
   return data.response?.results ?? [];
 }
 
-// Pre-write snapshot: dump the full current state of a Bubble record to
-// CloudWatch BEFORE we PATCH it. Lets operators recover the pre-state by
-// grepping the log for `[bubble-sync][SNAPSHOT]` and the record id, since
-// Bubble's Data API exposes no record-history endpoint. Non-fatal: a failed
-// snapshot logs a warning and returns null so the caller can still proceed.
+// Snapshot the full current state of a Bubble record to CloudWatch, either
+// BEFORE a PATCH (phase="pre") or AFTER a successful PATCH (phase="post"). The
+// pre/post pair gives operators a verifiable before/after audit trail even
+// though Bubble's Data API exposes no record-history endpoint. Non-fatal: a
+// failed snapshot logs a warning and returns null so the caller can still proceed.
+// Structured event marker — emits a single-line JSON blob with an opening
+// `[METRIC]` tag for easy CloudWatch Logs metric filtering. Use at the
+// regression-prone sites (match_search miss → CREATE fallback, topic fell
+// through to the empty-topic record, workflow PATCH 4xx/5xx, …) so a rate
+// drift surfaces in CloudWatch metrics before a user complains. The tag
+// structure is `[METRIC] <event> {…}` so filter pattern matches like
+// `[METRIC] patch_fallback_to_create` work cleanly.
+function smetric(event: string, data: Record<string, unknown> = {}): void {
+  try {
+    console.info(`[METRIC] ${event} ${JSON.stringify(data)}`);
+  } catch {
+    console.info(`[METRIC] ${event} {}`);
+  }
+}
+
 async function snapshotBubbleRecord(
   type: string,
   id: string,
   base: string = OBJ_BASE,
+  phase: "pre" | "post" = "pre",
 ): Promise<Record<string, unknown> | null> {
   try {
     const res = await bubbleGet(`${base}/${type}/${id}`);
     if (!res.ok) {
-      console.warn(`[bubble-sync][SNAPSHOT] GET ${type}/${id} failed status=${res.status}`);
+      console.warn(`[bubble-sync][SNAPSHOT-${phase}] GET ${type}/${id} failed status=${res.status}`);
       return null;
     }
     const data = await res.json() as { response?: Record<string, unknown> };
     const body = data.response ?? {};
-    // Full body on one line so grep can recover it with: `[SNAPSHOT] <type>/<id>`
-    console.info(`[bubble-sync][SNAPSHOT] ${type}/${id} pre-state=${JSON.stringify(body)}`);
+    // Full body on one line so grep can recover it with: `[SNAPSHOT-<phase>] <type>/<id>`
+    const stateKey = phase === "pre" ? "pre-state" : "post-state";
+    console.info(`[bubble-sync][SNAPSHOT-${phase}] ${type}/${id} ${stateKey}=${JSON.stringify(body)}`);
     return body;
   } catch (err) {
-    console.warn(`[bubble-sync][SNAPSHOT] GET ${type}/${id} threw: ${String(err)}`);
+    console.warn(`[bubble-sync][SNAPSHOT-${phase}] GET ${type}/${id} threw: ${String(err)}`);
     return null;
   }
 }
@@ -180,7 +197,10 @@ async function resolveOrgIds(orgNames: string[]): Promise<string[]> {
     if (id) ids.push(id);
     else missing.push(rawName.trim());
   }
-  if (missing.length) console.warn("[bubble-sync] org(s) not found in Bubble:", missing, `EIDARIX_VERSION=${EIDARIX_VERSION}`);
+  if (missing.length) {
+    console.warn("[bubble-sync] org(s) not found in Bubble:", missing, `EIDARIX_VERSION=${EIDARIX_VERSION}`);
+    smetric("org_not_found", { missing });
+  }
   return ids;
 }
 
@@ -195,7 +215,10 @@ async function resolveTopicIds(
   for (const name of topicNames) {
     const id = lookupTopicWithArticle(nameToId, name);
     if (id) ids.push(id);
-    else console.warn("[bubble-sync] chronicle topic not found:", name);
+    else {
+      console.warn("[bubble-sync] chronicle topic not found:", name);
+      smetric("topic_not_found", { name });
+    }
   }
   return { ids, nameToId };
 }
@@ -408,6 +431,7 @@ async function resolveAgendaItems(
       if (existingId) {
         resolvedIds.push(existingId);
       } else {
+        smetric("agenda_item_not_found", { title, status });
         throw new Error(
           `Agenda item not found in Bubble: '${title}' (status=${status}). ` +
           `The item must exist before the library item can link to it. ` +
@@ -427,6 +451,7 @@ async function resolveAgendaItems(
     // If no topics, use the empty-topic fallback chronicle topic
     let finalTopicIds = topicIds;
     if (!finalTopicIds.length) {
+      smetric("topic_fallback_used", { entity: "agendaitem", title, topic_names: topicNames });
       const fallbackId = await getEmptyTopicId();
       if (fallbackId) finalTopicIds = [fallbackId];
     }
@@ -898,8 +923,11 @@ export async function syncAlert(
               });
               if (!patchRes.ok) {
                 console.warn("[bubble-sync] agendaitem topic PATCH failed id=%s status=%d", bubbleId, patchRes.status);
+                smetric("patch_failed", { entity: "agendaitem", id: bubbleId, status: patchRes.status });
               } else {
                 console.info("[bubble-sync] updated agendaitem %s topics=%j", bubbleId, topicIds);
+                // Post-PATCH snapshot — closes the before/after audit pair.
+                await snapshotBubbleRecord("agendaitem", bubbleId, OBJ_BASE, "post");
               }
             } catch (err) {
               console.warn("[bubble-sync] agendaitem topic PATCH threw id=%s err=%s", bubbleId, String(err));
@@ -936,6 +964,7 @@ export async function syncAlert(
             "[bubble-sync] libraryitem UPDATE match_search returned nothing — falling back to CREATE for %s",
             JSON.stringify(matchSearch),
           );
+          smetric("patch_fallback_to_create", { entity: "libraryitem", agent_call_id: agentCallId, match_search: matchSearch });
           effectiveLibAction = "create";
         }
       }
@@ -998,8 +1027,11 @@ export async function syncAlert(
         if (!patchRes.ok) {
           const body = await patchRes.text();
           console.warn("[bubble-sync] libraryitem PATCH failed:", patchRes.status, body.slice(0, 300));
+          smetric("patch_failed", { entity: "libraryitem", id: existingLibId, status: patchRes.status });
         } else {
           console.info("[bubble-sync] updated libraryitem", existingLibId);
+          // Post-PATCH snapshot — closes the before/after audit pair.
+          await snapshotBubbleRecord("libraryitem", existingLibId, OBJ_BASE, "post");
         }
       }
     }
@@ -1040,6 +1072,7 @@ export async function syncAlert(
             "[bubble-sync] calendaritem UPDATE match_search returned nothing — falling back to CREATE for %s",
             JSON.stringify(matchSearchProbe),
           );
+          smetric("patch_fallback_to_create", { entity: "calendaritem", agent_call_id: agentCallId, match_search: matchSearchProbe });
           effectiveEventAction = "create";
         }
       }
@@ -1115,6 +1148,8 @@ export async function syncAlert(
         }
         bubbleEventId = existingEventId;
         console.info("[bubble-sync] updated calendaritem", bubbleEventId);
+        // Post-PATCH snapshot — closes the before/after audit pair.
+        await snapshotBubbleRecord("calendaritem", existingEventId, OBJ_VERSIONED, "post");
       }
     }
 
@@ -1138,6 +1173,7 @@ export async function syncAlert(
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[bubble-sync] error for agent_call_id=${agentCallId} action=${action}:`, msg);
     patchRow(rows, agentCallId, { bubble_sync_status: "error", bubble_sync_error: msg });
+    smetric("sync_error", { agent_call_id: agentCallId, action, error: msg });
     return { ok: false, error: msg };
   }
 }
