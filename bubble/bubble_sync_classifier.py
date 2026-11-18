@@ -49,17 +49,27 @@ _NOT_APPLICABLE = frozenset({
 })
 
 # Maps alert_type → (event_action, library_item_action, create_agenda_items)
-# "Preliminary — <X>" / "Preliminary - <X>" / plain "Preliminary" alerts fire when
-# the web-tracking agent sees a draft or still-settling change. They carry the same
-# payload shape as the underlying type (e.g. "Preliminary — New Materials" matches
-# "New Materials"), so classify them against the underlying map by stripping the
-# prefix. Em-dash + hyphen covered. Bare "Preliminary" defaults to Materials.
+# "Preliminary" alerts fire when the web-tracking agent sees a draft or still-
+# settling change. They carry the same payload shape as the underlying type
+# so we classify against the underlying map by stripping the "Preliminary"
+# marker. Observed variants in production:
+#   Preliminary — <X>, Preliminary - <X>  (prefix, em-dash or hyphen)
+#   <X> — Preliminary, <X> - Preliminary  (suffix)
+#   Preliminary (bare — defaults to Materials)
+# The regex matches "Preliminary" anywhere with optional em-dash/hyphen
+# separators on either side. Bare "Preliminary" after strip → "New Materials".
 import re as _re
-_PRELIMINARY_RE = _re.compile(r"^\s*Preliminary\s*[—-]\s*", flags=_re.IGNORECASE)
+_PRELIMINARY_RE = _re.compile(
+    r"\s*[—-]?\s*Preliminary\s*[—-]?\s*",
+    flags=_re.IGNORECASE,
+)
 def _strip_preliminary(alert_type: str) -> str:
     if not alert_type:
         return alert_type
-    stripped = _PRELIMINARY_RE.sub("", alert_type).strip()
+    stripped = _PRELIMINARY_RE.sub(" ", alert_type).strip()
+    # Collapse any double spaces introduced by a mid-string strip, though for
+    # prefix/suffix placements this is already clean.
+    stripped = _re.sub(r"\s{2,}", " ", stripped)
     if stripped.lower() == "preliminary" or not stripped:
         return "New Materials"
     return stripped
