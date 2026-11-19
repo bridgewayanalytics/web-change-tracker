@@ -629,6 +629,57 @@ matching extraction row has a non-N/A `library_item_title` /
 `web_tracking` + `library_item_preliminary_title.title`. Keeps the
 badge honest about which agent's output the user is looking at.
 
+### Type overlay from document-extraction agent
+
+Same overlay pattern as title: `enrich_with_doc_extraction()` overlays
+`library_item_preview.type` (and `fields["Type"]`, `fields["Doc Type"]`)
+from the doc-extraction row's `document_type` field whenever present.
+Applies to BOTH CREATE and UPDATE paths.
+
+Why overlay rather than keep the classifier's `_LIBRARY_ITEM_TYPE[alert_type]`
+lookup: the classifier lookup is driven by regex matching on the alert_type
+string and falls over for any variant not hardcoded in the map. The ALM
+Derivatives bug on 2026-11-19 is the canonical example — alert_type
+`"Preliminary. Updated Request for Comment"` (period separator) wasn't
+being normalised correctly, so the lookup fell to the `"Document"` default,
+which the executor's `LIB_TYPE_ALIASES` then mapped to `"Publication"`
+instead of the correct `"Proposed Guidance & Support Materials"`. The doc
+agent actually reads the PDF and knows the real document type — use that.
+
+Safety net in the executor: `LIB_TYPE_ALIASES` normalises the common
+agent misspelling `"Proposed Guidelines & Support Materials"` (plural,
+with an L) → `"Proposed Guidance & Support Materials"` (the canonical
+Bubble type title) so a typo in the doc agent's output doesn't propagate
+into Bubble.
+
+### Preliminary alert type stripping
+
+`_strip_preliminary()` in the classifier normalises
+`"Preliminary <sep> <X>"` / `"<X> <sep> Preliminary"` / bare `"Preliminary"`
+to the underlying type before every map lookup (`_TYPE_MAP`,
+`_LIBRARY_ITEM_TYPE`, `_LIB_UPDATE_CHANGES`, `_EVENT_AGENDA_LINK_LABEL`).
+`_strip_preliminary_doc()` in `document_agent` mirrors this so
+`DOCUMENT_ALERT_TYPES` covers Preliminary variants.
+
+Separator class: em-dash (`—`), en-dash (`–`), hyphen (`-`), period (`.`),
+colon (`:`) — every punctuation we've seen the agent insert between
+"Preliminary" and the underlying type. Bare `"Preliminary"` after strip
+defaults to `"New Materials"`. The row still stores the full original
+`alert_type`; only the dictionary lookups use the stripped form.
+
+### Sibling-row stamp scoping
+
+Sibling rows share `agent_call_id` but have distinct `library_item_url`
+(the `storage/alert_s3.py` fan-out fix in `5fb4b4e` makes each row carry
+its own URL + per-row `bubble_action.library_item_preview.url`). The
+executor's `patchRow(rows, agentCallId, fields, libraryItemUrl?)` helper
+scopes stamp writes by `library_item_url` so publishing one sibling's
+library item only stamps `bubble_library_item_id` / `bubble_sync_status`
+on that single sibling row. Without this, publishing one doc would mark
+every sibling "✓ Complete" in the modal. All three `patchRow` call sites
+(agenda_items action, main sync completion, error path) pass the
+executor's resolved `libraryItemUrl` so the scoping is consistent.
+
 ### Payloads
 
 All writes send:
