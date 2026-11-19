@@ -48,34 +48,48 @@ direct database access.
 
 ## Core principle
 
-**Inline the source. Search the references.** (Backend team's retrieval
-pipeline reply, 2026-11-09.)
+**Inline the source document. Vector-search everything else — including the
+HTML.**
 
-- The *authoritative source document* (PDF, DOCX, or transcript) is ingested
-  per-call under a deterministic `document-extraction:<uuid>` namespace so the
-  QA agent and reruns re-derive the same `doc_uuid` and hit a cached document.
-  The agent then fetches the stitched text via `GET /knowledge/document-extraction/
-  {uuid}/text` and **inlines it directly in the user message** under
-  `=== SOURCE DOCUMENT ===`. The source-document namespace is **not** added
-  to the agent's search scope — the model would just waste turns re-retrieving
-  content it already has in front of it.
-- *Before/after HTML snapshots* are **inlined directly** in the user message
-  under `=== BEFORE === / === AFTER ===` (WTA) or `=== PAGE CHANGE CONTEXT ===`
-  (extraction / QA). The `Updated: MM/DD/YYYY` label in a download link's
-  `title=` attribute sits right in that inlined HTML. HTML is NOT pushed into
-  a vector store and NOT searched via `search_knowledge_base`.
-- The *reference collections* (`ba:chronicles`, `ba:newsreels`, `ba:NAIC Guidelines`,
+The spec from the backend team (`retrieval-pipeline-reply (3).md`, 2026-11-09)
+explicitly prescribes inlining the **source document** and searching the
+reference collections via `/knowledge/search`. It does NOT address the
+before/after HTML. For HTML we follow the architectural decision in Nov 3
+2026 (`e248d88`) which moved HTML to vector store to keep ~16+ KB of raw
+HTML out of every prompt and let the agent target specific link metadata
+(`Updated:` labels, filenames, etc.) via search.
+
+Concretely for the **document extraction / QA path**:
+
+- *Authoritative source document* (PDF / DOCX / transcript): ingested under
+  a deterministic `document-extraction:<uuid>` namespace, then fetched back
+  via `GET /knowledge/document-extraction/{uuid}/text` and **inlined** in the
+  user message under `=== SOURCE DOCUMENT ===`. The source namespace is NOT
+  added to the agent's search scope (per Biraj §57: "the source document
+  should never be ranked against the library").
+- *Before/after HTML snapshots*: ingested via `ingest_page_snapshots` into
+  `page-snapshot:<uuid>` namespaces (deterministic `(agent_call_id, side)`
+  uuid, 30-day TTL) and **appended to the search scope**. HTML is NOT
+  inlined in the prompt.
+- *Reference collections* (`ba:chronicles`, `ba:newsreels`, `ba:NAIC Guidelines`,
   `naic-proceedings`, `ba:organizations`, `ba:International Guidelines`,
-  `ba:Rating Agencies`, `bubble-data`) are static search indexes.
-- The agent gets one tool — `search_knowledge_base` — that POSTs to
-  `/knowledge/search` for the **reference collections only**. No
-  `document-extraction:*` and no `page-snapshot:*` ever ride on the namespace
-  list; those contents are already in the prompt.
+  `ba:Rating Agencies`, `bubble-data`): searchable via `search_knowledge_base`.
+- The agent gets one tool, `search_knowledge_base`, scoped to
+  `reference_collections + page-snapshot:*` — never the source-document
+  namespace.
 
-Degraded path: when `CHATKIT_INTERNAL_API_KEY` is missing (backend unreachable),
-the agents fall through to a direct Responses API call with no search tool.
-The user message already inlines source + HTML, so output still gets produced;
-the agent just loses access to reference collections for cross-referencing.
+For the **WTA (page_change_agent) and alerts QA (eval_agent)**:
+
+- HTML is **inlined** directly under `=== BEFORE === / === AFTER ===`.
+  These agents' entire task is to reason about the diff between versions,
+  and chunked retrieval of your own source is what the spec warned against
+  in §2. `search_knowledge_base` reaches reference collections only.
+
+Degraded path: when `CHATKIT_INTERNAL_API_KEY` is missing (backend
+unreachable), extraction / QA fall through to a direct Responses API call
+with no search tool. The source-document inline block still populates,
+and HTML is inlined under `=== PAGE CHANGE CONTEXT ===` as a safety net
+so the agent still has link metadata.
 
 ## Per-agent behavior
 
@@ -86,13 +100,14 @@ the agent just loses access to reference collections for cross-referencing.
 3. `ingest_document(doc_uuid, filename, pdf_text, "text/plain", ttl_hours=24*30)`.
 4. If `status != "cached"`: `wait_until_ready(doc_uuid)`.
 5. `src = document_text(doc_uuid)` — fetches the stitched source text
-   (sliding-window overlaps removed). **Inline `src["text"]` in user_content**
+   (sliding-window overlaps removed). **Inline `src["text"]`** in user_content
    under `=== SOURCE DOCUMENT ===`.
-6. Inline `before_html` / `after_html` in user_content under
-   `=== PAGE CHANGE CONTEXT ===` so link metadata (`Updated:` labels) sits
-   in the prompt.
-7. `reference_namespaces = config_namespaces − {document-extraction:*, page-snapshot:*}`.
-   Nothing added back — source + HTML are in the prompt.
+6. `page_ns = ingest_page_snapshots(agent_call_id, before_html, after_html)`
+   returns up to two `page-snapshot:<uuid>` namespaces (deterministic
+   `(acid, side)` uuid, 30-day TTL). HTML is NOT inlined.
+7. `reference_namespaces = (config_namespaces − {document-extraction:*,
+   page-snapshot:*}) + page_ns`. Source namespace stays filtered out
+   (source is inlined); page-snapshot namespaces from THIS call added back.
 8. Agents SDK runs with one tool (`search_knowledge_base`) that calls
    `search(query, reference_namespaces, trace_id=agent_call_id)`. No
    `document_id` passed (would scope every search to the source PDF and
@@ -103,10 +118,11 @@ the agent just loses access to reference collections for cross-referencing.
 ### `eval/doc_eval_agent.py` (QA)
 
 Same shape as extraction: fetches the document via `_fetch_document_text`
-(or transcript S3 for transcript rows), fetches the before/after HTML from
-S3, and `_build_user_message` inlines both into the user message. Reference
-namespaces only in the search scope — no document-extraction, no
-page-snapshot. `trace_id` = `agent_call_id` of the extraction being graded.
+(or transcript S3 for transcript rows), **inlines** the source under
+`=== SOURCE DOCUMENT ===`, and fetches before/after HTML from S3. Current
+state (2026-11-19) inlines HTML in the QA prompt too — mirror of
+`document_agent` HTML-in-vector-store is a follow-up. `trace_id` =
+`agent_call_id` of the extraction being graded.
 
 ### `bubble/page_change_agent.py` (WTA)
 

@@ -173,13 +173,16 @@ async def _run_with_pgvector(
       1. Run the Agents SDK with the backend's /knowledge/search endpoint as
          the agent's search tool. The source document is already inlined into
          user_content by the caller (via GET /knowledge/document-extraction/
-         {doc_uuid}/text), so search_knowledge_base only reaches the reference
-         collections (Chronicles, Newsreels, Guidelines, Proceedings, etc.).
+         {doc_uuid}/text). search_knowledge_base reaches the reference
+         collections (Chronicles, Newsreels, Guidelines, Proceedings, etc.)
+         PLUS the before/after page-snapshot namespaces — the agent uses it
+         to retrieve link metadata (`Updated:` labels etc.) from the HTML.
       2. Make one Structured Outputs call to reformat the gathered information
          into the exact DynamoDB schema.
 
     reference_namespaces must NOT include any document-extraction:* namespaces
-    — the source is already in the prompt.
+    for the source document — it's inlined. It MAY include page-snapshot:*
+    namespaces for the before/after HTML.
     """
     from agents import Agent, Runner, ModelSettings, function_tool
     from agents.model_settings import Reasoning
@@ -187,11 +190,19 @@ async def _run_with_pgvector(
 
     @function_tool
     async def search_knowledge_base(query: str) -> str:
-        """Search the reference knowledge base (Chronicles, Newsreels, NAIC Guidelines,
-        proceedings, organizations) for context relevant to the extraction. The source
-        document you are extracting from is already in your prompt — do NOT search
-        for its contents. Use this only to look up related prior Newsreels, existing
-        Chronicle Topics, calendar items, library items, or organization names.
+        """Search the knowledge base for context relevant to this extraction.
+
+        Scope:
+        - Reference collections: Chronicles, Newsreels, NAIC Guidelines,
+          proceedings, organizations — use to look up related prior Newsreels,
+          existing Chronicle Topics, calendar items, library items, org names.
+        - Before/after HTML snapshots of the page that triggered this extraction —
+          use to find link metadata like `Updated: MM/DD/YYYY` labels,
+          link filenames, which tab a document appears under, etc.
+
+        The source document you are extracting from is already inlined in your
+        prompt under `=== SOURCE DOCUMENT ===` — do NOT search for its contents.
+
         Returns ranked hits with title, date, section, content."""
         try:
             resp = backend_search(
@@ -930,18 +941,13 @@ def extract_document_data(
                 ctx_parts.append(f"Source page URL: {source_url}")
             if ctx_parts:
                 lines.append("\n=== ALERT CONTEXT (page change alert that triggered this extraction) ===\n" + "\n".join(ctx_parts))
-        # Inline before/after HTML snapshots so the agent can reach page-level
-        # posting metadata (`Updated: MM/DD/YYYY` labels in <a title=...>
-        # attributes, link filenames, etc.) directly without searching. The
-        # spec's inline-the-source principle applies to both the PDF and the
-        # surrounding HTML context that triggered the extraction.
-        if before_html or after_html:
-            html_parts = []
-            if before_html:
-                html_parts.append(f"Before HTML (prior state):\n{before_html}")
-            if after_html:
-                html_parts.append(f"After HTML (new state with the document now present):\n{after_html}")
-            lines.append("\n=== PAGE CHANGE CONTEXT (HTML snapshots of the monitored page) ===\n" + "\n".join(html_parts))
+        # Before/after HTML is NOT inlined. When pgvector is enabled it's
+        # ingested to page-snapshot:* namespaces below and reached via
+        # search_knowledge_base — see Nov 3 2026 commit e248d88 for the
+        # rationale (keeps 16+ KB of raw HTML out of every prompt and lets
+        # the agent target specific sections like `Updated:` labels). The
+        # direct-API fallback path (pgvector disabled) still inlines HTML
+        # because that path has no search tool to reach it.
         user_content = "\n".join(lines)
 
         _store_agent_context(doc_call_id, "document", user_content, system_prompt)
@@ -1043,22 +1049,46 @@ def extract_document_data(
             )
             return []
 
-        # Reference search scope: strip any document-extraction:* and
-        # page-snapshot:* from the config-declared list. Both the source
-        # document and the before/after HTML are inlined above — search is
-        # for reference collections (Chronicles, Newsreels, Guidelines,
-        # Proceedings, organizations) only.
+        # Ingest before/after HTML snapshots to the backend knowledge base.
+        # Reusing the parent alert's agent_call_id means the deterministic
+        # (acid, side) uuid is shared with any sibling document extractions
+        # from the same page change — backend returns status=cached on the
+        # 2nd..Nth call, zero re-indexing cost. This is the Nov 3 (e248d88)
+        # pattern: keep raw HTML out of the prompt, let the agent query the
+        # specific metadata it needs (e.g. `Updated: MM/DD/YYYY` labels in
+        # <a title=...> attributes).
+        acid_for_snapshots = str((alert_context or {}).get("agent_call_id") or "").strip()
+        page_snapshot_namespaces: list[str] = []
+        if acid_for_snapshots and (before_html or after_html):
+            try:
+                from bubble.page_snapshot_ingest import ingest_page_snapshots
+                page_snapshot_namespaces = ingest_page_snapshots(
+                    acid_for_snapshots, before_html or "", after_html or "",
+                )
+            except Exception as e:
+                log.warning(
+                    "document_agent: page snapshot ingest failed for acid=%s: %s — proceeding without",
+                    acid_for_snapshots[:12], e,
+                )
+
+        # Reference search scope: strip any document-extraction:* /
+        # page-snapshot:* from the config-declared list (they're populated
+        # per-invocation, not via DynamoDB), then add the page-snapshot
+        # namespaces we just ingested. The source document stays filtered
+        # — it's already inlined above.
         reference_namespaces = [
             ns for ns in pgvector_namespaces
             if not str(ns).startswith("document-extraction:")
             and not str(ns).startswith("page-snapshot:")
         ]
+        reference_namespaces.extend(page_snapshot_namespaces)
 
         trace_id = str((alert_context or {}).get("agent_call_id") or doc_call_id).strip()
 
         log.info(
-            "document_agent: running (model=%s, source_inlined=%s, ref_namespaces=%d) for: %s",
-            model, source_text_added, len(reference_namespaces), document_name[:80],
+            "document_agent: running (model=%s, source_inlined=%s, ref_namespaces=%d, page_snapshots=%d) for: %s",
+            model, source_text_added, len(reference_namespaces),
+            len(page_snapshot_namespaces), document_name[:80],
         )
         try:
             from bubble.async_runner import run_sync as _run_sync
