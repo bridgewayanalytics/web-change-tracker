@@ -490,7 +490,8 @@ def extract_page_change(
         if _pgvector_enabled():
             log.info("page_change_agent: running with backend search (model=%s, call_id=%s)", model, agent_call_id[:8])
             try:
-                raw = asyncio.run(_run_with_pgvector(
+                from bubble.async_runner import run_sync as _run_sync
+                raw = _run_sync(_run_with_pgvector(
                     system_prompt, user_content, model, reasoning_effort,
                     pgvector_namespaces if isinstance(pgvector_namespaces, list) else [],
                     trace_id=agent_call_id,

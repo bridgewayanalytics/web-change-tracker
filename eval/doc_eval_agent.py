@@ -693,7 +693,8 @@ def evaluate_doc_extraction_call(rows: list[dict], alert_row: dict | None = None
         return await _run_group_async(rows, prepared)
 
     try:
-        return asyncio.run(_single())
+        from bubble.async_runner import run_sync as _run_sync
+        return _run_sync(_single())
     except Exception as e:
         import traceback
         agent_call_id = rows[0].get("agent_call_id", "unknown")

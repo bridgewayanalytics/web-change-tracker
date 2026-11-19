@@ -335,7 +335,8 @@ def evaluate_group(
             model, namespaces, len(rows), agent_call_id,
         )
         try:
-            raw = asyncio.run(
+            from bubble.async_runner import run_sync as _run_sync
+            raw = _run_sync(
                 _run_with_pgvector(system_prompt, user_message, model, reasoning_effort, namespaces, eval_row_keys, field_names)
             )
             if not isinstance(raw, dict):

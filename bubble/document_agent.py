@@ -1061,7 +1061,8 @@ def extract_document_data(
             model, source_text_added, len(reference_namespaces), document_name[:80],
         )
         try:
-            result = asyncio.run(_run_with_pgvector(
+            from bubble.async_runner import run_sync as _run_sync
+            result = _run_sync(_run_with_pgvector(
                 system_prompt, user_content, model, reasoning_effort, reference_namespaces,
                 json_schema=json_schema,
                 json_schema_name=json_schema_name,
