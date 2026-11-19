@@ -345,7 +345,14 @@ async def _run_with_pgvector(
             verbosity=reasoning_effort,
         ),
     )
-    result = await Runner.run(agent, input=user_content)
+    # max_turns=25 matches document_agent. The default of 10 was fine when
+    # before/after HTML was inlined (agent only searched for reference data
+    # like org names), but after the 2026-11-19 move of HTML into the
+    # page-snapshot:* namespaces the WTA has to spend turns retrieving the
+    # HTML itself via search_knowledge_base. 10 turns ran out on ~60% of
+    # invocations in the first verification task (MaxTurnsExceeded →
+    # fallback to direct-API with inlined HTML, defeating the migration).
+    result = await Runner.run(agent, input=user_content, max_turns=25)
     from bubble.usage_telemetry import extract_agents_sdk_usage, post_usage
     u = extract_agents_sdk_usage(result)
     if u["requests"]:
