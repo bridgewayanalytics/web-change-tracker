@@ -537,7 +537,7 @@ AWS_PROFILE=bridgeway aws cloudwatch get-metric-statistics \
 ### Topic name matching
 
 Agent-emitted chronicle topic names drift from Bubble's canonical `Title` in
-several ways. `lookupTopicWithArticle(nameMap, rawName)` applies five probes
+several ways. `lookupTopicWithArticle(nameMap, rawName)` applies six probes
 in order; each uses `normalizeTopicKey` (collapses any Unicode whitespace —
 including U+00A0 NBSP — to a single ASCII space, lowercases, trims) and each
 is uniqueness-gated so ambiguous drift falls through to the "not found"
@@ -552,9 +552,9 @@ warning rather than silently matching the wrong topic:
    `"The U.S. Department of the Treasury…"` but Bubble stores it without
    the article; or agent emits `"NAIC Investment Oversight Framework"` and
    Bubble has `"The NAIC Investment Oversight Framework"`).
-3. **Unique prefix with separator.** If exactly one Bubble key equals
-   `base + <sep> + <suffix>` for a conjunction/punctuation separator
-   (`" &"`, `" and "`, `" – "`, `" — "`, `" - "`, `", "`, `": "`),
+3. **Unique prefix with separator (agent-truncated).** If exactly one Bubble
+   key equals `base + <sep> + <suffix>` for a conjunction/punctuation
+   separator (`" &"`, `" and "`, `" – "`, `" — "`, `" - "`, `", "`, `": "`),
    accept it. Catches agent truncation like `"Liquidity Stress Tests (LSTs)"`
    → Bubble `"Liquidity Stress Tests (LSTs) & Macroprudential Risks"`.
 4. **Unique word-boundary suffix.** If the agent name is multi-word (contains
@@ -563,7 +563,13 @@ warning rather than silently matching the wrong topic:
    agent-dropped leading qualifier words like `"RBC Covariance & Asset
    Concentration Risk"` → Bubble `"Life RBC Covariance & Asset Concentration
    Risk"`.
-5. **Not found.** Modal shows the per-mini-card warning strip
+5. **Unique agent-superset-of-Bubble (reverse of probe 3).** If exactly one
+   Bubble key `k` satisfies `base.startsWith(k + <sep>)` for one of the
+   same separators as probe 3, accept it. Catches agent *extension* like
+   `"ALM Derivatives & Derivative Wrapped Investments"` → Bubble
+   `"ALM Derivatives"`. Uniqueness-gated so a Bubble topic that is itself
+   a prefix of multiple other Bubble topics still falls through.
+6. **Not found.** Modal shows the per-mini-card warning strip
    `"1 chronicle topic not found — Calendar Events with no Topic fallback
    will be used"`; executor writes the `empty topic = true` chronicletopic
    record ID.
