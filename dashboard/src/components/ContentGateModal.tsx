@@ -20,6 +20,11 @@ interface ValidationIssue {
   message: string;
   unresolved: string[];
   severity: "error" | "warning";
+  // Optional canonical replacement — set when the server resolved the agent's
+  // value via an alias or fuzzy match (currently only on Library Item Type).
+  // The modal swaps the displayed value for this so the UI matches what will
+  // actually land in Bubble.
+  canonical?: string;
 }
 
 interface ValidationResult {
@@ -32,7 +37,11 @@ function ValidationBanner({ result }: { result: ValidationResult | null | "loadi
   // Chronicle Topic issues are surfaced inline on the agenda item mini-cards they
   // belong to; suppress the duplicate top-level banner entries so the user isn't
   // told about the same topic twice.
-  const issues  = result.issues.filter(i => i.field !== "Chronicle Topics");
+  // Chronicle Topics and Library Item Type issues are surfaced inline on the
+  // card they belong to (agenda item mini-card / library item card) instead
+  // of the top-level banner, so the user sees the warning next to the
+  // field it's about.
+  const issues  = result.issues.filter(i => i.field !== "Chronicle Topics" && i.field !== "Library Item Type");
   if (issues.length === 0) return null;
   const errors   = issues.filter(i => i.severity === "error");
   const warnings = issues.filter(i => i.severity === "warning");
@@ -633,6 +642,17 @@ function buildLibFields(
   const titleSource: FieldSource = docTitle ? "doc_extraction" : "web_tracking";
   const titleAgentField = docTitle ? "library_item_title" : "library_item_preliminary_title.title";
 
+  // Same dynamic-badge logic for the Type field — enrich_with_doc_extraction
+  // overlays `lp.type` from the doc extraction's `document_type` when that's
+  // present and non-N/A. Reflect that in the badge so the user knows which
+  // agent produced the type value they're looking at.
+  const docType = docExtractionRows.find(d => {
+    const t = safeStr((d as Record<string, unknown>).document_type);
+    return t && notNA(t);
+  });
+  const typeSource: FieldSource = docType ? "doc_extraction" : "web_tracking";
+  const typeAgentField = docType ? "document_type" : "alert_type (classifier)";
+
   const topics = allLibraryItemTopics(lp, agendaItems);
 
   const fd = (lp.fields ?? {}) as Record<string, string>;
@@ -650,7 +670,7 @@ function buildLibFields(
   const entries: FieldEntry[] = [
     mk("Name",          titleAgentField, notNA(title) ? title : "—", { source: titleSource }),
     mk("URL",           "library_item_url",                     notNA(url)      ? url      : "—",   { source: "web_tracking" }),
-    mk("Type",          "alert_type (classifier)",              notNA(type)     ? type     : "—",   { source: "web_tracking", combobox: { type: "libraryitemtype", mode: "single" } }),
+    mk("Type",          typeAgentField, notNA(type) ? type : "—", { source: typeSource, combobox: { type: "libraryitemtype", mode: "single" } }),
     {
       label: "Organizations",
       agentField: "organization",
@@ -1447,17 +1467,30 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     [libAction, libPreview, row, docExtractionRows],
   );
 
-  const libFields = useMemo(
-    () => buildLibFields(libPreview, displayedAgendaItems, libChangedLabels, derivedDate, docExtractionRows),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [libPreview, displayedAgendaItems, libChangedLabels, derivedDate, docExtractionRows],
-  );
-
   const [eventEdits, setEventEdits]               = useState<Record<string, string>>({});
   const [libEdits, setLibEdits]                   = useState<Record<string, string>>({});
 
   // Pre-flight validation — runs once on open for rows with Bubble sections
   const [validation, setValidation]               = useState<ValidationResult | null | "loading">(null);
+
+  // When the server reports that the library item type routes through an
+  // alias / fuzzy match, show the canonical Bubble name in the Type field
+  // (what will actually land in Bubble) rather than the typo'd agent output.
+  const libTypeWarning = useMemo(() => {
+    if (validation === null || validation === "loading") return null;
+    return validation.issues.find(i => i.field === "Library Item Type") ?? null;
+  }, [validation]);
+
+  const effectiveLibPreview = useMemo(() => {
+    if (!libTypeWarning?.canonical) return libPreview;
+    return { ...libPreview, type: libTypeWarning.canonical };
+  }, [libPreview, libTypeWarning]);
+
+  const libFields = useMemo(
+    () => buildLibFields(effectiveLibPreview, displayedAgendaItems, libChangedLabels, derivedDate, docExtractionRows),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [effectiveLibPreview, displayedAgendaItems, libChangedLabels, derivedDate, docExtractionRows],
+  );
   const hasBubbleSections = !!(eventAction || libAction || hasAgenda);
   useEffect(() => {
     if (!hasBubbleSections || !agentCallId) return;
@@ -2132,6 +2165,18 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
               {sections.library_item.status === "error" && sections.library_item.error && (
                 <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2 leading-relaxed">
                   {sections.library_item.error}
+                </div>
+              )}
+              {libTypeWarning && (
+                <div className={`text-[11px] rounded-md px-3 py-2 leading-relaxed border ${libTypeWarning.severity === "error" ? "text-red-700 bg-red-50 border-red-200" : "text-amber-700 bg-amber-50 border-amber-200"}`}>
+                  <div className="font-semibold">
+                    {libTypeWarning.severity === "error" ? "✕" : "⚠"} Type: {libTypeWarning.message}
+                  </div>
+                  {libTypeWarning.unresolved.length > 0 && (
+                    <div className="mt-1 font-mono text-[10px] opacity-75">
+                      → {libTypeWarning.unresolved.join(", ")}
+                    </div>
+                  )}
                 </div>
               )}
               <Section

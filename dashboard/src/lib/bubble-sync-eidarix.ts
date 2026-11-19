@@ -242,20 +242,75 @@ const LIB_TYPE_ALIASES: Record<string, string> = {
   "meeting transcript":          "Other",
 };
 
-async function resolveLibraryItemTypeId(typeName: string): Promise<string | null> {
+/**
+ * Resolve a library item type name to a Bubble ID.
+ *
+ * Returns the match status so callers can distinguish:
+ *   - `"exact"`  — typeName matched a Bubble title exactly
+ *   - `"alias"`  — typeName routed through LIB_TYPE_ALIASES to a Bubble title
+ *   - `"fuzzy"`  — typeName resembles a Bubble title closely (e.g. agent typo;
+ *                  closest Levenshtein-ish match on lowercased string)
+ *   - `null`     — nothing matched; id is null
+ *
+ * `canonical` is the Bubble `Title` the id belongs to (for display back to the
+ * user in warnings); `null` when `id` is `null`.
+ */
+async function resolveLibraryItemType(typeName: string): Promise<{
+  id: string | null;
+  canonical: string | null;
+  matchedAs: "exact" | "alias" | "fuzzy" | null;
+}> {
   try {
-    // Use versioned URL (no space constraint — versioned URL already scopes to the correct space)
     const types = await bubbleListAll("libraryitemtype", [], true);
     const needle = typeName.trim().toLowerCase();
-    // Resolve alias first (classifier name → Bubble name)
-    const resolved = (LIB_TYPE_ALIASES[needle] ?? typeName).trim().toLowerCase();
+    // 1. Exact match
     for (const t of types) {
-      const title = String(t.display ?? t.Title ?? "").trim().toLowerCase();
-      if (title === resolved || title === needle) return String(t._id);
+      const title = String(t.display ?? t.Title ?? "").trim();
+      if (title.toLowerCase() === needle) {
+        return { id: String(t._id), canonical: title, matchedAs: "exact" };
+      }
     }
-    console.warn("[bubble-sync] libraryitemtype not found:", typeName, "→", resolved, "available:", types.map(t => t.display ?? t.Title));
+    // 2. Alias match
+    const aliased = LIB_TYPE_ALIASES[needle];
+    if (aliased) {
+      const aliasedLower = aliased.trim().toLowerCase();
+      for (const t of types) {
+        const title = String(t.display ?? t.Title ?? "").trim();
+        if (title.toLowerCase() === aliasedLower) {
+          return { id: String(t._id), canonical: title, matchedAs: "alias" };
+        }
+      }
+    }
+    // 3. Fuzzy match — compare token overlap after lowercasing. Catches unseen
+    // typos the alias table doesn't cover (e.g. "Guidelines" ↔ "Guidance" if
+    // the alias ever drifts). Only accepts a match when >=70% of the longer
+    // string's word-tokens are shared with the candidate.
+    const needleTokens = needle.split(/\W+/).filter(Boolean);
+    let best: { t: Record<string, unknown>; score: number; title: string } | null = null;
+    for (const t of types) {
+      const title = String(t.display ?? t.Title ?? "").trim();
+      const titleTokens = title.toLowerCase().split(/\W+/).filter(Boolean);
+      const bigger = Math.max(needleTokens.length, titleTokens.length);
+      if (!bigger) continue;
+      const titleSet = new Set(titleTokens);
+      const shared = needleTokens.filter(tok => titleSet.has(tok)).length;
+      const score = shared / bigger;
+      if (score >= 0.7 && (!best || score > best.score)) {
+        best = { t, score, title };
+      }
+    }
+    if (best) {
+      return { id: String(best.t._id), canonical: best.title, matchedAs: "fuzzy" };
+    }
+    console.warn("[bubble-sync] libraryitemtype not found:", typeName, "available:", types.map(t => t.display ?? t.Title));
   } catch (e) { console.warn("[bubble-sync] libraryitemtype lookup failed:", e); }
-  return null;
+  return { id: null, canonical: null, matchedAs: null };
+}
+
+// Backward-compat wrapper — still returns just the id so existing call sites
+// (the create path at line ~1014) don't change behavior.
+async function resolveLibraryItemTypeId(typeName: string): Promise<string | null> {
+  return (await resolveLibraryItemType(typeName)).id;
 }
 
 async function resolveCalendarItemTypeId(typeName: string): Promise<string | null> {
@@ -727,6 +782,11 @@ export interface ValidationIssue {
   message: string;
   unresolved: string[];
   severity: "error" | "warning";
+  // Optional canonical replacement when the publish target differs from the
+  // agent-emitted value (currently set on Library Item Type issues when the
+  // alias / fuzzy matcher found a Bubble fallback). Lets the modal swap the
+  // displayed value for what will actually land in Bubble.
+  canonical?: string;
 }
 
 export interface ValidationResult {
@@ -775,9 +835,12 @@ export async function validateSyncPlan(
         })
       : Promise.resolve([] as string[]),
 
-    libTypeName ? resolveLibraryItemTypeId(libTypeName) : Promise.resolve("skip" as string | null),
+    libTypeName
+      ? resolveLibraryItemType(libTypeName)
+      : Promise.resolve({ id: "skip", canonical: null, matchedAs: null } as Awaited<ReturnType<typeof resolveLibraryItemType>>),
     plan.event  ? resolveCalendarItemTypeId("Meeting")  : Promise.resolve("skip" as string | null),
   ]);
+  const libType = libTypeId as Awaited<ReturnType<typeof resolveLibraryItemType>>;
 
   const issues: ValidationIssue[] = [];
 
@@ -799,13 +862,28 @@ export async function validateSyncPlan(
     });
   }
 
-  if (libTypeId !== "skip" && !libTypeId) {
-    issues.push({
-      field: "Library Item Type",
-      message: `Type "${libTypeName}" not found in Bubble — library item will publish with no type`,
-      unresolved: libTypeName ? [libTypeName] : [],
-      severity: "error",
-    });
+  if (libType.id !== "skip") {
+    if (!libType.id) {
+      // Nothing matched at all — hard error, publish with no type
+      issues.push({
+        field: "Library Item Type",
+        message: `Type "${libTypeName}" not found in Bubble — library item will publish with no type`,
+        unresolved: libTypeName ? [libTypeName] : [],
+        severity: "error",
+      });
+    } else if (libType.matchedAs === "alias" || libType.matchedAs === "fuzzy") {
+      // Alias / fuzzy match succeeded — publish will go through with the
+      // canonical Bubble type, but surface the fallback so the user knows
+      // what's actually going to land. `canonical` lets the modal render
+      // the fallback name in the Type combobox instead of the typo'd value.
+      issues.push({
+        field: "Library Item Type",
+        message: `Type "${libTypeName}" not an exact Bubble match — will fall back to "${libType.canonical}" (${libType.matchedAs === "alias" ? "alias" : "closest match"})`,
+        unresolved: libTypeName ? [libTypeName] : [],
+        severity: "warning",
+        canonical: libType.canonical ?? undefined,
+      });
+    }
   }
 
   if (calTypeId !== "skip" && !calTypeId) {

@@ -634,7 +634,11 @@ badge honest about which agent's output the user is looking at.
 Same overlay pattern as title: `enrich_with_doc_extraction()` overlays
 `library_item_preview.type` (and `fields["Type"]`, `fields["Doc Type"]`)
 from the doc-extraction row's `document_type` field whenever present.
-Applies to BOTH CREATE and UPDATE paths.
+Applies to BOTH CREATE and UPDATE paths. The modal's Type-field source
+badge reflects this: if a matching doc extraction row has a non-N/A
+`document_type`, the badge reads **Document Extraction** +
+`agentField = "document_type"`. Otherwise it falls back to **Web
+Extraction** + `agentField = "alert_type (classifier)"`.
 
 Why overlay rather than keep the classifier's `_LIBRARY_ITEM_TYPE[alert_type]`
 lookup: the classifier lookup is driven by regex matching on the alert_type
@@ -646,11 +650,40 @@ which the executor's `LIB_TYPE_ALIASES` then mapped to `"Publication"`
 instead of the correct `"Proposed Guidance & Support Materials"`. The doc
 agent actually reads the PDF and knows the real document type — use that.
 
-Safety net in the executor: `LIB_TYPE_ALIASES` normalises the common
-agent misspelling `"Proposed Guidelines & Support Materials"` (plural,
-with an L) → `"Proposed Guidance & Support Materials"` (the canonical
-Bubble type title) so a typo in the doc agent's output doesn't propagate
-into Bubble.
+### Library item type resolution + inline warning
+
+`resolveLibraryItemType(typeName)` in the executor returns a `{id,
+canonical, matchedAs}` tuple with four possible outcomes:
+
+| `matchedAs` | Meaning | Validator surfaces |
+|---|---|---|
+| `"exact"` | Bubble has a `libraryitemtype` with exactly this `Title` | no issue |
+| `"alias"` | The lowercased typeName is in `LIB_TYPE_ALIASES` and that alias maps to a Bubble `Title` | **warning** |
+| `"fuzzy"` | Token-overlap scoring finds a Bubble `Title` sharing ≥70% of word tokens (safety net for unseen typos the alias table doesn't cover) | **warning** |
+| `null` | Nothing matched | **error** |
+
+`validateSyncPlan()` returns the alias / fuzzy outcome as a **warning**
+with `canonical` set to the Bubble title the publish will actually use.
+The modal:
+1. Filters `Library Item Type` issues OUT of the top `ValidationBanner`
+   (same treatment as Chronicle Topics — surfaced inline on the card
+   they belong to).
+2. Reads the issue's `canonical` and overlays the library item
+   preview's `type` with it (`effectiveLibPreview`), so the Type
+   combobox and the field table display the actual Bubble title that
+   will land, not the agent's typo.
+3. Renders a warning strip at the top of the Library Item card showing
+   the agent's original value and the fallback:
+   `⚠ Type: Type "Proposed Guidelines & Support Materials" not an exact
+   Bubble match — will fall back to "Proposed Guidance & Support
+   Materials" (alias)`
+
+Safety net at the executor layer: `LIB_TYPE_ALIASES` currently covers
+the common agent misspelling `"Proposed Guidelines & Support Materials"`
+(plural "Guidelines", with an L) → `"Proposed Guidance & Support
+Materials"` (the canonical Bubble type title) and the legacy fallbacks
+(`"agenda"` → `"Agenda & Materials"`, `"document"` → `"Publication"`,
+etc.). New typos the alias table misses are caught by the fuzzy probe.
 
 ### Preliminary alert type stripping
 
