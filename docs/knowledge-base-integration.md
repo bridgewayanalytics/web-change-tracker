@@ -104,14 +104,27 @@ the search scope, runs the Agents SDK with the HTTP search tool. `trace_id`
 
 ### `bubble/page_change_agent.py` (WTA)
 
-The WTA's whole purpose is to diff the before/after HTML, so the HTML is
-inlined directly in `user_content` (no truncation, no vectorization). Only
-swap applies from the migration: `search_knowledge_base` is now the
-in-closure HTTP-backed function, scoped to reference namespaces only.
+As of 2026-11-19 the WTA follows the same pattern as the other agents:
+before/after HTML snapshots are ingested via `ingest_page_snapshots` and
+reached through `search_knowledge_base` rather than inlined in the prompt.
+The WTA runs first in each page-change sequence, so it owns the initial
+ingest. Any downstream `document_agent` or `doc_eval_agent` calls that reuse
+the same `agent_call_id` hit the backend's deterministic uuid and get
+`status=cached` — zero re-indexing cost. Degraded fallback: if
+`ingest_page_snapshots` returns an empty list (e.g. backend ingest
+unreachable), the agent inlines the full HTML under `=== BEFORE === /
+=== AFTER ===` as a safety net so the WTA can still produce output. The
+`search_knowledge_base` tool is the in-closure HTTP-backed function,
+scoped to reference namespaces plus the page-snapshot namespaces for
+this call.
 
 ### `eval/eval_agent.py` (alerts QA)
 
-Same as WTA. `trace_id` = first eval_row_key.
+Exception to the pattern: this agent still **inlines before/after HTML
+directly** in the prompt because the QA grader needs the exact diff
+visible side-by-side to score the WTA's output against what actually
+changed. Reference namespaces are reached via `search_knowledge_base` as
+usual (orgs, chronicles, newsreels). `trace_id` = first eval_row_key.
 
 ## Deterministic doc_uuid
 
