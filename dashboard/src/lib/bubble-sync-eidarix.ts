@@ -623,6 +623,17 @@ export function lookupTopicWithArticle<T>(
     const matches = Array.from(nameMap.entries()).filter(([k]) => k.endsWith(suffix));
     if (matches.length === 1) return matches[0][1];
   }
+  // 6. Agent-superset-of-Bubble probe — the reverse direction of probe 3.
+  // Agent sometimes extends a real Bubble topic with a conjunction and extra
+  // suffix (e.g. agent emits "ALM Derivatives & Derivative Wrapped
+  // Investments" where Bubble only has "ALM Derivatives"). Accept when
+  // exactly one Bubble key matches `k + <sep>` as a prefix of the agent
+  // name. Uniqueness-gated: if two Bubble titles are both valid prefix
+  // candidates, we can't tell which one the agent meant, so fall through.
+  for (const sep of separators) {
+    const candidates = Array.from(nameMap.entries()).filter(([k]) => base.startsWith(k + sep));
+    if (candidates.length === 1) return candidates[0][1];
+  }
   return undefined;
 }
 

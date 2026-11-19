@@ -252,6 +252,13 @@ function lookupTopicWithArticle<T>(nameMap: Map<string, T>, rawName: string): T 
     const matches = Array.from(nameMap.entries()).filter(([k]) => k.endsWith(suffix));
     if (matches.length === 1) return matches[0][1];
   }
+  // Agent-superset-of-Bubble probe — agent extends a real Bubble topic with
+  // a conjunction and extra suffix (e.g. agent emits "ALM Derivatives &
+  // Derivative Wrapped Investments" where Bubble only has "ALM Derivatives").
+  for (const sep of separators) {
+    const candidates = Array.from(nameMap.entries()).filter(([k]) => base.startsWith(k + sep));
+    if (candidates.length === 1) return candidates[0][1];
+  }
   return undefined;
 }
 
