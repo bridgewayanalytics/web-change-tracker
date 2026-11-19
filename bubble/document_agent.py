@@ -171,12 +171,15 @@ async def _run_with_pgvector(
     """
     Two-step extraction:
       1. Run the Agents SDK with the backend's /knowledge/search endpoint as
-         the agent's search tool. All content — source document, before/after
-         HTML snapshots, and reference collections (Chronicles, Newsreels,
-         Guidelines, Proceedings, etc.) — lives in the knowledge base and is
-         retrieved via search_knowledge_base.
+         the agent's search tool. The source document is already inlined into
+         user_content by the caller (via GET /knowledge/document-extraction/
+         {doc_uuid}/text), so search_knowledge_base only reaches the reference
+         collections (Chronicles, Newsreels, Guidelines, Proceedings, etc.).
       2. Make one Structured Outputs call to reformat the gathered information
          into the exact DynamoDB schema.
+
+    reference_namespaces must NOT include any document-extraction:* namespaces
+    — the source is already in the prompt.
     """
     from agents import Agent, Runner, ModelSettings, function_tool
     from agents.model_settings import Reasoning
@@ -897,7 +900,7 @@ def extract_document_data(
             f"URL: {document_url}",
         ]
         if _pgvector_enabled():
-            lines.append("(Full document content is available via your knowledge base search tools — search for specific sections as needed to extract each field accurately.)")
+            lines.append("(The complete source document is inlined below under === SOURCE DOCUMENT ===. Use search_knowledge_base only for reference collections — do NOT search for the source document's own contents.)")
         if org_tree:
             lines.append(f"\n=== ORGANIZATION REFERENCE ===\n{org_tree}")
         if alert_context:
@@ -927,11 +930,18 @@ def extract_document_data(
                 ctx_parts.append(f"Source page URL: {source_url}")
             if ctx_parts:
                 lines.append("\n=== ALERT CONTEXT (page change alert that triggered this extraction) ===\n" + "\n".join(ctx_parts))
-        # Note: when pgvector is enabled the before/after HTML is uploaded to
-        # pgvector below (via ingest_page_snapshots) and the agent retrieves
-        # them via search_knowledge_base — we deliberately do NOT inline the
-        # HTML in the prompt in that case. The fallback path (pgvector disabled)
-        # inlines the HTML further down so the agent still has access.
+        # Inline before/after HTML snapshots so the agent can reach page-level
+        # posting metadata (`Updated: MM/DD/YYYY` labels in <a title=...>
+        # attributes, link filenames, etc.) directly without searching. The
+        # spec's inline-the-source principle applies to both the PDF and the
+        # surrounding HTML context that triggered the extraction.
+        if before_html or after_html:
+            html_parts = []
+            if before_html:
+                html_parts.append(f"Before HTML (prior state):\n{before_html}")
+            if after_html:
+                html_parts.append(f"After HTML (new state with the document now present):\n{after_html}")
+            lines.append("\n=== PAGE CHANGE CONTEXT (HTML snapshots of the monitored page) ===\n" + "\n".join(html_parts))
         user_content = "\n".join(lines)
 
         _store_agent_context(doc_call_id, "document", user_content, system_prompt)
@@ -984,15 +994,16 @@ def extract_document_data(
             log.info("document_agent: extracted %d row(s) for: %s", len(rows), document_name[:60])
             return rows
 
-        # Ingest the source document into the backend knowledge base. Agent
-        # retrieves content via search_knowledge_base — the source document is
-        # NOT inlined in the prompt. Deterministic doc_uuid means reruns + QA
-        # agent runs reuse the cached document without re-indexing.
-        source_document_namespace: str | None = None
+        # Inline the source document into the user prompt. Ingest ensures the
+        # QA agent's later run (reusing the same deterministic doc_uuid) hits
+        # a cached document; fetch the stitched text (sliding-window overlap
+        # removed for text/plain, page markers for PDFs) and inline it so the
+        # agent extracts fields directly without retrieval ranking in the way.
+        source_text_added = False
         if document_url and document_url.strip() and pdf_text:
             try:
                 from bubble.doc_extraction_ingest import (
-                    doc_uuid_for, ingest_document, wait_until_ready,
+                    doc_uuid_for, ingest_document, wait_until_ready, document_text,
                 )
                 doc_uuid = doc_uuid_for(document_url)
                 ingest_resp = ingest_document(
@@ -1006,17 +1017,23 @@ def extract_document_data(
                 )
                 if status != "cached":
                     wait_until_ready(doc_uuid)
-                source_document_namespace = (
-                    ingest_resp.get("namespace")
-                    or f"document-extraction:{doc_uuid}"
-                )
-                log.info(
-                    "document_agent: source document available in namespace=%s",
-                    source_document_namespace,
-                )
+                src = document_text(doc_uuid)
+                src_body = (src.get("text") or "").strip()
+                if src_body:
+                    user_content += (
+                        f"\n\n=== SOURCE DOCUMENT — {src.get('title') or document_name} ===\n"
+                        f"(This is the complete, authoritative source text. "
+                        f"Do NOT search for its contents — extract fields directly from this text.)\n"
+                        f"{src_body}"
+                    )
+                    source_text_added = True
+                    log.info(
+                        "document_agent: inlined source document chars=%s chunks=%s",
+                        src.get("char_count"), src.get("chunk_count"),
+                    )
             except Exception as e:
                 log.warning(
-                    "document_agent: failed to ingest source document for %s — proceeding without source namespace: %s",
+                    "document_agent: failed to inline source document for %s — proceeding without: %s",
                     document_name[:80], e,
                 )
         elif document_url and document_url.strip() and not pdf_text:
@@ -1026,46 +1043,22 @@ def extract_document_data(
             )
             return []
 
-        # Ingest before/after HTML snapshots into the knowledge base so the
-        # agent can search them via search_knowledge_base. Reaching the
-        # "Updated: MM/DD/YYYY" label in an <a title=...> attribute via
-        # retrieval is more reliable than prompt-slicing — NAIC committee
-        # pages routinely place those labels past a 10 KB mark (regression
-        # evidence from 2026-11-10).
-        acid_for_snapshots = str((alert_context or {}).get("agent_call_id") or "").strip()
-        page_snapshot_namespaces: list[str] = []
-        if acid_for_snapshots and (before_html or after_html):
-            try:
-                from bubble.page_snapshot_ingest import ingest_page_snapshots
-                page_snapshot_namespaces = ingest_page_snapshots(
-                    acid_for_snapshots, before_html or "", after_html or "",
-                )
-            except Exception as e:
-                log.warning(
-                    "document_agent: page snapshot ingest failed for acid=%s: %s — proceeding without",
-                    acid_for_snapshots[:12], e,
-                )
-
-        # Reference search scope: strip per-call namespaces from the
-        # config-declared list (they're populated per-invocation, not via
-        # DynamoDB), then add the source document + page-snapshot namespaces
-        # we just ingested. All content lives in the vector store; the agent
-        # retrieves source + HTML + reference material through one search tool.
+        # Reference search scope: strip any document-extraction:* and
+        # page-snapshot:* from the config-declared list. Both the source
+        # document and the before/after HTML are inlined above — search is
+        # for reference collections (Chronicles, Newsreels, Guidelines,
+        # Proceedings, organizations) only.
         reference_namespaces = [
             ns for ns in pgvector_namespaces
             if not str(ns).startswith("document-extraction:")
             and not str(ns).startswith("page-snapshot:")
         ]
-        if source_document_namespace:
-            reference_namespaces.append(source_document_namespace)
-        reference_namespaces.extend(page_snapshot_namespaces)
 
         trace_id = str((alert_context or {}).get("agent_call_id") or doc_call_id).strip()
 
         log.info(
-            "document_agent: running (model=%s, ref_namespaces=%d, source_ns=%s, snapshots=%d) for: %s",
-            model, len(reference_namespaces), bool(source_document_namespace),
-            len(page_snapshot_namespaces), document_name[:80],
+            "document_agent: running (model=%s, source_inlined=%s, ref_namespaces=%d) for: %s",
+            model, source_text_added, len(reference_namespaces), document_name[:80],
         )
         try:
             from bubble.async_runner import run_sync as _run_sync

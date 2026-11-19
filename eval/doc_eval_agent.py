@@ -257,10 +257,15 @@ def _build_user_message(
     alert_row: dict | None = None,
     before_html: str | None = None,
     after_html: str | None = None,
+    doc_text: str | None = None,
 ) -> str:
     """
     Build the QA agent prompt for one or more agenda item rows from the same extraction call.
-    Document content is accessed exclusively via pgvector search — never injected directly into the prompt.
+
+    The complete source document and before/after HTML snapshots are inlined
+    directly in the prompt — the agent does NOT search for them via
+    search_knowledge_base. search_knowledge_base reaches only the reference
+    collections (Chronicles, Newsreels, Guidelines, Proceedings, organizations).
     """
     first = rows[0]
     document_name = str(first.get("library_item_title") or first.get("document_title") or "N/A")
@@ -274,7 +279,9 @@ def _build_user_message(
         "## Source Document",
         f"Document title: {document_name}",
         f"URL: {document_url}",
-        "(Full document content is available via your knowledge base search tools — search for specific sections as needed to verify each field.)",
+        "(The complete source document is inlined below under === SOURCE DOCUMENT ===. "
+        "Use search_knowledge_base only for reference collections — do NOT search for "
+        "the source document's own contents.)",
     ]
 
     if alert_row:
@@ -284,9 +291,23 @@ def _build_user_message(
             json.dumps(alert_context, indent=2, default=str),
         ]
 
-    # Page before/after HTML is ingested into pgvector (via ingest_page_snapshots
-    # in _prepare_eval_args) and surfaced to the agent via search_knowledge_base
-    # rather than being inlined here. See parallel change in bubble/document_agent.py.
+    # Inline before/after HTML so the grader can see page-level posting
+    # metadata (Updated: labels, link titles) that the WTA scored against.
+    if before_html or after_html:
+        parts.append("\n## Page Change Context (HTML snapshots the extraction was run against)")
+        if before_html:
+            parts += ["### BEFORE HTML (prior state)", before_html]
+        if after_html:
+            parts += ["### AFTER HTML (new state)", after_html]
+
+    # Inline the complete source document text.
+    if doc_text and doc_text.strip():
+        parts += [
+            f"\n## === SOURCE DOCUMENT — {document_name} ===",
+            "(This is the complete, authoritative source text. "
+            "Do NOT search for its contents — grade fields directly from this text.)",
+            doc_text,
+        ]
 
     # ORG_TREE_INJECTION_ENABLED gates whether the full org hierarchy is dumped
     # into the QA grader's context. Default: true. When false, the grader relies on
@@ -338,10 +359,10 @@ async def _run_agent_async(
     """Run the agents SDK inside an ALREADY-running event loop.
 
     Uses the backend's /knowledge/search endpoint (via the HTTP client in
-    bubble.doc_extraction_ingest) as the agent's search tool. All content —
-    source document, before/after HTML snapshots, and reference collections
-    (chronicles / newsreels / guidelines / orgs) — lives in the knowledge
-    base; nothing is inlined into user_content.
+    bubble.doc_extraction_ingest) as the agent's search tool. The source
+    document and before/after HTML snapshots are inlined into user_content
+    by the caller — search_knowledge_base reaches only the reference
+    collections (chronicles / newsreels / guidelines / orgs).
     """
     from agents import Agent, Runner, ModelSettings, function_tool
     from agents.model_settings import Reasoning
@@ -528,6 +549,7 @@ def _prepare_eval_args(rows: list[dict], alert_row: dict | None = None) -> dict:
     user_message = _build_user_message(
         rows, eval_row_keys,
         alert_row=alert_row, before_html=before_html, after_html=after_html,
+        doc_text=doc_text,
     )
 
     agent_call_id = first.get("agent_call_id", "unknown")
@@ -542,62 +564,14 @@ def _prepare_eval_args(rows: list[dict], alert_row: dict | None = None) -> dict:
 
     namespaces: list[str] | None = None
     if _pgvector_enabled():
-        # Reference namespaces come from DynamoDB config; strip per-call
-        # ingested namespaces (document-extraction:* / page-snapshot:*) because
-        # those are provisioned per-invocation below.
+        # Reference namespaces only: the source document and before/after HTML
+        # are inlined in user_message above. Strip any document-extraction:* /
+        # page-snapshot:* that may be left in the DynamoDB config.
         namespaces = [
             ns for ns in _get_pgvector_namespaces()
             if not str(ns).startswith("document-extraction:")
             and not str(ns).startswith("page-snapshot:")
         ]
-
-        # Ingest source document to the knowledge base (cached no-op when the
-        # extraction agent already ingested it — same deterministic doc_uuid).
-        # Agent retrieves content via search_knowledge_base; nothing is inlined.
-        if vectorization_url and vectorization_url.strip() and vectorization_url != "N/A":
-            try:
-                from bubble.doc_extraction_ingest import (
-                    doc_uuid_for, ingest_document, wait_until_ready,
-                )
-                duuid = doc_uuid_for(vectorization_url)
-                if doc_text:
-                    resp = ingest_document(
-                        duuid, f"{duuid}.txt", doc_text.encode("utf-8"), "text/plain",
-                        ttl_hours=24 * 30,
-                    )
-                    if resp.get("status") != "cached":
-                        wait_until_ready(duuid)
-                    source_ns = resp.get("namespace") or f"document-extraction:{duuid}"
-                    namespaces.append(source_ns)
-                    log.info(
-                        "doc_eval_agent: source document available in namespace=%s",
-                        source_ns,
-                    )
-                else:
-                    namespaces.append(f"document-extraction:{duuid}")
-            except Exception as e:
-                log.warning(
-                    "doc_eval_agent: failed to ingest source document for %s: %s",
-                    vectorization_url[:80], e,
-                )
-
-        # Ingest before/after HTML snapshots into the knowledge base so the
-        # QA agent can search them (same pattern as extraction). Reusing the
-        # extraction's agent_call_id means the ingest hits the same
-        # deterministic uuid and comes back "cached".
-        if agent_call_id and agent_call_id != "unknown" and (before_html or after_html):
-            try:
-                from bubble.page_snapshot_ingest import ingest_page_snapshots
-                page_ns = ingest_page_snapshots(
-                    agent_call_id, before_html or "", after_html or "",
-                )
-                if page_ns:
-                    namespaces.extend(page_ns)
-            except Exception as e:
-                log.warning(
-                    "doc_eval_agent: page snapshot ingest failed for acid=%s: %s",
-                    agent_call_id[:12], e,
-                )
 
     return {
         "system_prompt": system_prompt,

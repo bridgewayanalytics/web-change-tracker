@@ -491,69 +491,36 @@ def extract_page_change(
                 f"=== ORGANIZATION REFERENCE ===\n{org_tree}\n\n"
                 if org_tree else ""
             )
-        # Ingest before/after HTML into the backend knowledge base so the agent
-        # reaches them via search_knowledge_base instead of carrying 20-80 KB of
-        # raw HTML in the prompt. Matches the pattern used by document_agent /
-        # doc_eval_agent. The deterministic uuid (agent_call_id + side) means
-        # the doc_agent step later in the pipeline hits status=cached — same
-        # content, same uuid, backend returns cached without re-indexing.
-        page_snapshot_namespaces: list[str] = []
-        if agent_call_id and (before_html or after_html):
-            try:
-                from bubble.page_snapshot_ingest import ingest_page_snapshots
-                page_snapshot_namespaces = ingest_page_snapshots(
-                    agent_call_id, before_html or "", after_html or "",
-                )
-            except Exception as e:
-                log.warning(
-                    "page_change_agent: page snapshot ingest failed for call_id=%s: %s "
-                    "— proceeding with inlined HTML as fallback",
-                    agent_call_id[:8], e,
-                )
-
-        if page_snapshot_namespaces:
-            # Normal path: HTML lives in the knowledge base; prompt just points
-            # at it. The agent uses search_knowledge_base to pull sections.
-            user_content = (
-                f"=== TARGET CONTEXT ===\n{context_block}\n\n"
-                f"{org_tree_block}"
-                f"The before/after HTML snapshots of the monitored page are indexed in your "
-                f"knowledge base under namespaces {', '.join(page_snapshot_namespaces)}. "
-                f"Use your search_knowledge_base tool to query them. "
-                f"When comparing versions, search each side independently — the namespace "
-                f"suffix (:before vs :after) identifies which side you are retrieving from."
-            )
-        else:
-            # Degraded fallback: ingest failed → inline HTML directly so the
-            # agent still has something to work with.
-            log.info(
-                "page_change_agent: page snapshot namespaces empty — inlining HTML as fallback (call_id=%s)",
-                agent_call_id[:8],
-            )
-            user_content = (
-                f"=== TARGET CONTEXT ===\n{context_block}\n\n"
-                f"{org_tree_block}"
-                f"=== BEFORE (previous version) ===\n{before_html or '(empty — first run)'}\n\n"
-                f"=== AFTER (current version) ===\n{after_html}"
-            )
+        # Inline the before/after HTML directly in the prompt. This is the WTA's
+        # source material — the model needs to see the exact diff between
+        # versions to reason about what changed. search_knowledge_base is used
+        # only for reference collections (Chronicles, Newsreels, Guidelines,
+        # Proceedings, organizations) — HTML is not re-searched via a vector
+        # store; it is read in-prompt.
+        user_content = (
+            f"=== TARGET CONTEXT ===\n{context_block}\n\n"
+            f"{org_tree_block}"
+            f"=== BEFORE (previous version) ===\n{before_html or '(empty — first run)'}\n\n"
+            f"=== AFTER (current version) ===\n{after_html}"
+        )
 
         _store_agent_context(agent_call_id, "alerts", user_content, system_prompt)
 
         # Reference namespaces come from DynamoDB config; strip any per-call
-        # namespaces (page-snapshot:* / document-extraction:*) then add this
-        # call's page-snapshot namespaces back.
+        # namespaces (page-snapshot:* / document-extraction:*) that may have
+        # been left in the config — they're irrelevant now that HTML is in-prompt.
         reference_namespaces = [
             ns for ns in (pgvector_namespaces or [])
             if not str(ns).startswith("page-snapshot:")
             and not str(ns).startswith("document-extraction:")
         ]
-        search_namespaces = reference_namespaces + page_snapshot_namespaces
+        search_namespaces = reference_namespaces
 
         pgvector_pool_failed = False
         if _pgvector_enabled():
             log.info(
-                "page_change_agent: running with backend search (model=%s, call_id=%s, page_snapshots=%d)",
-                model, agent_call_id[:8], len(page_snapshot_namespaces),
+                "page_change_agent: running with backend search (model=%s, call_id=%s, ref_namespaces=%d)",
+                model, agent_call_id[:8], len(search_namespaces),
             )
             try:
                 from bubble.async_runner import run_sync as _run_sync
@@ -573,22 +540,11 @@ def extract_page_change(
         if pgvector_pool_failed or not _pgvector_enabled():
             log.info("page_change_agent: running without pgvector (model=%s, call_id=%s)", model, agent_call_id[:8])
             from bubble.openai_client import chat_json
-            # The degraded path has no search tool. If the normal path above
-            # chose to NOT inline HTML (because ingest succeeded), the direct
-            # API call would have nothing to work with. Reconstruct a fallback
-            # message that inlines the HTML so chat_json still produces output.
-            if page_snapshot_namespaces:
-                fallback_user_content = (
-                    f"=== TARGET CONTEXT ===\n{context_block}\n\n"
-                    f"{org_tree_block}"
-                    f"=== BEFORE (previous version) ===\n{before_html or '(empty — first run)'}\n\n"
-                    f"=== AFTER (current version) ===\n{after_html}"
-                )
-            else:
-                fallback_user_content = user_content
+            # The degraded path has no search tool, but user_content already
+            # inlines the HTML so the model has what it needs.
             messages = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": fallback_user_content},
+                {"role": "user", "content": user_content},
             ]
             json_schema = _get_output_json_schema()
             if json_schema:
