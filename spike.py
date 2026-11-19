@@ -2702,27 +2702,75 @@ def _run_rerun(rerun_run_id: str, rerun_target_id: str, rerun_mode: str = "alert
         log.info("rerun: wrote empty result to s3://%s/%s", bucket, result_key)
         return
 
-    # For docs/both mode: if page_change_agent didn't run (mode=docs) or failed, fall back
-    # to original alert rows so document extraction can still proceed. This fallback MUST
-    # happen BEFORE agent_call_id is captured below, otherwise agent_call_id ends up empty
-    # and gets stamped on every doc extraction row, breaking QA eval lookups.
+    # For docs/both mode: if page_change_agent didn't run (mode=docs) or failed, we
+    # need to populate agent_alerts_for_rows from a stored source so the doc extraction
+    # loop can iterate library items. Preferred source is the per-run
+    # `pages/<target>/<Y/M/D>/<run_id>/agent_output.json` because that contains the
+    # full WTA output verbatim (every alert with every library_item_url the WTA
+    # produced). Falling back to `alerts/alerts_table.jsonl` loses items, because
+    # alerts_table can get collapsed/edited by dashboard reruns after the fact —
+    # the URL the dashboard sends as RERUN_LIBRARY_ITEM_URL may still exist in
+    # agent_output but not in alerts_table, causing the "URL mismatch, skipping"
+    # fallthrough.
+    #
+    # This fallback MUST happen BEFORE agent_call_id is captured below, otherwise
+    # agent_call_id ends up empty and gets stamped on every doc extraction row,
+    # breaking QA eval lookups.
     if rerun_mode in ("docs", "both") and not agent_alerts_for_rows:
-        log.warning("rerun: page_change_agent returned no output — falling back to original rows for doc extraction")
+        log.warning("rerun: page_change_agent returned no output — falling back to stored agent_output for doc extraction")
+        # Prefer the per-run stored agent_output.json. meta["html_s3_key"] already
+        # scoped us to the right date directory above.
+        agent_output_loaded = False
         try:
-            jsonl_body = s3.get_object(Bucket=bucket, Key="alerts/alerts_table.jsonl")["Body"].read().decode("utf-8")
-            for line in jsonl_body.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    row = json.loads(line)
-                    if row.get("run_id") == rerun_run_id and row.get("target_id") == rerun_target_id:
-                        agent_alerts_for_rows.append(row)
-                except Exception:
-                    pass
+            # html_s3_key format is pages/<target>/<Y>/<M>/<D>/<run_id>/<before|after>.html
+            # The matching agent_output.json sits in the same directory.
+            html_key = meta.get("html_s3_key") or ""
+            if html_key:
+                dir_prefix = "/".join(html_key.rstrip("/").split("/")[:-1])
+                agent_output_key = f"{dir_prefix}/agent_output.json"
+                body = s3.get_object(Bucket=bucket, Key=agent_output_key)["Body"].read().decode("utf-8")
+                raw_output = json.loads(body)
+                # New flat schema wraps in {"alerts": [...]}, old schema is a flat list
+                if isinstance(raw_output, dict) and "alerts" in raw_output:
+                    stored_alerts = raw_output["alerts"]
+                elif isinstance(raw_output, list):
+                    stored_alerts = raw_output
+                elif isinstance(raw_output, dict):
+                    stored_alerts = [raw_output]
+                else:
+                    stored_alerts = []
+                # Filter "No Meaningful Change" out so they don't get re-extracted
+                from bubble.page_change_agent import _is_no_meaningful_change as _nmc
+                agent_alerts_for_rows = [
+                    a for a in stored_alerts
+                    if isinstance(a, dict) and not _nmc(a) and a.get("alert_type")
+                ]
+                log.info(
+                    "rerun: loaded %d alerts from stored agent_output.json (key=%s)",
+                    len(agent_alerts_for_rows), agent_output_key,
+                )
+                agent_output_loaded = True
         except Exception as exc:
-            log.error("rerun: could not fetch original rows as fallback: %s", exc)
-            raise SystemExit(1) from exc
+            log.warning("rerun: could not load stored agent_output.json (%s) — will try alerts_table fallback", exc)
+
+        # Last-resort fallback: alerts_table.jsonl (keeps old behavior when
+        # agent_output.json is unavailable or empty).
+        if not agent_output_loaded or not agent_alerts_for_rows:
+            try:
+                jsonl_body = s3.get_object(Bucket=bucket, Key="alerts/alerts_table.jsonl")["Body"].read().decode("utf-8")
+                for line in jsonl_body.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                        if row.get("run_id") == rerun_run_id and row.get("target_id") == rerun_target_id:
+                            agent_alerts_for_rows.append(row)
+                    except Exception:
+                        pass
+            except Exception as exc:
+                log.error("rerun: could not fetch original rows as fallback: %s", exc)
+                raise SystemExit(1) from exc
         if not agent_alerts_for_rows:
             log.error("rerun: no original rows found for fallback")
             raise SystemExit(1)
