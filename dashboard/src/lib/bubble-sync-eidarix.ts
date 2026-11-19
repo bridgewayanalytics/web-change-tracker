@@ -231,6 +231,11 @@ const LIB_TYPE_ALIASES: Record<string, string> = {
   "agenda":                      "Agenda & Materials",
   "materials":                   "Agenda & Materials",
   "request for comment":         "Proposed Guidance & Support Materials",
+  // Common agent misspelling — the doc extraction agent sometimes emits
+  // "Guidelines" (plural, with an L) instead of the correct Bubble title
+  // "Guidance". Alias both into the canonical type so a typo in the agent
+  // output doesn't propagate into Bubble.
+  "proposed guidelines & support materials": "Proposed Guidance & Support Materials",
   "adopted guideline":           "Existing Requirements & Guidance",
   "report / resource":           "Publication",
   "document":                    "Publication",
@@ -859,6 +864,14 @@ export async function syncAlert(
   const hasAgendaItems = !!plan.agenda_items;
   const ep = (plan.event_preview ?? {}) as Record<string, unknown>;
   const lp = (plan.library_item_preview ?? {}) as Record<string, unknown>;
+  // Scope stamp writes to this one sibling row. Prefer the library_item_preview.url
+  // (what the executor is actually writing about) over the flat row field — they
+  // match today, but if they ever drift the preview is authoritative.
+  const libraryItemUrl = (
+    (typeof lp.url === "string" && lp.url) ||
+    (typeof row.library_item_url === "string" && row.library_item_url) ||
+    undefined
+  ) as string | undefined;
   const epFieldIds = (ep.field_ids ?? {}) as Record<string, unknown>;
   const lpFieldIds = (lp.field_ids ?? {}) as Record<string, unknown>;
 
@@ -953,7 +966,7 @@ export async function syncAlert(
 
         if (runAgenda) {
           // Patch IDs and return so the next step (library_item) can pick them up
-          patchRow(rows, agentCallId, { eidarix_agenda_item_ids: agendaItemIds });
+          patchRow(rows, agentCallId, { eidarix_agenda_item_ids: agendaItemIds }, libraryItemUrl);
           return { ok: true, eidarix_agenda_item_ids: agendaItemIds, bubble_event_id: null, bubble_library_item_id: null };
         }
       }
@@ -1170,7 +1183,7 @@ export async function syncAlert(
     if (bubbleEventId) patchFields.bubble_event_id = bubbleEventId;
     if (bubbleLibraryItemId && runLib) patchFields.bubble_library_item_id = bubbleLibraryItemId;
     if (agendaItemIds.length) patchFields.eidarix_agenda_item_ids = agendaItemIds;
-    if (Object.keys(patchFields).length) patchRow(rows, agentCallId, patchFields);
+    if (Object.keys(patchFields).length) patchRow(rows, agentCallId, patchFields, libraryItemUrl);
 
     return {
       ok: true,
@@ -1183,7 +1196,7 @@ export async function syncAlert(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[bubble-sync] error for agent_call_id=${agentCallId} action=${action}:`, msg);
-    patchRow(rows, agentCallId, { bubble_sync_status: "error", bubble_sync_error: msg });
+    patchRow(rows, agentCallId, { bubble_sync_status: "error", bubble_sync_error: msg }, libraryItemUrl);
     smetric("sync_error", { agent_call_id: agentCallId, action, error: msg });
     return { ok: false, error: msg };
   }
@@ -1193,8 +1206,17 @@ function patchRow(
   rows: Record<string, unknown>[],
   agentCallId: string,
   fields: Record<string, unknown>,
+  libraryItemUrl?: string,
 ): void {
+  // Sibling rows share `agent_call_id` but have distinct `library_item_url`.
+  // Without the URL scope, publishing one sibling's library item would stamp
+  // bubble_library_item_id (and sync_status → "synced") onto EVERY sibling,
+  // making the modal's "✓ Complete" check fire on docs that haven't been
+  // published yet. Pass libraryItemUrl to constrain the patch to the single
+  // sibling being synced; omit it for cross-sibling fields (none today).
   for (const r of rows) {
-    if (r.agent_call_id === agentCallId) Object.assign(r, fields);
+    if (r.agent_call_id !== agentCallId) continue;
+    if (libraryItemUrl !== undefined && r.library_item_url !== libraryItemUrl) continue;
+    Object.assign(r, fields);
   }
 }

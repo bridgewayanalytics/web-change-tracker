@@ -59,8 +59,13 @@ _NOT_APPLICABLE = frozenset({
 # The regex matches "Preliminary" anywhere with optional em-dash/hyphen
 # separators on either side. Bare "Preliminary" after strip → "New Materials".
 import re as _re
+# Separator class covers em-dash, en-dash, hyphen, PERIOD, colon — every real
+# punctuation we've seen the agent insert between "Preliminary" and the
+# underlying type (e.g. "Preliminary — X", "Preliminary - X",
+# "Preliminary. X", "Preliminary: X"). The surrounding `\s*` lets the matcher
+# also eat leading/trailing whitespace around the marker.
 _PRELIMINARY_RE = _re.compile(
-    r"\s*[—-]?\s*Preliminary\s*[—-]?\s*",
+    r"\s*[—–\-.:]?\s*Preliminary\s*[—–\-.:]?\s*",
     flags=_re.IGNORECASE,
 )
 def _strip_preliminary(alert_type: str) -> str:
@@ -608,6 +613,27 @@ def enrich_with_doc_extraction(bubble_action: dict, extraction: dict) -> None:
             field_ids_pre[LI.NAME] = doc_title
         lp["fields"] = fields_pre
         lp["field_ids"] = field_ids_pre
+
+    # -- Type overlay (applies to BOTH CREATE and UPDATE) --
+    # Prefer the document-extraction agent's `document_type` over the
+    # classifier's alert-type-to-type map. The classifier lookup is driven by
+    # regex matching on the alert_type string, which falls over for new
+    # variants (e.g. "Preliminary." isn't in the map → falls to "Document" →
+    # executor alias maps that to "Publication" instead of the correct
+    # "Proposed Guidance & Support Materials"). The doc agent actually reads
+    # the PDF and knows the real document type. Executor's LIB_TYPE_ALIASES
+    # also normalises the common agent misspelling "Proposed Guidelines" →
+    # "Proposed Guidance" so a typo in the agent output doesn't propagate
+    # into Bubble.
+    doc_type_overlay = _val("document_type")
+    if doc_type_overlay:
+        fields_pre = dict(lp.get("fields") or {})
+        lp["type"] = doc_type_overlay
+        if "Type" in fields_pre:
+            fields_pre["Type"] = doc_type_overlay
+        if "Doc Type" in fields_pre:
+            fields_pre["Doc Type"] = doc_type_overlay
+        lp["fields"] = fields_pre
 
     # -- Library item CREATE preview --
     if bubble_action.get("library_item") != "create":
