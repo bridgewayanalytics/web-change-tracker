@@ -371,6 +371,13 @@ async def _run_agent_async(
             log.warning("search_knowledge_base backend error: %s", e)
             return f"(search failed: {e})"
         results = resp.get("results") or []
+        _q_short = (query or "").replace("\n", " ")[:200]
+        log.info(
+            "search_knowledge_base[doc_eval_agent] trace=%s query=%r hits=%d",
+            str(trace_id)[:20] if trace_id else "-",
+            _q_short,
+            len(results),
+        )
         if not results:
             return "No matching content found in the reference knowledge base."
         lines = []
