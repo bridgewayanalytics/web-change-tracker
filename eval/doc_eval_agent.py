@@ -359,7 +359,11 @@ async def _run_agent_async(
             resp = backend_search(
                 query,
                 namespaces,
-                document_id=source_document_id,
+                # document_id intentionally NOT passed here — see
+                # bubble/document_agent.py for the full rationale. Passing
+                # source_document_id scoped every search to the source PDF
+                # only, making page-snapshot and reference namespaces
+                # unreachable.
                 limit=10,
                 trace_id=trace_id,
             )

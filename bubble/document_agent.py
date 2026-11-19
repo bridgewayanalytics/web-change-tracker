@@ -198,7 +198,14 @@ async def _run_with_pgvector(
             resp = backend_search(
                 query,
                 reference_namespaces,
-                document_id=source_document_id,  # None → searches reference namespaces
+                # NOTE: document_id was previously passed here (=source_document_id)
+                # but it scopes the backend search to a single document — the
+                # inlined source PDF. That made page-snapshot:* and every other
+                # namespace unreachable (search returned 0 hits on all queries
+                # except those that happened to match source chunks). Confirmed
+                # by log analysis on 2026-11-19 bulk rerun: 48/58 extractions
+                # reported date_published=N/A because every search was silently
+                # restricted to the source PDF.
                 limit=10,
                 trace_id=trace_id,
             )
