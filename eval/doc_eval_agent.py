@@ -334,14 +334,14 @@ async def _run_agent_async(
     eval_row_keys: list[str],
     field_names: list[str] | None = None,
     trace_id: str | None = None,
-    source_document_id: int | None = None,
 ) -> dict:
     """Run the agents SDK inside an ALREADY-running event loop.
 
     Uses the backend's /knowledge/search endpoint (via the HTTP client in
-    bubble.doc_extraction_ingest) as the agent's search tool. Source document
-    is inlined into user_content by the caller, so the tool only reaches
-    the reference collections (chronicles / newsreels / guidelines / orgs).
+    bubble.doc_extraction_ingest) as the agent's search tool. All content —
+    source document, before/after HTML snapshots, and reference collections
+    (chronicles / newsreels / guidelines / orgs) — lives in the knowledge
+    base; nothing is inlined into user_content.
     """
     from agents import Agent, Runner, ModelSettings, function_tool
     from agents.model_settings import Reasoning
@@ -534,7 +534,6 @@ def _prepare_eval_args(rows: list[dict], alert_row: dict | None = None) -> dict:
                 seen_fields.add(k)
 
     namespaces: list[str] | None = None
-    source_document_id: int | None = None
     if _pgvector_enabled():
         # Reference namespaces come from DynamoDB config; strip per-call
         # ingested namespaces (document-extraction:* / page-snapshot:*) because
@@ -545,14 +544,13 @@ def _prepare_eval_args(rows: list[dict], alert_row: dict | None = None) -> dict:
             and not str(ns).startswith("page-snapshot:")
         ]
 
-        # Ingest source document (if not already indexed — deterministic doc_uuid
-        # makes this a cached no-op when the extraction agent already ingested it)
-        # then pull the stitched text and inline it under the SOURCE DOCUMENT
-        # heading already emitted by _build_user_message.
+        # Ingest source document to the knowledge base (cached no-op when the
+        # extraction agent already ingested it — same deterministic doc_uuid).
+        # Agent retrieves content via search_knowledge_base; nothing is inlined.
         if vectorization_url and vectorization_url.strip() and vectorization_url != "N/A":
             try:
                 from bubble.doc_extraction_ingest import (
-                    doc_uuid_for, ingest_document, wait_until_ready, document_text,
+                    doc_uuid_for, ingest_document, wait_until_ready,
                 )
                 duuid = doc_uuid_for(vectorization_url)
                 if doc_text:
@@ -562,22 +560,17 @@ def _prepare_eval_args(rows: list[dict], alert_row: dict | None = None) -> dict:
                     )
                     if resp.get("status") != "cached":
                         wait_until_ready(duuid)
-                src = document_text(duuid)
-                source_document_id = src.get("document_id")
-                src_body = (src.get("text") or "").strip()
-                if src_body:
-                    user_message += (
-                        f"\n\n=== SOURCE DOCUMENT — {src.get('title') or vectorization_url} ===\n"
-                        f"(Complete, authoritative source text. Do NOT search for its contents.)\n"
-                        f"{src_body}"
-                    )
+                    source_ns = resp.get("namespace") or f"document-extraction:{duuid}"
+                    namespaces.append(source_ns)
                     log.info(
-                        "doc_eval_agent: inlined source document doc_id=%s chars=%s",
-                        source_document_id, src.get("char_count"),
+                        "doc_eval_agent: source document available in namespace=%s",
+                        source_ns,
                     )
+                else:
+                    namespaces.append(f"document-extraction:{duuid}")
             except Exception as e:
                 log.warning(
-                    "doc_eval_agent: failed to inline source document for %s: %s",
+                    "doc_eval_agent: failed to ingest source document for %s: %s",
                     vectorization_url[:80], e,
                 )
 
@@ -610,7 +603,6 @@ def _prepare_eval_args(rows: list[dict], alert_row: dict | None = None) -> dict:
         "namespaces": namespaces,
         "doc_text": doc_text,
         "trace_id": agent_call_id if agent_call_id != "unknown" else None,
-        "source_document_id": source_document_id,
     }
 
 
@@ -635,7 +627,6 @@ async def _run_group_async(rows: list[dict], prepared: dict) -> list[dict]:
                 system_prompt, user_message, model, reasoning_effort, namespaces,
                 eval_row_keys, field_names,
                 trace_id=prepared.get("trace_id"),
-                source_document_id=prepared.get("source_document_id"),
             )
             if not isinstance(raw, dict):
                 return [{"error": "Agent returned non-dict response"}]

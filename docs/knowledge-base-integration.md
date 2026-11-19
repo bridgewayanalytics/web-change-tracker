@@ -48,24 +48,24 @@ direct database access.
 
 ## Core principle
 
-**Inline the source document. Search everything else.**
+**All content lives in the knowledge base. The agent retrieves everything via search.**
 
-- The *authoritative source document* the agent is extracting from (PDF or
-  transcript) goes **into the prompt** as one complete stitched block. The
-  agent never has to search for its own source document.
-- *Before/after HTML snapshots* are ingested per-pipeline-run into
-  `page-snapshot:<uuid>` namespaces (deterministic uuid per
-  `(agent_call_id, side)`) and the agent reaches them via
-  `search_knowledge_base`. This lets the agent surface the `Updated:
-  MM/DD/YYYY` label in a download link's `title=` attribute without having
-  to prompt-slice ~20 KB of raw HTML — the regression we corrected on
-  2026-11-10 after accidentally re-introducing HTML inlining during the
-  pgvector-to-backend migration.
+- The *authoritative source document* (PDF, DOCX, or transcript) is ingested
+  per-call into a `document-extraction:<uuid>` namespace (deterministic uuid
+  from the document URL) and that namespace is added to the agent's search
+  scope. The agent reaches source content via `search_knowledge_base` — the
+  source is NOT inlined in the prompt.
+- *Before/after HTML snapshots* are ingested per-pipeline-run into their own
+  `document-extraction:<uuid>` namespaces (deterministic uuid per
+  `(agent_call_id, side)`) and also added to the agent's search scope. The
+  agent surfaces the `Updated: MM/DD/YYYY` label in a download link's
+  `title=` attribute via a search query against that namespace.
 - The *reference collections* (`ba:chronicles`, `ba:newsreels`, `ba:NAIC Guidelines`,
   `naic-proceedings`, `ba:organizations`, `ba:International Guidelines`,
-  `ba:Rating Agencies`, `bubble-data`) remain in a search index. The agent gets
-  one tool — `search_knowledge_base` — that POSTs to `/knowledge/search` for
-  those namespaces + the per-call page-snapshot namespaces.
+  `ba:Rating Agencies`, `bubble-data`) are static search indexes.
+- The agent gets one tool — `search_knowledge_base` — that POSTs to
+  `/knowledge/search` for the reference collections plus the per-call
+  source-document and page-snapshot namespaces.
 
 Degraded path: when `CHATKIT_INTERNAL_API_KEY` is missing (backend unreachable),
 `document_agent` falls through to a direct Responses API call with no search
@@ -81,25 +81,30 @@ metadata — accepting the prompt-size cost because search isn't available.
 2. `doc_uuid = doc_uuid_for(document_url)` — deterministic sha256 prefix.
 3. `ingest_document(doc_uuid, filename, pdf_text, "text/plain", ttl_hours=24*30)`.
 4. If `status != "cached"`: `wait_until_ready(doc_uuid)`.
-5. `src = document_text(doc_uuid)` → `src["text"]` inlined under
-   `=== SOURCE DOCUMENT — {title} ===` in the user prompt.
+5. `source_document_namespace = resp["namespace"]` (= `document-extraction:<doc_uuid>`).
+   **The source document is NOT inlined** — it lives in the knowledge base
+   and is retrieved via search.
 6. `page_ns = ingest_page_snapshots(agent_call_id, before_html, after_html)`
-   returns up to two `page-snapshot:<uuid>` namespaces (deterministic uuid per
-   `(acid, side)`, 30-day TTL). **HTML is NOT inlined** — it goes into the
-   knowledge base and the agent reaches it via search.
-7. `reference_namespaces = (config_namespaces − {document-extraction:*, page-snapshot:*}) + page_ns`.
+   returns up to two `document-extraction:<uuid>` namespaces (deterministic
+   uuid per `(acid, side)`, 30-day TTL). HTML is NOT inlined.
+7. `reference_namespaces = (config_namespaces − {document-extraction:*, page-snapshot:*})
+   + [source_document_namespace] + page_ns`.
 8. Agents SDK runs with one tool (`search_knowledge_base`) that calls
-   `search(query, reference_namespaces, trace_id=agent_call_id, document_id=source_document_id)`.
+   `search(query, reference_namespaces, trace_id=agent_call_id)`.
+   **`document_id` is NOT passed** — doing so would scope every search to a
+   single document and silently block page-snapshot and reference namespaces
+   (the 2026-11-19 bug: commits `1215890` and the one that followed).
 9. Step 2: `chat_json()` reformats the free-text to match the DynamoDB
    `output_json_schema`.
 
 ### `eval/doc_eval_agent.py` (QA)
 
 Same shape as extraction: `_prepare_eval_args` ingests the source (cached
-no-op if the extraction agent already did it in this pipeline run), inlines
-it in `user_message`, ingests the page snapshots (also a cached no-op —
-reuses the extraction's `agent_call_id`), appends the returned namespaces to
-the search scope, runs the Agents SDK with the HTTP search tool. `trace_id`
+no-op if the extraction agent already did it in this pipeline run) and
+appends the returned `document-extraction:<uuid>` namespace to the search
+scope. Also ingests the page snapshots (also a cached no-op — reuses the
+extraction's `agent_call_id`). Nothing is inlined in the prompt; the agent
+retrieves source + HTML + references via `search_knowledge_base`. `trace_id`
 = `agent_call_id` of the extraction being graded.
 
 ### `bubble/page_change_agent.py` (WTA)
@@ -238,7 +243,7 @@ somewhere. Fixed in commit `cde3e0b`.
 
 | Symptom | Where to look |
 |---|---|
-| Agent produced fewer rows than the document has | Check `document_agent: inlined source document doc_id=… chars=…` log — if the chars count is way lower than the source, the ingest/text round-trip is wrong. If it's full-size, check Step 1 output chunks — the agent should see all items. |
+| Agent produced fewer rows than the document has | Check `document_agent: ingest status=… doc_uuid=…` log — status should be `queued` → `ready` (or `cached` on reruns). Verify the source namespace was added to the search scope via the `source_ns=True` field in the `document_agent: running (model=…, ref_namespaces=…, source_ns=…, snapshots=…)` line. If Step 1 output references only a subset of the document, the agent may not be searching enough — check turn counts and prompt guidance. |
 | `search_knowledge_base backend error: …` in logs | Backend API unreachable or returning non-2xx. Agent will fall through to direct-API path. Verify `CHATKIT_INTERNAL_API_KEY` is set and the backend is up. |
 | Searches missing from the admin dashboard retrieval-traces view | Agent isn't passing a `trace_id`. Check the `trace_id` passed to `_run_with_pgvector` (document_agent / page_change_agent) or `_run_agent_async` (doc_eval_agent / eval_agent). |
 | Cached doc-uuid returning stale text | `ttl_hours` expired; the content was purged. Next extraction will re-ingest. To force-overwrite before TTL, call `ingest_document(..., force=True)`. |

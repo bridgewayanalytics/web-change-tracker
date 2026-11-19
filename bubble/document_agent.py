@@ -167,20 +167,16 @@ async def _run_with_pgvector(
     json_schema_name: str = "document_extraction",
     json_schema_strict: bool = True,
     trace_id: str | None = None,
-    source_document_id: int | None = None,
 ) -> dict:
     """
     Two-step extraction:
       1. Run the Agents SDK with the backend's /knowledge/search endpoint as
-         the agent's search tool. The source document is already inlined into
-         user_content by the caller (via GET /knowledge/document-extraction/
-         {doc_uuid}/text), so search_knowledge_base only reaches the reference
-         collections (Chronicles, Newsreels, Guidelines, Proceedings, etc.).
+         the agent's search tool. All content — source document, before/after
+         HTML snapshots, and reference collections (Chronicles, Newsreels,
+         Guidelines, Proceedings, etc.) — lives in the knowledge base and is
+         retrieved via search_knowledge_base.
       2. Make one Structured Outputs call to reformat the gathered information
          into the exact DynamoDB schema.
-
-    reference_namespaces must NOT include any document-extraction:* namespaces
-    — the source is already in the prompt.
     """
     from agents import Agent, Runner, ModelSettings, function_tool
     from agents.model_settings import Reasoning
@@ -978,17 +974,15 @@ def extract_document_data(
             log.info("document_agent: extracted %d row(s) for: %s", len(rows), document_name[:60])
             return rows
 
-        # Inline the source document into the user prompt instead of relying on
-        # knowledge-base retrieval to surface it. Ingest → wait for ready →
-        # fetch the stitched text (sliding-window overlap removed for text/plain,
-        # page markers for PDFs) → inline the whole thing. The deterministic
-        # doc_uuid means reruns + QA agent runs reuse the same cached document.
-        source_document_id: int | None = None
-        source_text_added = False
+        # Ingest the source document into the backend knowledge base. Agent
+        # retrieves content via search_knowledge_base — the source document is
+        # NOT inlined in the prompt. Deterministic doc_uuid means reruns + QA
+        # agent runs reuse the cached document without re-indexing.
+        source_document_namespace: str | None = None
         if document_url and document_url.strip() and pdf_text:
             try:
                 from bubble.doc_extraction_ingest import (
-                    doc_uuid_for, ingest_document, wait_until_ready, document_text,
+                    doc_uuid_for, ingest_document, wait_until_ready,
                 )
                 doc_uuid = doc_uuid_for(document_url)
                 ingest_resp = ingest_document(
@@ -1002,24 +996,17 @@ def extract_document_data(
                 )
                 if status != "cached":
                     wait_until_ready(doc_uuid)
-                src = document_text(doc_uuid)
-                source_document_id = src.get("document_id")
-                src_body = (src.get("text") or "").strip()
-                if src_body:
-                    user_content += (
-                        f"\n\n=== SOURCE DOCUMENT — {src.get('title') or document_name} ===\n"
-                        f"(This is the complete, authoritative source text. "
-                        f"Do NOT search for its contents — extract fields directly from this text.)\n"
-                        f"{src_body}"
-                    )
-                    source_text_added = True
-                    log.info(
-                        "document_agent: inlined source document doc_id=%s chars=%s chunks=%s",
-                        source_document_id, src.get("char_count"), src.get("chunk_count"),
-                    )
+                source_document_namespace = (
+                    ingest_resp.get("namespace")
+                    or f"document-extraction:{doc_uuid}"
+                )
+                log.info(
+                    "document_agent: source document available in namespace=%s",
+                    source_document_namespace,
+                )
             except Exception as e:
                 log.warning(
-                    "document_agent: failed to inline source document for %s — proceeding without: %s",
+                    "document_agent: failed to ingest source document for %s — proceeding without source namespace: %s",
                     document_name[:80], e,
                 )
         elif document_url and document_url.strip() and not pdf_text:
@@ -1051,21 +1038,24 @@ def extract_document_data(
 
         # Reference search scope: strip per-call namespaces from the
         # config-declared list (they're populated per-invocation, not via
-        # DynamoDB), then add the page-snapshot namespaces we just ingested.
-        # document-extraction:* stays filtered because the source document is
-        # inlined above.
+        # DynamoDB), then add the source document + page-snapshot namespaces
+        # we just ingested. All content lives in the vector store; the agent
+        # retrieves source + HTML + reference material through one search tool.
         reference_namespaces = [
             ns for ns in pgvector_namespaces
             if not str(ns).startswith("document-extraction:")
             and not str(ns).startswith("page-snapshot:")
         ]
+        if source_document_namespace:
+            reference_namespaces.append(source_document_namespace)
         reference_namespaces.extend(page_snapshot_namespaces)
 
         trace_id = str((alert_context or {}).get("agent_call_id") or doc_call_id).strip()
 
         log.info(
-            "document_agent: running (model=%s, source_inlined=%s, ref_namespaces=%d) for: %s",
-            model, source_text_added, len(reference_namespaces), document_name[:80],
+            "document_agent: running (model=%s, ref_namespaces=%d, source_ns=%s, snapshots=%d) for: %s",
+            model, len(reference_namespaces), bool(source_document_namespace),
+            len(page_snapshot_namespaces), document_name[:80],
         )
         try:
             from bubble.async_runner import run_sync as _run_sync
@@ -1075,7 +1065,6 @@ def extract_document_data(
                 json_schema_name=json_schema_name,
                 json_schema_strict=json_schema_strict,
                 trace_id=trace_id,
-                source_document_id=source_document_id,
             ))
         except Exception as api_err:
             log.warning(
