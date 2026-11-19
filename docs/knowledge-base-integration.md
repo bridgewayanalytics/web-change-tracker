@@ -188,6 +188,28 @@ from the backend path, they fall through to a direct Responses API call via
 context but still produces a schema-compliant output (no empty rows). A
 `WARNING` log identifies which agent fell back and why.
 
+## Shared event loop (`bubble.async_runner.run_sync`)
+
+All four agents dispatch the Agents SDK runner through
+`bubble.async_runner.run_sync(coro)` instead of the stdlib `asyncio.run(coro)`.
+
+**Why:** `asyncio.run()` creates a fresh event loop per call and closes it on
+exit. The OpenAI Agents SDK (via `httpx`) caches an `AsyncClient` tied to the
+first event loop it sees. The second `asyncio.run()` in the same process gets
+a new loop, but the cached client still references the closed one, so every
+tool call raises `RuntimeError: Event loop is closed`. Our broad
+`except Exception` catches that error and silently falls through to the
+direct-API path (no `search_knowledge_base` tool).
+
+Scheduled 6-hour pipeline runs do many sequential document extractions in one
+Python process, so this bug silently degraded every extraction after the first.
+Subprocess-per-group tasks (dashboard reruns, `eval.run_bulk_reeval`) weren't
+affected because each one starts a fresh process.
+
+**Diagnostic signal:** filter a pipeline log for `"Event loop is closed"` —
+should be zero hits per run. Any hit means `asyncio.run()` crept back in
+somewhere. Fixed in commit `cde3e0b`.
+
 ## What was removed on 2026-11-09
 
 | Path | Why gone |
