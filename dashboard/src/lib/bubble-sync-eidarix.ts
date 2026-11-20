@@ -231,11 +231,12 @@ const LIB_TYPE_ALIASES: Record<string, string> = {
   "agenda":                      "Agenda & Materials",
   "materials":                   "Agenda & Materials",
   "request for comment":         "Proposed Guidance & Support Materials",
-  // Common agent misspelling — the doc extraction agent sometimes emits
-  // "Guidelines" (plural, with an L) instead of the correct Bubble title
-  // "Guidance". Alias both into the canonical type so a typo in the agent
-  // output doesn't propagate into Bubble.
+  // The doc extraction agent systematically emits "Guidelines" (plural, with
+  // an L) instead of the correct Bubble title "Guidance" (singular, with a
+  // C). Two Bubble library item types are affected — alias both so a typo
+  // in the agent output doesn't propagate into Bubble.
   "proposed guidelines & support materials": "Proposed Guidance & Support Materials",
+  "existing requirements & guidelines":      "Existing Requirements & Guidance",
   "adopted guideline":           "Existing Requirements & Guidance",
   "report / resource":           "Publication",
   "document":                    "Publication",
@@ -282,9 +283,13 @@ async function resolveLibraryItemType(typeName: string): Promise<{
       }
     }
     // 3. Fuzzy match — compare token overlap after lowercasing. Catches unseen
-    // typos the alias table doesn't cover (e.g. "Guidelines" ↔ "Guidance" if
-    // the alias ever drifts). Only accepts a match when >=70% of the longer
-    // string's word-tokens are shared with the candidate.
+    // typos the alias table doesn't cover. Threshold 0.6 (not 0.7) so that
+    // a 1-word typo in a 3-word title still matches (e.g. "Existing
+    // Requirements & Guidelines" vs Bubble "Existing Requirements &
+    // Guidance" shares 2 of 3 tokens → 0.667 ≥ 0.6). Combined with Bubble's
+    // small library item type set (≤10), the probability of a wrong-topic
+    // false positive at this threshold is low; the uniqueness guarantee
+    // comes from always picking the HIGHEST-scoring candidate.
     const needleTokens = needle.split(/\W+/).filter(Boolean);
     let best: { t: Record<string, unknown>; score: number; title: string } | null = null;
     for (const t of types) {
@@ -295,7 +300,7 @@ async function resolveLibraryItemType(typeName: string): Promise<{
       const titleSet = new Set(titleTokens);
       const shared = needleTokens.filter(tok => titleSet.has(tok)).length;
       const score = shared / bigger;
-      if (score >= 0.7 && (!best || score > best.score)) {
+      if (score >= 0.6 && (!best || score > best.score)) {
         best = { t, score, title };
       }
     }
