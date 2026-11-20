@@ -348,7 +348,8 @@ async function getEmptyTopicId(): Promise<string | null> {
 // ---------------------------------------------------------------------------
 
 async function findAgendaItemByTitle(title: string): Promise<string | null> {
-  for (const key of ["title", "BA title"]) {
+  // 1. Exact match on either title field. Covers the happy case.
+  for (const key of ["title", "BA title", "NAIC Title"]) {
     try {
       const results = await bubbleSearch("agendaitem", [
         ...CONTENT_SPACE_CONSTRAINT,
@@ -359,6 +360,46 @@ async function findAgendaItemByTitle(title: string): Promise<string | null> {
         return String(results[0]._id);
       }
     } catch { /* try next field key */ }
+  }
+  // 2. Agent-superset-of-Bubble probe. The agent sometimes prepends boilerplate
+  // like "Consider Adoption of the NAIC " to a canonical Bubble title (e.g.
+  // Bubble has "Credit Rating Provider (CRP) Due Diligence Framework" but
+  // agent emits "Consider Adoption of the NAIC Credit Rating Provider (CRP)
+  // Due Diligence Framework"). Do a text-contains search on the LAST few
+  // tokens of the agent title to narrow Bubble's result set, then accept a
+  // match only when exactly one Bubble BA title or NAIC Title is a word-
+  // boundary suffix of the agent title. Uniqueness-gated so an ambiguous
+  // overlap (two Bubble titles both suffix-matching) falls through to the
+  // normal "not found" error. Mirrors probe 4 in `lookupTopicWithArticle`.
+  const tokens = title.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length >= 4) {
+    // Use the last 4 tokens as the search anchor — long enough to be
+    // selective, short enough to tolerate a word of noise at the end.
+    const anchor = tokens.slice(-4).join(" ");
+    for (const key of ["BA title", "NAIC Title"]) {
+      try {
+        const results = await bubbleSearch("agendaitem", [
+          ...CONTENT_SPACE_CONSTRAINT,
+          { key, constraint_type: "text contains", value: anchor },
+        ], 10);
+        const normAgent = (" " + title.toLowerCase());
+        const matches = results.filter(r => {
+          const bubbleTitle = String(r[key] ?? "").trim();
+          if (!bubbleTitle) return false;
+          // Agent title must END WITH `" " + bubbleTitle` for a word-boundary
+          // suffix match. Case-insensitive to tolerate agent casing drift.
+          return normAgent.endsWith(" " + bubbleTitle.toLowerCase());
+        });
+        if (matches.length === 1) {
+          const m = matches[0];
+          console.info(`[bubble-sync] found agendaitem via SUFFIX-of-agent probe '${title}' → '${String(m[key] ?? "")}' (${m._id})`);
+          return String(m._id);
+        }
+        if (matches.length > 1) {
+          console.warn(`[bubble-sync] SUFFIX probe ambiguous for '${title}' — ${matches.length} candidates, falling through`);
+        }
+      } catch { /* try next field */ }
+    }
   }
   console.warn(`[bubble-sync] agendaitem not found by title: '${title}'`);
   return null;
