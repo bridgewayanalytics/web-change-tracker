@@ -730,6 +730,15 @@ When we can't resolve a Short Name (missing org, Bubble lookup failure,
 etc.) the executor falls back to the classifier's `ep.title` so publishing
 never fails outright on title construction.
 
+**UI surfacing.** `validateSyncPlan()` returns `effectiveEventTitle` in
+the `ValidationResult`, so the modal displays the canonical title the
+executor will actually write — the user never sees the classifier's
+old-format title when a new event is about to be created. For UPDATE
+paths the trimmed PATCH doesn't touch the title; the modal keeps showing
+the live Bubble record's title via `currentRecord` (fetched from
+`/api/bubble/record`), so there's no misleading preview of a title that
+won't change.
+
 ### `/api/bubble/record` org filter
 
 The calendar record lookup endpoint mirrors the executor's `findCalendarItem`

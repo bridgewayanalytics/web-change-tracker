@@ -30,6 +30,13 @@ interface ValidationIssue {
 interface ValidationResult {
   valid: boolean;
   issues: ValidationIssue[];
+  // Canonical event title the executor will write when the event is
+  // CREATE'd. Overlays the classifier's old-format `ep.title` in the modal
+  // so the user sees exactly what will land in Bubble. `undefined` while
+  // validation loads; `null` when no event action or title couldn't be
+  // resolved. For UPDATE paths the trimmed PATCH leaves the title untouched,
+  // so the modal keeps showing the current Bubble record's title instead.
+  effectiveEventTitle?: string | null;
 }
 
 function ValidationBanner({ result }: { result: ValidationResult | null | "loading" }) {
@@ -1450,15 +1457,30 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [libAction, libPreview]);
 
+  // Pre-flight validation — loaded here (above effectiveEventPreview) so
+  // effectiveEventTitle is available when computing the event section fields.
+  const [validation, setValidation] = useState<ValidationResult | null | "loading">(null);
+
+  // Overlay the event preview's title with the canonical event title returned
+  // by the validator — the string the executor will actually write when the
+  // event is CREATE'd. Falls through to the classifier's title when
+  // validation hasn't arrived or didn't return one.
+  const effectiveEventPreview = useMemo(() => {
+    const raw = eventPreview;
+    const t = (validation && validation !== "loading") ? validation.effectiveEventTitle : null;
+    if (!t) return raw;
+    return { ...raw, title: t };
+  }, [eventPreview, validation]);
+
   const eventFields = useMemo(() => {
     // Supplement stale/empty preview datetimes from live row fields (try both with and without _et suffix)
-    const ep = { ...eventPreview } as Record<string, unknown>;
+    const ep = { ...effectiveEventPreview } as Record<string, unknown>;
     const r = row as Record<string, unknown>;
     if (!notNA(safeStr(ep.start_datetime))) ep.start_datetime = safeStr(r.event_start_date_time ?? r.event_start_date_time_et);
     if (!notNA(safeStr(ep.end_datetime)))   ep.end_datetime   = safeStr(r.event_end_date_time   ?? r.event_end_date_time_et);
     return buildEventFields(ep, libPreview, libAction, alertType, eventChangedLabels, displayedAgendaItems);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventPreview, libPreview, libAction, alertType, eventChangedLabels, displayedAgendaItems]);
+  }, [effectiveEventPreview, libPreview, libAction, alertType, eventChangedLabels, displayedAgendaItems]);
   // Date for the library item is derived from its Bubble type per project convention.
   // Meeting materials / RFC / Effective Date / Transcript → event start date.
   // Publication (reports) → doc extraction's publication date.
@@ -1469,9 +1491,6 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
 
   const [eventEdits, setEventEdits]               = useState<Record<string, string>>({});
   const [libEdits, setLibEdits]                   = useState<Record<string, string>>({});
-
-  // Pre-flight validation — runs once on open for rows with Bubble sections
-  const [validation, setValidation]               = useState<ValidationResult | null | "loading">(null);
 
   // When the server reports that the library item type routes through an
   // alias / fuzzy match, show the canonical Bubble name in the Type field
@@ -2212,8 +2231,8 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
               )}
               <Section
                 title={effectiveEventAction === "create" ? "Create Event" : "Update Event"}
-                subtitle={safeStr(eventPreview.title) || safeStr((row as Record<string, unknown>).event_title) || undefined}
-                subtitleHref={safeStr(eventPreview.url) || safeStr((row as Record<string, unknown>).event_url) || undefined}
+                subtitle={safeStr(effectiveEventPreview.title) || safeStr((row as Record<string, unknown>).event_title) || undefined}
+                subtitleHref={safeStr(effectiveEventPreview.url) || safeStr((row as Record<string, unknown>).event_url) || undefined}
                 objectType="Calendar Event"
                 system="Bubble"
                 action={effectiveEventAction}

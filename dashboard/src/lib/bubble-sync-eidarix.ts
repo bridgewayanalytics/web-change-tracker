@@ -797,6 +797,13 @@ export interface ValidationIssue {
 export interface ValidationResult {
   valid: boolean; // true = no errors (warnings allowed)
   issues: ValidationIssue[];
+  // The canonical event title that will land in Bubble when the event is
+  // CREATE'd (either because the classifier said "create" or because an
+  // "update" match_search would miss and fall back to CREATE). Null when the
+  // alert has no event action, or when the title couldn't be resolved (e.g.
+  // missing Short Name). UPDATE paths leave the title untouched in Bubble,
+  // so the modal should keep showing the current record's title in that case.
+  effectiveEventTitle?: string | null;
 }
 
 export async function validateSyncPlan(
@@ -900,7 +907,24 @@ export async function validateSyncPlan(
     });
   }
 
-  return { valid: !issues.some(i => i.severity === "error"), issues };
+  // Compute the canonical event title so the modal can display what will
+  // actually land in Bubble (instead of the classifier's old-format title).
+  // Only populated when the plan involves an event action — UPDATE paths
+  // leave the Bubble title untouched, so this is still useful there because
+  // the modal can show "current Bubble title vs what we'd write if we
+  // CREATE'd a fresh event" when match_search misses.
+  let effectiveEventTitle: string | null = null;
+  if (plan.event) {
+    try {
+      const ep = (plan.event_preview ?? {}) as Record<string, unknown>;
+      const agendaTopicNames = getAgendaTopicNames(row);
+      effectiveEventTitle = await buildCanonicalEventTitle(ep, row, agendaTopicNames, new Map());
+    } catch {
+      effectiveEventTitle = null;
+    }
+  }
+
+  return { valid: !issues.some(i => i.severity === "error"), issues, effectiveEventTitle };
 }
 
 // ---------------------------------------------------------------------------
