@@ -700,6 +700,46 @@ colon (`:`) — every punctuation we've seen the agent insert between
 defaults to `"New Materials"`. The row still stores the full original
 `alert_type`; only the dictionary lookups use the stripped form.
 
+### Calendar event canonical title
+
+Freshly-created calendar events (whether the classifier originally said CREATE,
+or UPDATE that fell back to CREATE via the match_search miss path) have their
+title built by `buildCanonicalEventTitle()` to match the pattern observed on
+existing Bubble events:
+
+```
+<Org Short Name> | <topics joined by `;`> |  <Meeting|Last comment date>
+```
+
+- **`<Org Short Name>`** comes from the Bubble `organization` record's
+  `Short Name` field. Already includes the `"NAIC "` prefix where applicable
+  (e.g. `"NAIC SAPWG"`, `"NAIC BWG"`, `"NAIC EX-Committee"`). We look up the
+  org via `match_search.org` → full `Name` → `Short Name`. Falls back to the
+  full Name when the Short Name field is empty or the org isn't found.
+- **topics segment** is the union of event-preview topics + agenda-item
+  topics, joined by a bare `;` (no surrounding space). Defaults to
+  `"Relevant Topics TBD"` when the agent produced no topics.
+- **final segment** is `"Last comment date"` when `alert_type` (after
+  `_strip_preliminary`) is in `_RFC_ALERT_TYPES` (`New Request for
+  Comment`, `Updated Request for Comment`, `New Effective Date`,
+  `Updated Effective Date`). Otherwise `"Meeting"`.
+- Note the **double space** before the final segment (` |  Meeting`) —
+  matches existing Bubble events exactly.
+
+When we can't resolve a Short Name (missing org, Bubble lookup failure,
+etc.) the executor falls back to the classifier's `ep.title` so publishing
+never fails outright on title construction.
+
+### `/api/bubble/record` org filter
+
+The calendar record lookup endpoint mirrors the executor's `findCalendarItem`
+constraints exactly: `space`, `date` range, **and** `orgs contains org_id`
+where `org_id` is resolved from `match_search.org`. Without the org filter,
+ANY event in the content space on the target date returns a false positive
+and the modal reports `found: true`, suppressing the `eventFallbackToCreate`
+→ `fallbackNotice` chain. Users then see "Update event" when CREATE is what
+will actually happen at sync time.
+
 ### Sibling-row stamp scoping
 
 Sibling rows share `agent_call_id` but have distinct `library_item_url`

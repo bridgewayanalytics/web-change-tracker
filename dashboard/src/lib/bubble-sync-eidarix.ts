@@ -931,6 +931,67 @@ export interface SyncResult {
  *   - "library_item": sync library item only (picks up existing agenda IDs)
  *   - "event": sync event only (picks up existing library item and agenda IDs)
  */
+// Alert types that should use "Last comment date" as the final segment of a
+// freshly-created event title. Everything else uses "Meeting" (meeting /
+// materials / agenda / transcript variants). After `_strip_preliminary`
+// normalises the prefix, these are the exact canonical strings to match.
+const _RFC_ALERT_TYPES = new Set([
+  "New Request for Comment",
+  "Updated Request for Comment",
+  "New Effective Date",
+  "Updated Effective Date",
+]);
+
+async function buildCanonicalEventTitle(
+  ep: Record<string, unknown>,
+  row: Record<string, unknown>,
+  agendaTopicNames: string[],
+  topicNameToId: Map<string, string>,
+): Promise<string> {
+  const fallback = String(ep.title ?? "").trim();
+
+  // Resolve the org Short Name. match_search.org is the FULL Bubble org name.
+  const matchSearch = (ep.match_search ?? {}) as Record<string, string>;
+  const orgFullName = matchSearch.org ?? (Array.isArray(row.organization) ? (row.organization as string[])[0] : String(row.organization ?? "")).trim();
+  let orgShortName = orgFullName;
+  if (orgFullName) {
+    try {
+      const orgs = await bubbleListAll("organization", CONTENT_SPACE_CONSTRAINT);
+      const match = orgs.find(o => String(o.Name ?? "").trim() === orgFullName);
+      const short = String(match?.["Short Name"] ?? "").trim();
+      if (short) orgShortName = short;
+    } catch { /* fall through to full name */ }
+  }
+
+  // Topic DISPLAY names — the union of event_preview topics + agenda item
+  // topics. We use the canonical Bubble Title for each (via topicNameToId's
+  // normalized-key reverse lookup) so the title reflects what Bubble actually
+  // stores rather than whatever typo the agent emitted.
+  const epFieldIds = (ep.field_ids ?? {}) as Record<string, unknown>;
+  const epTopicNames = getTopicNamesFromFieldIds(epFieldIds);
+  const topicDisplayNames = Array.from(new Set([...epTopicNames, ...agendaTopicNames])).filter(t => t && t.toUpperCase() !== "N/A");
+
+  // Decide final segment based on the alert type family (after Preliminary strip)
+  const rawAlertType = String(row.alert_type ?? "").trim();
+  const strippedType = rawAlertType.replace(/\s*[—–\-.:]?\s*Preliminary\s*[—–\-.:]?\s*/i, " ").replace(/\s{2,}/g, " ").trim();
+  const finalSegment = _RFC_ALERT_TYPES.has(strippedType) ? "Last comment date" : "Meeting";
+
+  // Only override the classifier's title when we have the minimum pieces
+  // (org + at least one piece of data). Otherwise keep the classifier's title
+  // so we don't publish a worse value than before.
+  if (!orgShortName) return fallback;
+
+  const topicsSegment = topicDisplayNames.length ? topicDisplayNames.join(";") : "Relevant Topics TBD";
+  // Note the DOUBLE space before the final segment — matches existing Bubble
+  // event titles exactly (observed consistently in the 30-record sample).
+  const canonical = `${orgShortName} | ${topicsSegment} |  ${finalSegment}`;
+  // `topicNameToId` is unused here but kept in the signature so future
+  // enhancements can map agent-emitted topic names back to canonical
+  // Bubble titles without a second API call.
+  void topicNameToId;
+  return canonical;
+}
+
 export async function syncAlert(
   agentCallId: string,
   action: string,
@@ -1198,7 +1259,15 @@ export async function syncAlert(
           "Eiderix Ref": agentCallId,
           ...timeFields,
         };
-        const evTitle = String(ep.title ?? "").trim();
+        // Canonical event title: `<Org Short Name> | <topics joined by `;`> |  <Meeting|Last comment date>`
+        // Matches the pattern we see on existing Bubble events (sample pulled
+        // 2026-11-20): short name comes from the Bubble organization record's
+        // `Short Name` field (already includes "NAIC " prefix where applicable),
+        // topics are joined by a bare `;` (no space), and the final segment is
+        // "Meeting" for meeting/materials/agenda alerts or "Last comment date"
+        // for Request for Comment alerts. Falls back to the classifier's
+        // `ep.title` when we can't resolve a short name.
+        const evTitle = await buildCanonicalEventTitle(ep, row, agendaTopicNames, topicNameToId);
         if (evTitle && evTitle.toUpperCase() !== "N/A") {
           eventPayload["title"] = evTitle;
           eventPayload["name for search"] = evTitle.toLowerCase();

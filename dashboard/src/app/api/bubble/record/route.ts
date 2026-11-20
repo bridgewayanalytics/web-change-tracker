@@ -215,11 +215,28 @@ export async function GET(request: NextRequest) {
       const date = matchSearch.date ?? "";
       if (!date) return NextResponse.json({ found: false, fields: {} });
 
-      const constraints = [
+      const constraints: Record<string, unknown>[] = [
         spaceConstraint,
         { key: "date", constraint_type: "greater than", value: `${date}T00:00:00.000Z` },
         { key: "date", constraint_type: "less than", value: `${date}T23:59:59.000Z` },
       ];
+      // Also filter by org so the lookup mirrors the executor's findCalendarItem
+      // constraints exactly (see bubble-sync-eidarix.ts). Without this, ANY event
+      // on `date` in the content space counts as a match — including unrelated
+      // orgs' events — and the modal falsely reports "found" so the fallbackNotice
+      // ("will create a new event") never fires.
+      if (matchSearch.org) {
+        try {
+          const orgResults = await bubbleSearch("organization", [
+            spaceConstraint,
+            { key: "Name", constraint_type: "equals", value: matchSearch.org },
+          ]);
+          const orgId = (orgResults[0]?._id as string | undefined) ?? "";
+          if (orgId) {
+            constraints.push({ key: "orgs", constraint_type: "contains", value: orgId });
+          }
+        } catch { /* skip org constraint on failure — fall back to date-only */ }
+      }
       const results = await bubbleSearch("calendaritem", constraints);
       if (!results.length) return NextResponse.json({ found: false, fields: {} });
 
