@@ -351,9 +351,28 @@ at display time via `stripStatusPrefix()` and also before any Bubble API write.
 so the dependency guard fires correctly.
 
 **Existing/Updated items** (status != `"New"`) are not re-created — they are
-looked up in Bubble by title via `findAgendaItemByTitle()` (searches for the
-"title" or "BA title" field). If the item can't be found, the whole sync fails
-with a `RuntimeError` rather than silently proceeding.
+looked up in Bubble by title via `findAgendaItemByTitle()`:
+
+1. **Exact match** on `title`, `BA title`, or `NAIC Title` (all three fields
+   are checked in that order).
+2. **Agent-superset-of-Bubble suffix probe**. Agents sometimes prepend
+   boilerplate like `"Consider Adoption of the NAIC "` to a canonical
+   Bubble title (e.g. Bubble has `"Credit Rating Provider (CRP) Due
+   Diligence Framework"` but the agent emits `"Consider Adoption of the
+   NAIC Credit Rating Provider (CRP) Due Diligence Framework"`). When the
+   agent title has ≥4 tokens, the last 4 are used as a `text contains`
+   search anchor; results are then filtered to those whose BA title or
+   NAIC Title is a case-insensitive word-boundary suffix of the agent
+   string. Accept only when exactly one Bubble candidate qualifies —
+   ambiguous suffix overlaps fall through to the "not found" error.
+
+Mirrors probe 4 in `lookupTopicWithArticle` (word-boundary suffix match)
+but inverted: there Bubble is the superset and the agent is the suffix;
+here the agent is the superset and the Bubble canonical title is the
+suffix.
+
+If no probe finds the item, the whole sync fails with a `RuntimeError`
+rather than silently proceeding.
 
 ---
 
