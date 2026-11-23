@@ -1210,6 +1210,22 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
   // agent_call_id -> partial row overrides (for real-time chunk key updates)
   const [rowOverrides, setRowOverrides] = useState<Map<string, Partial<AlertRow>>>(new Map());
 
+  // Set of agent_call_ids with a Content Gate draft on disk. Drives the amber
+  // "Editing" badge in the Actions cell. Refetched when a modal closes so a
+  // just-persisted draft (or just-wiped draft after full publish) shows up.
+  const [draftIds, setDraftIds] = useState<Set<string>>(new Set());
+  const refreshDraftIds = React.useCallback(() => {
+    console.log("[content-gate-draft] fetching drafts list");
+    fetch("/api/content-gate/drafts", { cache: "no-store" })
+      .then(r => { console.log("[content-gate-draft] GET /drafts →", r.status); return r.json(); })
+      .then((d: { agent_call_ids?: string[] }) => {
+        console.log("[content-gate-draft] drafts list:", d.agent_call_ids);
+        setDraftIds(new Set(d.agent_call_ids ?? []));
+      })
+      .catch(e => console.error("[content-gate-draft] drafts list failed", e));
+  }, []);
+  useEffect(() => { refreshDraftIds(); }, [refreshDraftIds]);
+
   function setUploadState(callId: string, state: string) {
     setUploadStates((prev) => new Map(prev).set(callId, state));
   }
@@ -1657,6 +1673,25 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
                             const transcriptDone = !transcriptKey || effectiveRow.ingest_status === "approved";
                             const isComplete = hasAnyAction && eventDone && libDone && transcriptDone;
 
+                            const isSyncing = effectiveRow.bubble_sync_status === "syncing";
+                            if (isSyncing) return <span className="text-[11px] text-blue-500 whitespace-nowrap">⟳ Syncing…</span>;
+
+                            // Editing badge takes precedence over Complete — if the user re-opened a
+                            // completed row and has unsaved tweaks, surface that signal (otherwise
+                            // the pending edit would be invisible under the ✓ Complete pill).
+                            const hasDraft = draftIds.has(callId);
+                            if (hasDraft) {
+                              return (
+                                <button
+                                  onClick={() => setContentGateRow(effectiveRow as AlertRow)}
+                                  className="text-[11px] font-medium text-amber-600 hover:text-amber-800 hover:underline whitespace-nowrap"
+                                  title="Unsaved edits in Content Gate — click to resume"
+                                >
+                                  ✎ Editing
+                                </button>
+                              );
+                            }
+
                             if (isComplete) {
                               return (
                                 <button
@@ -1667,9 +1702,6 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
                                 </button>
                               );
                             }
-
-                            const isSyncing = effectiveRow.bubble_sync_status === "syncing";
-                            if (isSyncing) return <span className="text-[11px] text-blue-500 whitespace-nowrap">⟳ Syncing…</span>;
 
                             return (
                               <button
@@ -1900,7 +1932,7 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
       {contentGateRow && (
         <ContentGateModal
           row={contentGateRow}
-          onClose={() => setContentGateRow(null)}
+          onClose={() => { setContentGateRow(null); refreshDraftIds(); }}
           onFieldPatched={(fields) => {
             const callId = String(contentGateRow.agent_call_id ?? "");
             setRowOverrides((prev) => new Map(prev).set(callId, { ...(prev.get(callId) ?? {}), ...fields }));

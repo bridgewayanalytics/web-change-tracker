@@ -360,6 +360,83 @@ with just the vector-store dropdown is rendered.
 
 ---
 
+## 8a. Autosaved drafts
+
+The modal persists every editable piece of state to S3 under
+`content_gate_drafts/<agent_call_id>/<slug>.json`, so a browser reload, logout,
+or close-and-reopen never loses user work.
+
+**Draft shape (`ContentGateDraft`, `src/lib/content-gate-drafts.ts`):**
+
+```json
+{
+  "version": 1,
+  "updated_at": "2026-11-23T15:00:00.000Z",
+  "lib_edits":                { "Date": "2026-12-14", "Type": "Agenda & Materials" },
+  "event_edits":              { "Chronicle Topics": "foo;bar" },
+  "agenda_item_edits":        { "3": { "title": "Edited title…" } },
+  "deleted_new_indices":      [1, 2],
+  "deleted_existing_indices": []
+}
+```
+
+**Lifecycle:**
+
+1. **Load on open** (`agentCallId` + `libPreview.url` → key) — `fetch /api/content-gate/draft`.
+   If a draft exists, seed `libEdits` / `eventEdits` / `agendaItemEdits` /
+   `deletedNewIndices` / `deletedExistingIndices` from it.
+2. **Debounced autosave (1 s)** — `useEffect` watching all five pieces of edit
+   state waits 1 s after the last change, then POSTs the full draft with
+   `fetch({ keepalive: true })` so an in-flight save survives a navigation.
+   If the user reverted everything to empty, it DELETEs instead so the row
+   loses its Editing badge.
+3. **Unmount flush** — a second `useEffect` with empty dep array registers a
+   cleanup that fires on modal close. It reads the latest state from a
+   `draftStateRef` (kept in sync by a third effect) and POSTs synchronously
+   with `keepalive: true`. Covers the race where the user closes the modal
+   inside the 1 s debounce window — the debounce timer is cleared on unmount
+   but the flush still lands.
+4. **Full-publish wipe** — `setSectionState` wraps `setSections`; whenever a
+   section flips to `done`, it calls `maybeDeleteDraftOnFullCompletion` which
+   checks every applicable section (`agenda_items` if `hasAgenda`,
+   `library_item` if `libAction`, `event` if `eventAction`). If all done, the
+   draft is DELETEd.
+
+Diagnostic logging is left in place (prefix `[content-gate-draft]`) so
+regressions can be diagnosed from a browser console session without a
+redeploy — grep `/ecs/naic-dashboard` CloudWatch for the POST/GET side if
+the browser is unreachable.
+
+**Sibling isolation.** The S3 key includes a 16-char SHA256 of
+`library_item_preview.url`, so sibling rows (same `agent_call_id`, different
+URLs) edit independently. Siblings without a URL (e.g. "Updated Meeting" rows)
+share the slug `__no_url__`.
+
+**AlertsTable badge.** On mount, AlertsTable calls `/api/content-gate/drafts`
+to fetch the set of `agent_call_id`s with at least one draft, and shows an
+amber `✎ Editing` button in the Actions cell when the row's call_id is in that
+set. Precedence in the cell:
+
+1. `⟳ Syncing…` — a sync is in flight
+2. `✎ Editing` — a draft exists (amber, hover shows "Unsaved edits…")
+3. `✓ Complete` — all applicable Bubble IDs stamped, no draft
+4. `Content Gate` — default
+
+The drafts list is refreshed when the modal closes so a just-persisted or
+just-wiped draft flips the badge immediately.
+
+**IAM.** Task role needs `s3:{Get,Put,Delete}Object` on
+`content_gate_drafts/*` and `s3:ListBucket` on the bucket with
+`s3:prefix=content_gate_drafts*` (see `aws_iam_role_policy.ecs_task_s3_ssm`
+in `infra/terraform/iam.tf`).
+
+**Why not patch `alerts_table.jsonl`?** `patchJsonlRows` downloads, modifies,
+and re-uploads the entire JSONL — not atomic. A 3-second debounced autosave
+across many open modals would race with every other write to the JSONL.
+Per-row S3 objects use PutObject, which is atomic.
+
+---
+
 ## 9. Agenda item editing
 
 New and existing agenda items share one unified "N Agenda Items" card (header

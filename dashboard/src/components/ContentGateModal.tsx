@@ -1622,8 +1622,175 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
 
   const [validationPopup, setValidationPopup] = useState<ValidationPopup | null>(null);
 
+  // ─── Content Gate draft: load → autosave (debounced 3s) → delete on full publish
+  // Persists every editable piece (agenda deletions, agenda field edits, library-item
+  // edits, event edits) to s3://.../content_gate_drafts/<call_id>/<slug>.json so user
+  // work survives reload, logout, and navigation. Draft is wiped when every applicable
+  // section is "done".
+  const draftLibraryUrl = String(libPreview.url ?? "") || null;
+  const [draftLoaded, setDraftLoaded] = useState(false);
+  useEffect(() => {
+    console.log("[content-gate-draft] mount — loading draft for", { agentCallId, draftLibraryUrl });
+    if (!agentCallId) { setDraftLoaded(true); return; }
+    const u = new URLSearchParams({ agent_call_id: agentCallId });
+    if (draftLibraryUrl) u.set("library_item_url", draftLibraryUrl);
+    fetch(`/api/content-gate/draft?${u.toString()}`, { cache: "no-store" })
+      .then(r => {
+        console.log("[content-gate-draft] GET /draft →", r.status);
+        return r.json();
+      })
+      .then((d: { draft?: {
+        lib_edits?: Record<string, string>;
+        event_edits?: Record<string, string>;
+        agenda_item_edits?: Record<string, Record<string, string>>;
+        deleted_new_indices?: number[];
+        deleted_existing_indices?: number[];
+      } | null }) => {
+        const draft = d.draft;
+        if (draft) {
+          if (draft.lib_edits)   setLibEdits(draft.lib_edits);
+          if (draft.event_edits) setEventEdits(draft.event_edits);
+          if (draft.agenda_item_edits) {
+            // Keys come back as strings from JSON; convert to numeric index.
+            const edits: Record<number, Record<string, string>> = {};
+            for (const [k, v] of Object.entries(draft.agenda_item_edits)) edits[Number(k)] = v;
+            setAgendaItemEdits(edits);
+          }
+          if (draft.deleted_new_indices)      setDeletedNewIndices(new Set(draft.deleted_new_indices));
+          if (draft.deleted_existing_indices) setDeletedExistingIndices(new Set(draft.deleted_existing_indices));
+        }
+      })
+      .catch(() => {})
+      .finally(() => setDraftLoaded(true));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentCallId, draftLibraryUrl]);
+
+  // Debounced autosave. Only fires once the initial draft load resolves so we
+  // don't persist the empty-state immediately on mount.
+  //
+  // Debounce = 1s (balances user rapid-typing coalescing with "don't lose work
+  // if the user closes the modal fast"). Even with 1s there's a window where a
+  // close-before-fire cancels the save — the unmount flush below covers that.
+  const draftStateRef = useRef({
+    libEdits, eventEdits, agendaItemEdits, deletedNewIndices, deletedExistingIndices,
+  });
+  useEffect(() => {
+    draftStateRef.current = { libEdits, eventEdits, agendaItemEdits, deletedNewIndices, deletedExistingIndices };
+  });
+  useEffect(() => {
+    if (!draftLoaded || !agentCallId) return;
+    const hasAnyEdit =
+      Object.keys(libEdits).length > 0 ||
+      Object.keys(eventEdits).length > 0 ||
+      Object.keys(agendaItemEdits).length > 0 ||
+      deletedNewIndices.size > 0 ||
+      deletedExistingIndices.size > 0;
+    console.log("[content-gate-draft] edit observed — will save in 1s", {
+      libEdits, eventEdits, agendaItemEdits,
+      deletedNewCount: deletedNewIndices.size,
+      deletedExistingCount: deletedExistingIndices.size,
+      hasAnyEdit,
+    });
+    const body = {
+      agent_call_id: agentCallId,
+      library_item_url: draftLibraryUrl,
+      draft: {
+        lib_edits: libEdits,
+        event_edits: eventEdits,
+        agenda_item_edits: Object.fromEntries(
+          Object.entries(agendaItemEdits).map(([k, v]) => [String(k), v]),
+        ),
+        deleted_new_indices: Array.from(deletedNewIndices),
+        deleted_existing_indices: Array.from(deletedExistingIndices),
+      },
+    };
+    const timer = setTimeout(() => {
+      if (!hasAnyEdit) {
+        fetch("/api/content-gate/draft", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agent_call_id: agentCallId, library_item_url: draftLibraryUrl }),
+          keepalive: true,
+        }).catch(() => {});
+        return;
+      }
+      console.log("[content-gate-draft] POST /draft (debounced)", { agentCallId, draftLibraryUrl });
+      fetch("/api/content-gate/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        keepalive: true,
+      })
+        .then(r => console.log("[content-gate-draft] POST /draft →", r.status))
+        .catch(e => console.error("[content-gate-draft] POST /draft failed", e));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [draftLoaded, agentCallId, draftLibraryUrl, libEdits, eventEdits, agendaItemEdits, deletedNewIndices, deletedExistingIndices]);
+
+  // Unmount flush. If the user closes the modal before the 1s debounce fires,
+  // push whatever state is currently in the ref synchronously so nothing is
+  // lost. `keepalive: true` lets the browser complete the request after unload.
+  useEffect(() => {
+    return () => {
+      if (!agentCallId) return;
+      const s = draftStateRef.current;
+      const hasAnyEdit =
+        Object.keys(s.libEdits).length > 0 ||
+        Object.keys(s.eventEdits).length > 0 ||
+        Object.keys(s.agendaItemEdits).length > 0 ||
+        s.deletedNewIndices.size > 0 ||
+        s.deletedExistingIndices.size > 0;
+      if (!hasAnyEdit) return;
+      const body = {
+        agent_call_id: agentCallId,
+        library_item_url: draftLibraryUrl,
+        draft: {
+          lib_edits: s.libEdits,
+          event_edits: s.eventEdits,
+          agenda_item_edits: Object.fromEntries(
+            Object.entries(s.agendaItemEdits).map(([k, v]) => [String(k), v]),
+          ),
+          deleted_new_indices: Array.from(s.deletedNewIndices),
+          deleted_existing_indices: Array.from(s.deletedExistingIndices),
+        },
+      };
+      console.log("[content-gate-draft] unmount flush → POST /draft");
+      fetch("/api/content-gate/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        keepalive: true,
+      }).catch(() => {});
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentCallId, draftLibraryUrl]);
+
+  async function maybeDeleteDraftOnFullCompletion(nextSections: Record<string, SectionState>) {
+    // Call after any section flips to "done". If every applicable section is
+    // now done, nuke the draft so the row loses its Editing badge.
+    const applicable: string[] = [];
+    if (hasAgenda)   applicable.push("agenda_items");
+    if (libAction)   applicable.push("library_item");
+    if (eventAction) applicable.push("event");
+    if (applicable.length === 0) return;
+    const allDone = applicable.every(k => nextSections[k]?.status === "done");
+    if (!allDone) return;
+    await fetch("/api/content-gate/draft", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent_call_id: agentCallId, library_item_url: draftLibraryUrl }),
+    }).catch(() => {});
+  }
+
   function setSectionState(id: string, status: SectionStatus, error?: string) {
-    setSections(prev => ({ ...prev, [id]: { status, error } }));
+    setSections(prev => {
+      const next = { ...prev, [id]: { status, error } };
+      if (status === "done") {
+        // fire-and-forget; no state dependencies downstream
+        void maybeDeleteDraftOnFullCompletion(next);
+      }
+      return next;
+    });
   }
 
   function dismissValidation() {

@@ -120,8 +120,22 @@ resource "aws_iam_role_policy" "ecs_task_s3_ssm" {
             "arn:aws:s3:::${var.bubble_artifact_bucket}/alerts/*",
             "arn:aws:s3:::${var.bubble_artifact_bucket}/pages/*",
             "arn:aws:s3:::${var.bubble_artifact_bucket}/transcripts/*",
-            "arn:aws:s3:::${var.bubble_artifact_bucket}/ingest-cache/*"
+            "arn:aws:s3:::${var.bubble_artifact_bucket}/ingest-cache/*",
+            "arn:aws:s3:::${var.bubble_artifact_bucket}/content_gate_drafts/*"
           ]
+        },
+        {
+          Effect   = "Allow"
+          Action   = ["s3:ListBucket"]
+          Resource = "arn:aws:s3:::${var.bubble_artifact_bucket}"
+          Condition = {
+            StringLike = { "s3:prefix" = ["content_gate_drafts*"] }
+          }
+        },
+        {
+          Effect   = "Allow"
+          Action   = ["s3:DeleteObject"]
+          Resource = ["arn:aws:s3:::${var.bubble_artifact_bucket}/content_gate_drafts/*"]
         },
         {
           Effect = "Allow"
@@ -145,7 +159,8 @@ resource "aws_iam_role_policy" "ecs_task_s3_ssm" {
           Action = ["s3:PutObject"]
           Resource = [
             "arn:aws:s3:::${var.bubble_artifact_bucket}/documents/manual/*",
-            "arn:aws:s3:::${var.bubble_artifact_bucket}/ingest-cache/*"
+            "arn:aws:s3:::${var.bubble_artifact_bucket}/ingest-cache/*",
+            "arn:aws:s3:::${var.bubble_artifact_bucket}/content_gate_drafts/*"
           ]
         }
       ],
