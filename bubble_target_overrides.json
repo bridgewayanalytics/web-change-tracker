@@ -1,0 +1,68 @@
+{
+  "_comment": "Manual target_id -> Bubble _id mappings. Each entry documents the reason. Used by scripts/populate_bubble_tracked_urls.py.",
+  "naic.capital_markets_bureau": {
+    "bubble_org_id": "1774256234303x950438113896638500",
+    "bubble_org_name": "Capital Markets Bureau",
+    "reason": "Two Bubble orgs share the exact name 'Capital Markets Bureau' (sim=1.00 each). Picked the earlier _id as canonical; the other appears to be a duplicate."
+  },
+  "naic.e.index": {
+    "bubble_org_id": "1774256229768x368945586059747260",
+    "bubble_org_name": "Financial Condition (E) Committee",
+    "reason": "E Committee Index page maps to the parent committee org. Confirmed by WTA empirical output: 77% of 112 alerts were classified as 'Financial Condition (E) Committee'."
+  },
+  "naic.ex.index": {
+    "bubble_org_id": "1774256229864x223258359100990900",
+    "bubble_org_name": "Executive (EX) Committee",
+    "reason": "EX Committee Index page maps to the Executive (EX) Committee. Confirmed by WTA empirical output: 89% of 64 alerts classified as 'Executive (EX) Committee'."
+  },
+  "naic.a.index": {
+    "bubble_org_id": "1774256229842x744368417831742000",
+    "bubble_org_name": "Life Insurance & Annuities (A) Committee",
+    "reason": "A Committee Index page maps to the Life Insurance & Annuities (A) Committee. Confirmed by WTA empirical output: top class."
+  },
+  "naic.e.reinsurance.index": {
+    "bubble_org_id": "1774256234137x137384071132558690",
+    "bubble_org_name": "Reinsurance (E) Task Force",
+    "reason": "Reinsurance (E) Index page maps to the Reinsurance (E) Task Force. Confirmed by WTA empirical output: 73% of 86 alerts classified as 'Reinsurance (E) Task Force'."
+  },
+  "naic.ae.generator_economic_scenarios_sg": {
+    "bubble_org_id": "1774256236165x315050924356245570",
+    "bubble_org_name": "Generator of Economic Scenarios (GOES) (E/A) Subgroup",
+    "reason": "Target label 'Generator Economic Scenarios Subgroup' doesn't paren-strip-match the Bubble name 'Generator of Economic Scenarios (GOES) (E/A) Subgroup (Also under Life Risk-Based Capital (E) Working Group)' due to the 'of' word + trailing '(Also under ...)' annotation. Highest fuzzy match (sim=0.83)."
+  },
+  "naic.a.latf.vm22sg": {
+    "bubble_org_id": "1774256235897x392541319805933100",
+    "bubble_org_name": "Valuation Manual (VM)-22 (A) Subgroup",
+    "reason": "Target label 'VM-22 Subgroup (LATF)' uses the acronym VM-22; Bubble org spells it out as 'Valuation Manual (VM)-22 (A) Subgroup'. Only Bubble org matching the VM-22 slug."
+  },
+  "naic.ex.rbc_model_governance_tf": {
+    "bubble_org_id": "1774256235532x564288593433260700",
+    "bubble_org_name": "Risk-Based Capital (RBC) Model Governance (EX) Task Force",
+    "reason": "Target label 'RBC Model Governance Task Force' drops the 'Risk-Based Capital' prefix. Bubble org spells out both. Clean match (sim=0.81)."
+  },
+  "naic.ex.climate_resiliency_tf": {
+    "bubble_org_id": "1774256233839x359108015188111170",
+    "bubble_org_name": "Natural Catastrophe Risk and Resilience (EX) Task Force",
+    "reason": "Target label 'Climate Resiliency Task Force' is stale terminology; the actual NAIC name (and URL slug) is 'Natural Catastrophe Risk and Resilience Task Force'. Confirmed by URL match: target.url is content.naic.org/committees/ex/natural-catastrophe-risk-resilience-tf."
+  },
+  "naic.newsroom": {
+    "bubble_org_id": "1795453868713x424036637717561340",
+    "bubble_org_name": "NAIC Newsroom",
+    "reason": "Dedicated org created in Bubble on 2026-11-23 under NAIC."
+  },
+  "naic.resource_center": {
+    "bubble_org_id": "1795453841105x425515229775396860",
+    "bubble_org_name": "NAIC Resource Center",
+    "reason": "Dedicated org created in Bubble on 2026-11-23 under NAIC."
+  },
+  "naic.e.reinsurance_financial_analysis_wg": {
+    "bubble_org_id": "1795453505610x644546197138440200",
+    "bubble_org_name": "Reinsurance Financial Analysis (E) WG",
+    "reason": "Sub-WG created in Bubble on 2026-11-23 under Reinsurance (E) Task Force."
+  },
+  "naic.e.valuation_analysis_wg": {
+    "bubble_org_id": "1795453598323x372650472440332300",
+    "bubble_org_name": "Valuation Analysis (E) WG",
+    "reason": "Sub-WG created in Bubble on 2026-11-23 under Valuation of Securities (E) Task Force."
+  }
+}

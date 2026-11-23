@@ -1,0 +1,297 @@
+{
+  "as_of": "2026-11-23",
+  "orgs_count": 152,
+  "targets_count": 29,
+  "rows": [
+    {
+      "target_id": "naic.e.index",
+      "target_url": "https://content.naic.org/cmte_e.htm",
+      "label": "E Committee Index",
+      "bubble_id": "1774256229768x368945586059747260",
+      "bubble_name": "Financial Condition (E) Committee",
+      "method": "override",
+      "current_url": "https://content.naic.org/cmte_e.htm",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.e.statutory_accounting_principles_wg",
+      "target_url": "https://content.naic.org/committees/e/statutory-accounting-principles-wg",
+      "label": "Statutory Accounting Principles Working Group",
+      "bubble_id": "1774256235905x641284515280206100",
+      "bubble_name": "Statutory Accounting Principles (E) Working Group",
+      "method": "paren_strip",
+      "current_url": "https://content.naic.org/committees/e/statutory-accounting-principles-wg",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.e.blanks_wg",
+      "target_url": "https://content.naic.org/committees/e/blanks-wg",
+      "label": "Blanks Working Group",
+      "bubble_id": "1774256235849x781703658324464100",
+      "bubble_name": "Blanks (E) Working Group",
+      "method": "paren_strip",
+      "current_url": "https://content.naic.org/committees/e/blanks-wg",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.e.capital_adequacy_tf",
+      "target_url": "https://content.naic.org/committees/e/capital-adequacy-tf",
+      "label": "Capital Adequacy Task Force",
+      "bubble_id": "1774256233919x628604004901991400",
+      "bubble_name": "Capital Adequacy (E) Task Force",
+      "method": "paren_strip",
+      "current_url": "https://content.naic.org/committees/e/capital-adequacy-tf",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.e.health_rbc_wg",
+      "target_url": "https://content.naic.org/committees/e/health-risk-based-capital-wg",
+      "label": "Health Risk-Based Capital Working Group",
+      "bubble_id": "1774256236423x494787041995732100",
+      "bubble_name": "Health Risk-Based Capital (E) Working Group",
+      "method": "paren_strip",
+      "current_url": "https://content.naic.org/committees/e/health-risk-based-capital-wg",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.e.life_rbc_wg",
+      "target_url": "https://content.naic.org/committees/e/life-risk-based-capital-wg",
+      "label": "Life Risk-Based Capital Working Group",
+      "bubble_id": "1774256235937x220904293572367070",
+      "bubble_name": "Life Risk Based Capital (E) Working Group",
+      "method": "paren_strip",
+      "current_url": "https://content.naic.org/committees/e/life-risk-based-capital-wg",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.ae.generator_economic_scenarios_sg",
+      "target_url": "https://content.naic.org/committees/a-e/generator-economic-scenarios-sg",
+      "label": "Generator Economic Scenarios Subgroup",
+      "bubble_id": "1774256236165x315050924356245570",
+      "bubble_name": "Generator of Economic Scenarios (GOES) (E/A) Subgroup",
+      "method": "override",
+      "current_url": "https://content.naic.org/committees/a-e/generator-economic-scenarios-sg",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.e.property_casualty_rbc_wg",
+      "target_url": "https://content.naic.org/committees/e/property-casualty-risk-based-capital-wg",
+      "label": "Property & Casualty Risk-Based Capital Working Group",
+      "bubble_id": "1774256236352x665109628732278900",
+      "bubble_name": "Property & Casualty Risk-Based Capital (E) Working Group",
+      "method": "paren_strip",
+      "current_url": "https://content.naic.org/committees/e/property-casualty-risk-based-capital-wg",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.e.rbc_investment_risk_evaluation_wg",
+      "target_url": "https://content.naic.org/committees/e/risk-based-capital-investment-risk-evaluation-wg",
+      "label": "Risk-Based Capital Investment Risk Evaluation Working Group",
+      "bubble_id": "1774256236568x644112473397786500",
+      "bubble_name": "Risk Based Capital Investment Risk & Evaluation (E) Working Group",
+      "method": "paren_strip",
+      "current_url": "https://content.naic.org/committees/e/risk-based-capital-investment-risk-evaluation-wg",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.e.receivership_insolvency_tf",
+      "target_url": "https://content.naic.org/committees/e/receivership-insolvency-tf",
+      "label": "Receivership & Insolvency Task Force",
+      "bubble_id": "1774256235779x226510970691874000",
+      "bubble_name": "Receivership & Insolvency (E) Task Force",
+      "method": "paren_strip",
+      "current_url": "https://content.naic.org/committees/e/receivership-insolvency-tf",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.e.financial_stability_tf",
+      "target_url": "https://content.naic.org/committees/e/financial-stability-tf",
+      "label": "Financial Stability Task Force",
+      "bubble_id": "1774256234092x166173525953933630",
+      "bubble_name": "Financial Stability (E) Task Force",
+      "method": "paren_strip",
+      "current_url": "https://content.naic.org/committees/e/financial-stability-tf",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.e.macroprudential_wg",
+      "target_url": "https://content.naic.org/committees/e/macroprudential-wg",
+      "label": "Macroprudential Working Group",
+      "bubble_id": "1774256236079x496547428298829600",
+      "bubble_name": "Macroprudential (E) Working Group",
+      "method": "paren_strip",
+      "current_url": "https://content.naic.org/committees/e/macroprudential-wg",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.e.group_capital_calculation_wg",
+      "target_url": "https://content.naic.org/committees/e/group-capital-calculation-wg",
+      "label": "Group Capital Calculation Working Group",
+      "bubble_id": "1774256234095x430453355663251700",
+      "bubble_name": "Group Capital Calculation (E) Working Group",
+      "method": "paren_strip",
+      "current_url": "https://content.naic.org/committees/e/group-capital-calculation-wg",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.e.invested_assets_tf",
+      "target_url": "https://content.naic.org/committees/e/invested-assets-tf",
+      "label": "Invested Assets Task Force",
+      "bubble_id": "1774256235627x812463858770065400",
+      "bubble_name": "Invested Assets (E) Task Force",
+      "method": "paren_strip",
+      "current_url": "https://content.naic.org/committees/e/invested-assets-tf",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.e.credit_rating_provider_wg",
+      "target_url": "https://content.naic.org/committees/e/credit-rating-provider-wg",
+      "label": "Credit Rating Provider Working Group",
+      "bubble_id": "1774256236609x470477402463802100",
+      "bubble_name": "Credit Rating Provider (E) Working Group",
+      "method": "paren_strip",
+      "current_url": "https://content.naic.org/committees/e/credit-rating-provider-wg",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.e.investment_analysis_wg",
+      "target_url": "https://content.naic.org/committees/e/investment-analysis-wg",
+      "label": "Investment Analysis Working Group",
+      "bubble_id": "1774256236419x371825439038201860",
+      "bubble_name": "Investment Analysis (E) Working Group",
+      "method": "paren_strip",
+      "current_url": "https://content.naic.org/committees/e/investment-analysis-wg",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.e.investment_designation_analysis_wg",
+      "target_url": "https://content.naic.org/committees/e/investment-designation-analysis-wg",
+      "label": "Investment Designation Analysis Working Group",
+      "bubble_id": "1774256236859x410892894855306560",
+      "bubble_name": "Investment Designation Analysis (E) Working Group",
+      "method": "paren_strip",
+      "current_url": "https://content.naic.org/committees/e/investment-designation-analysis-wg",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.e.reinsurance.index",
+      "target_url": "https://content.naic.org/cmte_e_reinsurance.htm",
+      "label": "Reinsurance (E) Index",
+      "bubble_id": "1774256234137x137384071132558690",
+      "bubble_name": "Reinsurance (E) Task Force",
+      "method": "override",
+      "current_url": "https://content.naic.org/cmte_e_reinsurance.htm",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.e.reinsurance_financial_analysis_wg",
+      "target_url": "https://content.naic.org/cmte_e_reinsurance_financial_analysis_wg.htm",
+      "label": "Reinsurance Financial Analysis Working Group",
+      "bubble_id": "1795453505610x644546197138440200",
+      "bubble_name": "Reinsurance Financial Analysis (E) WG",
+      "method": "override",
+      "current_url": "https://content.naic.org/cmte_e_reinsurance_financial_analysis_wg.htm",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.e.valuation_analysis_wg",
+      "target_url": "https://content.naic.org/cmte_e_valuation_analysis_wg.htm",
+      "label": "Valuation Analysis Working Group",
+      "bubble_id": "1795453598323x372650472440332300",
+      "bubble_name": "Valuation Analysis (E) WG",
+      "method": "override",
+      "current_url": "https://content.naic.org/cmte_e_valuation_analysis_wg.htm",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.ex.index",
+      "target_url": "https://content.naic.org/cmte_ex.htm",
+      "label": "EX Committee Index",
+      "bubble_id": "1774256229864x223258359100990900",
+      "bubble_name": "Executive (EX) Committee",
+      "method": "override",
+      "current_url": "https://content.naic.org/cmte_ex.htm",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.ex.climate_resiliency_tf",
+      "target_url": "https://content.naic.org/committees/ex/natural-catastrophe-risk-resilience-tf",
+      "label": "Climate Resiliency Task Force",
+      "bubble_id": "1774256233839x359108015188111170",
+      "bubble_name": "Natural Catastrophe Risk and Resilience (EX) Task Force",
+      "method": "override",
+      "current_url": "https://content.naic.org/committees/ex/natural-catastrophe-risk-resilience-tf",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.ex.rbc_model_governance_tf",
+      "target_url": "https://content.naic.org/committees/ex/rbc-model-governance-tf",
+      "label": "RBC Model Governance Task Force",
+      "bubble_id": "1774256235532x564288593433260700",
+      "bubble_name": "Risk-Based Capital (RBC) Model Governance (EX) Task Force",
+      "method": "override",
+      "current_url": "https://content.naic.org/committees/ex/rbc-model-governance-tf",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.a.index",
+      "target_url": "https://content.naic.org/cmte_a.htm",
+      "label": "A Committee Index",
+      "bubble_id": "1774256229842x744368417831742000",
+      "bubble_name": "Life Insurance & Annuities (A) Committee",
+      "method": "override",
+      "current_url": "https://content.naic.org/cmte_a.htm",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.a.latf",
+      "target_url": "https://content.naic.org/cmte_a_latf.htm",
+      "label": "Life Actuarial Task Force",
+      "bubble_id": "1774256233858x890399996683947800",
+      "bubble_name": "Life Actuarial (A) Task Force",
+      "method": "paren_strip",
+      "current_url": "https://content.naic.org/cmte_a_latf.htm",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.a.latf.vm22sg",
+      "target_url": "https://content.naic.org/cmte_a_latf_vm22sg.htm",
+      "label": "VM-22 Subgroup (LATF)",
+      "bubble_id": "1774256235897x392541319805933100",
+      "bubble_name": "Valuation Manual (VM)-22 (A) Subgroup",
+      "method": "override",
+      "current_url": "https://content.naic.org/cmte_a_latf_vm22sg.htm",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.newsroom",
+      "target_url": "https://content.naic.org/newsroom",
+      "label": "NAIC Newsroom",
+      "bubble_id": "1795453868713x424036637717561340",
+      "bubble_name": "NAIC Newsroom",
+      "method": "override",
+      "current_url": "https://content.naic.org/newsroom",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.capital_markets_bureau",
+      "target_url": "https://content.naic.org/capital-markets-bureau",
+      "label": "Capital Markets Bureau",
+      "bubble_id": "1774256234303x950438113896638500",
+      "bubble_name": "Capital Markets Bureau",
+      "method": "override",
+      "current_url": "https://content.naic.org/capital-markets-bureau",
+      "status": "match"
+    },
+    {
+      "target_id": "naic.resource_center",
+      "target_url": "https://content.naic.org/resource-center",
+      "label": "NAIC Resource Center",
+      "bubble_id": "1795453841105x425515229775396860",
+      "bubble_name": "NAIC Resource Center",
+      "method": "override",
+      "current_url": "https://content.naic.org/resource-center",
+      "status": "match"
+    }
+  ]
+}
