@@ -1110,6 +1110,10 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
 
   // ── Content gate modal state ──────────────────────────────────────────────
   const [contentGateRow, setContentGateRow] = useState<AlertRow | null>(null);
+  // Siblings sharing (agent_call_id, event_preview.match_key) with contentGateRow.
+  // Carries library-item cards into the consolidated modal; always contains the
+  // primary row itself at index 0 so a single-row group works unchanged.
+  const [contentGateSiblings, setContentGateSiblings] = useState<AlertRow[]>([]);
 
   // ── Pagination ─────────────────────────────────────────────────────────────
   const PAGE_SIZE = 50;
@@ -1558,6 +1562,27 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
                 // Track which recording_s3_keys have already been rendered as primary.
                 // Reset per render so order is stable. Plain const — NOT state.
                 const seenRecordings = new Set<string>();
+                // Content-Gate consolidation: rows sharing (agent_call_id, event_preview.match_key)
+                // share ONE Content Gate button. First occurrence owns the button and opens the
+                // modal with the full set of contributing siblings.
+                const cgGroupSiblings = new Map<string, AlertRow[]>();
+                const cgGroupKeyFor = (r: AlertRow): string => {
+                  const cid = String(r.agent_call_id ?? "");
+                  const ba = r.bubble_action as Record<string, unknown> | null | undefined;
+                  const ep = (ba?.event_preview as Record<string, unknown> | undefined) ?? {};
+                  const mk = String(ep.match_key ?? "").trim();
+                  // Rows without a shared event collapse only if agent_call_id matches AND there's
+                  // a match_key; otherwise key on library_item_url so the row stays standalone.
+                  if (mk) return `${cid}::${mk}`;
+                  const url = String(r.library_item_url ?? "");
+                  return `${cid}::__nomatch__::${url || Math.random().toString(36).slice(2)}`;
+                };
+                for (const r of pagedRows) {
+                  const k = cgGroupKeyFor(r);
+                  const existing = cgGroupSiblings.get(k) ?? [];
+                  existing.push(r);
+                  cgGroupSiblings.set(k, existing);
+                }
                 return pagedRows.map((row, i) => {
                 const rowNum = rows.length - (alertRowIndexMap.get(row) ?? (page * PAGE_SIZE + i));
                 const run_id = String(row.run_id ?? "");
@@ -1572,6 +1597,20 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
                 const nextRowKey = i < pagedRows.length - 1 ? `${String(pagedRows[i + 1].run_id ?? "")}::${String(pagedRows[i + 1].target_id ?? "")}` : null;
                 const isFirstInGroup = prevRowKey !== rowKey;
                 const isLastInGroup = nextRowKey !== rowKey;
+
+                // Content Gate consolidation — only the first row of each cgGroup shows the button.
+                // cgGroupSize > 1 also drives the amber left accent bar for visual grouping.
+                const cgKey = cgGroupKeyFor(row);
+                const prevCgKey = i > 0 ? cgGroupKeyFor(pagedRows[i - 1]) : null;
+                const nextCgKey = i < pagedRows.length - 1 ? cgGroupKeyFor(pagedRows[i + 1]) : null;
+                const isFirstInCgGroup = prevCgKey !== cgKey;
+                const isLastInCgGroup = nextCgKey !== cgKey;
+                const cgSiblings = cgGroupSiblings.get(cgKey) ?? [row];
+                const cgGroupSize = cgSiblings.length;
+                // Visual grouping (left accent) applies when 2+ rows share the same cgKey
+                const rowAccentClass = cgGroupSize > 1
+                  ? `border-l-4 border-l-indigo-200${isFirstInCgGroup ? " border-t-2 border-t-indigo-200" : ""}${isLastInCgGroup ? " border-b-2 border-b-indigo-200" : ""}`
+                  : "";
 
                 // Merge real-time row overrides (e.g. transcript_chunks_s3_key after upload)
                 const callId = String(row.agent_call_id ?? "");
@@ -1593,7 +1632,7 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
                 return (
                   <React.Fragment key={i}>
                     {/* ── Original alert row ── */}
-                    <tr className="hover:bg-gray-50">
+                    <tr className={`hover:bg-gray-50 ${rowAccentClass}`}>
                       {/* Row number cell */}
                       <td className={`${cellClass} bg-white z-[5]`} style={{ width: ROW_NUM_COL_WIDTH, minWidth: ROW_NUM_COL_WIDTH, position: "sticky", left: 0, textAlign: "center" }}>
                         <span className="text-[11px] text-gray-400 font-mono">{rowNum}</span>
@@ -1656,6 +1695,18 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
                             ]);
                             if (NON_APPLICABLE.has(alertType)) return null;
 
+                            // Content Gate consolidation: when 2+ rows share (agent_call_id, match_key),
+                            // only the first row owns the button and the modal opens with all siblings.
+                            // Downstream rows in the same group show a muted inline indicator so users
+                            // see the grouping without a duplicate button to click.
+                            if (!isFirstInCgGroup) {
+                              return (
+                                <span className="text-[10px] text-gray-400 italic whitespace-nowrap" title="Published via the group's Content Gate button above">
+                                  · in group
+                                </span>
+                              );
+                            }
+
                             const bubbleAction = effectiveRow.bubble_action as Record<string, unknown> | null | undefined;
                             const eventAction = bubbleAction?.event;
                             const libAction = bubbleAction?.library_item;
@@ -1683,7 +1734,7 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
                             if (hasDraft) {
                               return (
                                 <button
-                                  onClick={() => setContentGateRow(effectiveRow as AlertRow)}
+                                  onClick={() => { setContentGateRow(effectiveRow as AlertRow); setContentGateSiblings(cgSiblings); }}
                                   className="text-[11px] font-medium text-amber-600 hover:text-amber-800 hover:underline whitespace-nowrap"
                                   title="Unsaved edits in Content Gate — click to resume"
                                 >
@@ -1695,7 +1746,7 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
                             if (isComplete) {
                               return (
                                 <button
-                                  onClick={() => setContentGateRow(effectiveRow as AlertRow)}
+                                  onClick={() => { setContentGateRow(effectiveRow as AlertRow); setContentGateSiblings(cgSiblings); }}
                                   className="text-[11px] font-medium text-green-600 hover:text-green-800 hover:underline whitespace-nowrap"
                                 >
                                   ✓ Complete
@@ -1932,7 +1983,8 @@ export function AlertsTable({ rows, onAccepted, schemaVersion = 0, hasQaScoreFil
       {contentGateRow && (
         <ContentGateModal
           row={contentGateRow}
-          onClose={() => { setContentGateRow(null); refreshDraftIds(); }}
+          siblingRows={contentGateSiblings}
+          onClose={() => { setContentGateRow(null); setContentGateSiblings([]); refreshDraftIds(); }}
           onFieldPatched={(fields) => {
             const callId = String(contentGateRow.agent_call_id ?? "");
             setRowOverrides((prev) => new Map(prev).set(callId, { ...(prev.get(callId) ?? {}), ...fields }));

@@ -9,6 +9,11 @@ type BubbleOptionsMap = Record<BubbleOptionsType, BubbleOption[] | undefined>;
 
 interface ContentGateModalProps {
   row: AlertRow;
+  // All rows sharing (agent_call_id, event_preview.match_key) with `row`, including
+  // `row` itself at some index. Each sibling contributes one library-item card when
+  // it has a distinct `library_item_url`. Optional for backward compat — defaults
+  // to [row] so single-row groups work unchanged.
+  siblingRows?: AlertRow[];
   onClose: () => void;
   onFieldPatched: (fields: Partial<AlertRow>) => void;
 }
@@ -1254,7 +1259,7 @@ function Section({
 
 // ─── Main modal ───────────────────────────────────────────────────────────────
 
-export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateModalProps) {
+export function ContentGateModal({ row, siblingRows, onClose, onFieldPatched }: ContentGateModalProps) {
   const bubbleAction  = row.bubble_action as Record<string, unknown> | null | undefined;
   const eventAction   = (bubbleAction?.event ?? null) as BubbleAction;
   const libAction     = (bubbleAction?.library_item ?? null) as BubbleAction;
@@ -2126,6 +2131,37 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
           {hasBubbleSections && validation !== "loading" && validation !== null && (
             <ValidationBanner result={validation} />
           )}
+
+          {/* Consolidated-group banner — appears when 2+ sibling rows share this event */}
+          {(() => {
+            const sibs = siblingRows ?? [row];
+            const otherSiblings = sibs.filter(r => r !== row);
+            if (otherSiblings.length === 0) return null;
+            const urls = new Set<string>();
+            for (const s of sibs) {
+              const u = String(s.library_item_url ?? "");
+              if (u && u !== "N/A") urls.add(u);
+            }
+            const libCount = urls.size;
+            return (
+              <div className="mb-3 rounded border border-indigo-200 bg-indigo-50 px-3 py-2 text-[12px] text-indigo-900">
+                <div className="flex items-start gap-2">
+                  <svg className="w-4 h-4 mt-0.5 flex-shrink-0 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 7v10m8-10v10M4 7h16M4 12h16M4 17h16" />
+                  </svg>
+                  <div>
+                    <div className="font-medium">Consolidated Content Gate — {sibs.length} alert rows in this group</div>
+                    <div className="text-[11px] opacity-80 mt-0.5">
+                      All rows target the same event ({libCount} distinct library item{libCount === 1 ? "" : "s"}).
+                      Publishing the event here publishes it once for the entire group.
+                      Stacked per-library-item publishing is coming in the next iteration — for now, the library
+                      item below reflects the row you clicked (<span className="font-mono text-[10px]">…{String(row.agent_call_id ?? "").slice(-8)}</span>).
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {hasAnyAgenda && (() => {
             const isDone = sections.agenda_items.status === "done";
