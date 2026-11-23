@@ -1353,10 +1353,13 @@ export function ContentGateModal({ row, onClose, onFieldPatched }: ContentGateMo
     return result;
   }, [docExtractionRows]);
 
-  // Prefer doc extraction synthesis (authoritative PDF data) over stored page_change_agent previews.
-  // Fall back to stored only when no doc extraction rows are available for this document.
-  const agendaItems     = synthesizedAgendaItems.length > 0 ? synthesizedAgendaItems : storedAgendaItems;
-  const isAgendaSynthesized = synthesizedAgendaItems.length > 0;
+  // Prefer stored previews when present — they already reflect the classifier's enriched plan
+  // AND any user deletions/edits persisted via `handleCreateAgendaItems` -> patch-row.
+  // Synthesize from doc extraction only when stored previews are empty (page_change_agent
+  // returned N/A from HTML and classifier produced no plan). Prevents user's trimmed list
+  // from being resurrected to the full PDF-derived set on modal re-open.
+  const agendaItems     = storedAgendaItems.length > 0 ? storedAgendaItems : synthesizedAgendaItems;
+  const isAgendaSynthesized = storedAgendaItems.length === 0 && synthesizedAgendaItems.length > 0;
 
   // Use agendaItems.length directly — bubble_action.agenda_items may be false when the
   // page_change_agent returned N/A for all agenda items, but doc extraction synthesized real ones.

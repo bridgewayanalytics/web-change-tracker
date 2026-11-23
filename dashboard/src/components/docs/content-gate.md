@@ -305,6 +305,56 @@ is folded into the Library Item card's footer as a secondary split-button:
   `{"newsreel-generation:ART": { status: "done" }}` when the row's
   `ingest_status === "approved"`.
 
+### Proxy via S3 (naic.org WAF bypass)
+
+NAIC's CDN WAF returns **403 Forbidden** for `python-requests`, `httpx`, and
+even standard Chrome User-Agents — only a plain `curl/8.x` UA passes through.
+The ChatKit backend's httpx client got blocked, so `/internal/documents/ingest`
+failed with `"Failed to download url: Client error '403 Forbidden'"` every
+time we handed it a raw `content.naic.org` URL. The fix: **the dashboard
+downloads the PDF itself and hands ChatKit a presigned S3 URL instead.**
+
+- `approve-document` route uses `proxyRemoteUrlToS3(url, filename)`:
+  1. Hash URL → `ingest-cache/<sha256(url)[:16]>/<clamped-filename>` key
+  2. `HeadObjectCommand` to skip re-download when cached
+  3. `fetch(url, { headers: { "User-Agent": "curl/8.5.0" } })` to bypass the WAF
+  4. `PutObjectCommand` to stash in S3 with the response's `Content-Type`
+  5. `getSignedUrl(GetObjectCommand, { expiresIn: 1800 })` — 30-min window for
+     ChatKit to fetch
+- IAM: the task role needs `s3:GetObject` + `s3:PutObject` on
+  `${bucket}/ingest-cache/*` (added to `aws_iam_role_policy.ecs_task_s3_ssm` in
+  `infra/terraform/iam.tf`).
+- Rows with `manual_doc_s3_key` (user-uploaded via the dashboard) skip the
+  proxy entirely — they already live in S3 and get a direct presigned URL.
+- Transcript ingest (`approve-transcript`) doesn't need the proxy — transcripts
+  are always in our S3 bucket (`transcripts/…`), not on naic.org.
+- Filename clamping: agent-generated `library_item_title` can be a descriptive
+  paragraph (one case produced a 400-char S3 key before clamping). The proxy
+  uses the title only when ≤120 chars; otherwise it falls back to the URL's
+  basename, then slices to 120 chars max.
+
+### Error surfacing (never silently succeed)
+
+Both `approve-document` and `approve-transcript` previously stamped
+`ingest_status: "approved"` **even when the upstream API returned non-2xx**,
+and returned `{ ok: true }` to the modal — the dropdown showed "✓ Added" for
+every failed click. Fixed 2026-11-20: on upstream non-2xx **or** on proxy
+fetch failure (`approve-document` only), the route returns 502 with
+`{ error, upstream_status, upstream_body }` and skips the `ingest_status`
+patch. Client code already handles `!resp.ok` by surfacing the error in the
+dropdown as "Failed", so the user sees the real reason.
+
+Diagnostic recipe when a user reports "clicked Add but nothing happened":
+
+```bash
+AWS_PROFILE=bridgeway aws logs filter-log-events \
+  --log-group-name /ecs/naic-dashboard \
+  --start-time $(($(date +%s%3N) - 1800000)) \
+  --filter-pattern '"ingest API error"' \
+  --output json \
+  | jq -r '.events[].message'
+```
+
 If there's no library item action to piggy-back on (rare), a standalone section
 with just the vector-store dropdown is rendered.
 
@@ -873,6 +923,15 @@ used to:
    (page_change_agent returned N/A). Doc extraction then becomes the authoritative
    source — `isAgendaSynthesized` flag triggers patching `agenda_items: true` on
    the stored `bubble_action` so the sync executor processes them.
+
+   **Invariant: stored previews always win when present.** `agendaItems` is
+   `storedAgendaItems.length > 0 ? storedAgendaItems : synthesizedAgendaItems`.
+   Any time the user deletes a card and syncs, `handleCreateAgendaItems` PATCHes
+   the trimmed list into `bubble_action.agenda_item_previews`; on modal re-open
+   that trimmed list is the source of truth and the synthesized full PDF list
+   must not resurrect the deleted cards. Do not flip this precedence to prefer
+   synthesis unconditionally — it was that flip (pre-2026-11-20) that caused
+   all-7-cards-on-reopen after a user had trimmed down to 2 and published.
 
 2. **Enrich** stored agenda items with fresher chronicle topics, official titles,
    and reference IDs via `enrichFromDocExtraction()`. Matching strategy:

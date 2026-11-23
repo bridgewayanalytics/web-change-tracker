@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, GetObjectCommand, PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { createHash } from "crypto";
 import { bustDocExtractionsCache } from "@/lib/doc-extractions-cache";
 import { patchJsonlRows } from "@/lib/patch-jsonl";
 import { getChatkitApiKey } from "@/lib/chatkit-api-key";
@@ -16,6 +17,50 @@ let s3: S3Client | null = null;
 function getS3() {
   if (!s3) s3 = new S3Client({ region: process.env.AWS_REGION ?? "us-east-1" });
   return s3;
+}
+
+// NAIC's CDN WAF returns 403 for python-requests / httpx / most browser UAs.
+// Plain curl UA is one of the few that passes through — the ChatKit backend's
+// Python httpx client gets blocked, which is why we proxy via S3.
+const FETCH_UA = "curl/8.5.0";
+
+// Download a remote document, cache it in S3, and return a presigned GET URL.
+// Cache key: ingest-cache/<sha256(url)>/<filename>. Head-check first so re-approvals
+// don't re-download. Throws with a descriptive error on any non-2xx so the route
+// can surface it to the client as a 502.
+async function proxyRemoteUrlToS3(url: string, filename: string): Promise<string> {
+  const urlHash = createHash("sha256").update(url).digest("hex").slice(0, 16);
+  // Agent titles can be long descriptive paragraphs; keep S3 key under the 1024-byte
+  // limit and readable. Prefer the URL's own basename when the title is suspiciously long.
+  const rawName = (filename || "").trim();
+  const urlBase = url.split("?")[0].split("/").pop() || "document.pdf";
+  const chosen = rawName && rawName.length <= 120 ? rawName : urlBase;
+  const safeName = chosen.replace(/[^\w.-]+/g, "_").slice(0, 120) || "document.pdf";
+  const key = `ingest-cache/${urlHash}/${safeName}`;
+
+  // Skip re-download if we already have it
+  let needUpload = true;
+  try {
+    await getS3().send(new HeadObjectCommand({ Bucket: BUCKET, Key: key }));
+    needUpload = false;
+  } catch { /* 404 — need to fetch */ }
+
+  if (needUpload) {
+    const resp = await fetch(url, { headers: { "User-Agent": FETCH_UA } });
+    if (!resp.ok) {
+      throw new Error(`Failed to fetch document URL (HTTP ${resp.status}): ${url}`);
+    }
+    const buf = Buffer.from(await resp.arrayBuffer());
+    const contentType = resp.headers.get("content-type") || "application/octet-stream";
+    await getS3().send(new PutObjectCommand({
+      Bucket: BUCKET,
+      Key: key,
+      Body: buf,
+      ContentType: contentType,
+    }));
+  }
+
+  return await getSignedUrl(getS3(), new GetObjectCommand({ Bucket: BUCKET, Key: key }), { expiresIn: 1800 });
 }
 
 // POST /api/ingest/approve-document
@@ -71,14 +116,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "CHATKIT_INTERNAL_API_KEY not configured" }, { status: 500 });
     }
 
-    // For file-upload rows, generate a presigned URL so ChatKit can download the file
-    let ingestUrl = library_item_url;
-    if (manual_doc_s3_key) {
-      ingestUrl = await getSignedUrl(
-        getS3(),
-        new GetObjectCommand({ Bucket: BUCKET, Key: manual_doc_s3_key }),
-        { expiresIn: 1800 },
-      );
+    // Resolve the URL to send the ingest API. ChatKit's httpx client gets 403 from
+    // naic.org's WAF, so we download the file ourselves (with a UA naic.org accepts)
+    // and stash it in S3, then hand ChatKit a presigned GET URL — ingest-cache keyed
+    // by url hash so re-approvals skip the re-download.
+    let ingestUrl: string;
+    try {
+      if (manual_doc_s3_key) {
+        ingestUrl = await getSignedUrl(
+          getS3(),
+          new GetObjectCommand({ Bucket: BUCKET, Key: manual_doc_s3_key }),
+          { expiresIn: 1800 },
+        );
+      } else {
+        ingestUrl = await proxyRemoteUrlToS3(library_item_url, library_item_title);
+      }
+    } catch (fetchErr) {
+      const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+      console.error("[/api/ingest/approve-document] proxy fetch failed:", msg);
+      return NextResponse.json({ error: msg }, { status: 502 });
     }
 
     const formData = new FormData();
@@ -98,6 +154,14 @@ export async function POST(request: NextRequest) {
 
     if (!ingestResp.ok) {
       console.error("[/api/ingest/approve-document] ingest API error", ingestResp.status, ingestBody);
+      return NextResponse.json(
+        {
+          error: String(ingestBody.error ?? ingestBody.message ?? `Upstream ingest API returned ${ingestResp.status}`),
+          upstream_status: ingestResp.status,
+          upstream_body: ingestBody,
+        },
+        { status: 502 },
+      );
     }
 
     await patchJsonlRows(

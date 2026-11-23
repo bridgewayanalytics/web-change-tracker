@@ -119,7 +119,8 @@ resource "aws_iam_role_policy" "ecs_task_s3_ssm" {
             "arn:aws:s3:::${var.bubble_artifact_bucket}/bubble_reports/*",
             "arn:aws:s3:::${var.bubble_artifact_bucket}/alerts/*",
             "arn:aws:s3:::${var.bubble_artifact_bucket}/pages/*",
-            "arn:aws:s3:::${var.bubble_artifact_bucket}/transcripts/*"
+            "arn:aws:s3:::${var.bubble_artifact_bucket}/transcripts/*",
+            "arn:aws:s3:::${var.bubble_artifact_bucket}/ingest-cache/*"
           ]
         },
         {
@@ -142,7 +143,10 @@ resource "aws_iam_role_policy" "ecs_task_s3_ssm" {
         {
           Effect = "Allow"
           Action = ["s3:PutObject"]
-          Resource = ["arn:aws:s3:::${var.bubble_artifact_bucket}/documents/manual/*"]
+          Resource = [
+            "arn:aws:s3:::${var.bubble_artifact_bucket}/documents/manual/*",
+            "arn:aws:s3:::${var.bubble_artifact_bucket}/ingest-cache/*"
+          ]
         }
       ],
       var.bubble_report_recent_runs_limit > 0 ? [

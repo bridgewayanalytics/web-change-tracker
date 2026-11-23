@@ -100,6 +100,14 @@ export async function POST(request: NextRequest) {
 
     if (!ingestResp.ok) {
       console.error("[/api/ingest/approve-transcript] ingest API error", ingestResp.status, ingestBody);
+      return NextResponse.json(
+        {
+          error: String(ingestBody.error ?? ingestBody.message ?? `Upstream ingest API returned ${ingestResp.status}`),
+          upstream_status: ingestResp.status,
+          upstream_body: ingestBody,
+        },
+        { status: 502 },
+      );
     }
 
     await patchJsonlRows(getS3(), BUCKET, ALERTS_KEY, { agent_call_id }, { ingest_status: "approved" });

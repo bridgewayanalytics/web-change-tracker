@@ -1215,9 +1215,14 @@ export async function syncAlert(
         const url = String(lpFieldIds["URL"] ?? lpFieldIds["url_text"] ?? lp.url ?? "").trim();
         const summary = String(lpFieldIds["summary"] ?? lpFieldIds["description_text"] ?? "").trim() || undefined;
 
-        // Date: prefer event start date, fall back to doc extraction date in field_ids
+        // Date priority: top-level event_start_date_time → event_preview.start_datetime
+        //   → field_ids.date_date (ISO, authoritative — this is what the modal renders in
+        //   the Date row of the field table) → field_ids.date (human string fallback,
+        //   often doc_extraction.date_published which is wrong for Agenda/RFC/Effective
+        //   library items where the meeting date, not publication date, belongs).
         let date = parseDate(String(row.event_start_date_time ?? "").slice(0, 10));
-        if (!date) date = parseDate(String(lpFieldIds["date"] ?? lpFieldIds["date_date"] ?? ""));
+        if (!date) date = parseDate(String(ep.start_datetime ?? "").slice(0, 10));
+        if (!date) date = parseDate(String(lpFieldIds["date_date"] ?? lpFieldIds["date"] ?? ""));
 
         const typeName = String(lp.type ?? "Agenda & Materials");
         const typeId = await resolveLibraryItemTypeId(typeName);
